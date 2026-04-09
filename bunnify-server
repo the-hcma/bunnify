@@ -435,14 +435,14 @@ echo ""
 
 # Determine server binding address
 if $listen_all; then
-    server_address="0.0.0.0:8000"
-    
     # Get the actual public IP address for display
     public_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     if [ -z "$public_ip" ]; then
         # Fallback to localhost if we can't determine IP
         public_ip="127.0.0.1"
     fi
+    # Pass the actual IP to Django so it displays correctly
+    server_address="$public_ip:8000"
 else
     server_address="127.0.0.1:8000"
     public_ip=""
