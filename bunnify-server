@@ -497,7 +497,7 @@ if $foreground; then
     # Foreground mode: run directly with proper signal handling
     
     # Start the file watcher in the background
-    $uv_cmd run python manage.py watch_bookmarks &
+    $uv_cmd run python manage.py watch_bookmarks --file "$bookmarks_file" &
     watcher_pid=$!
     echo "$watcher_pid" > "$WATCHER_pid_file"
     
@@ -588,7 +588,7 @@ else
     # Background mode (default): daemonize the processes
     
     # Start the file watcher in the background (daemonized)
-    nohup $uv_cmd run python manage.py watch_bookmarks > /dev/null 2>&1 &
+    nohup $uv_cmd run python manage.py watch_bookmarks --file "$bookmarks_file" > /dev/null 2>&1 &
     watcher_pid=$!
     echo "$watcher_pid" > "$WATCHER_pid_file"
     
