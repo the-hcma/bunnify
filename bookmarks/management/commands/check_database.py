@@ -4,8 +4,8 @@ import logging
 import sys
 from typing import Any
 
-from django.core.management.base import BaseCommand
 from django.core.management import call_command
+from django.core.management.base import BaseCommand
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 

@@ -3,6 +3,10 @@
     "description": "Google Calendar",
     "url": "https://calendar.google.com"
   },
+  "cf": {
+    "description": "Cloudflare hcma's DNS",
+    "url": "https://dash.cloudflare.com/0c64ddce44e8d30fb31a52697ce2a737/hcma.info/dns/records"
+  },
   "g": {
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
@@ -10,6 +14,30 @@
   "gh": {
     "description": "GitHub",
     "url": "https://github.com"
+  },
+  "ghh": {
+    "description": "the-hcma's GitHub repo",
+    "url": "https://github.com/the-hcma/#{repo}/"
+  },
+  "gri": {
+    "description": "Graphite's inbox",
+    "url": "https://app.graphite.com/#needs-your-review"
+  },
+  "mqb": {
+    "description": "Graphite's merge queue",
+    "url": "https://app.graphite.com/merges?repo=bunnify&org=the-hcma&tab=queue"
+  },
+  "mqf": {
+    "description": "Graphite's merge queue",
+    "url": "https://app.graphite.com/merges?repo=fpdf&org=the-hcma&tab=queue"
+  },
+  "mqmt": {
+    "description": "Graphite's merge queue",
+    "url": "https://app.graphite.com/merges?repo=my-tracks&org=the-hcma&tab=queue"
+  },
+  "l": {
+    "description": "LinkedIn",
+    "url": "https://www.linkedin.com/feed/"
   },
   "pr": {
     "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
@@ -21,5 +49,9 @@
   "rpr": {
     "description": "Request Copilot review for PR",
     "url": "http://127.0.0.1:8000/review-pr/?pr=#{pr_id}"
+  },
+  "ym": {
+    "description": "YouTube Music",
+    "url": "https://music.youtube.com/"
   }
 }
