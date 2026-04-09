@@ -70,10 +70,6 @@
     "description": "Google Voice Messages",
     "url": "https://voice.google.com/u/0/messages"
   },
-  "vm": {
-    "description": "Google Voice Messages",
-    "url": "https://voice.google.com/u/0/messages"
-  },
   "ym": {
     "description": "YouTube Music",
     "url": "https://music.youtube.com/"
