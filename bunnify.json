@@ -11,10 +11,6 @@
     "description": "Claude",
     "url": "https://claude.ai"
   },
-  "dm": {
-    "description": "YouTube Music Discover Mix",
-    "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA"
-  },
   "g": {
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
@@ -69,10 +65,6 @@
   "rpr": {
     "description": "Request Copilot review for PR",
     "url": "http://127.0.0.1:8000/review-pr/?pr=#{pr_id}"
-  },
-  "sm": {
-    "description": "YouTube Music Supermix",
-    "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_kpx_1S_9S_9S_9S_9S_9S_9S_9S_9S_9S&shuffle=1"
   },
   "vm": {
     "description": "Google Voice Messages",
