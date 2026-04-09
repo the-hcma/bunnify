@@ -39,6 +39,10 @@
     "description": "Graphite's inbox",
     "url": "https://app.graphite.com/#needs-your-review"
   },
+  "l": {
+    "description": "LinkedIn",
+    "url": "https://www.linkedin.com/feed/"
+  },
   "mqb": {
     "description": "Graphite's merge queue",
     "url": "https://app.graphite.com/merges?repo=bunnify&org=the-hcma&tab=queue"
@@ -54,10 +58,6 @@
   "nm": {
     "description": "YouTube Music New Release Mix",
     "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_m_S_9S_9S_9S_9S_9S_9S_9S_9S_9S_9S"
-  },
-  "l": {
-    "description": "LinkedIn",
-    "url": "https://www.linkedin.com/feed/"
   },
   "pr": {
     "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
