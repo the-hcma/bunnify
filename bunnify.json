@@ -72,7 +72,11 @@
   },
   "sm": {
     "description": "YouTube Music Supermix",
-    "url": "https://music.youtube.com/watch?list=RDTMAK5uy_kpx_1S_9S_9S_9S_9S_9S_9S_9S_9S_9S&autoplay=1"
+    "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_kpx_1S_9S_9S_9S_9S_9S_9S_9S_9S_9S"
+  },
+  "vm": {
+    "description": "Google Voice Messages",
+    "url": "https://voice.google.com/u/0/messages"
   },
   "ym": {
     "description": "YouTube Music",
