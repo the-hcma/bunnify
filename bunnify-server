@@ -436,15 +436,26 @@ echo ""
 # Determine server binding address
 if $listen_all; then
     server_address="0.0.0.0:8000"
-    access_note="(accessible from other machines)"
+    
+    # Get the actual public IP address for display
+    public_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -z "$public_ip" ]; then
+        # Fallback to localhost if we can't determine IP
+        public_ip="127.0.0.1"
+    fi
+    
+    # Show prominent warning early
     echo ""
-    echo "⚠️  WARNING: Server will listen on all interfaces (0.0.0.0:8000)"
-    echo "    This makes the development server accessible from other machines."
-    echo "    Only use --listen-all if you intend to access this server remotely."
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║                       ⚠️  SECURITY WARNING ⚠️                    ║"
+    echo "║  Development server will listen on ALL network interfaces      ║"
+    echo "║  This server will be accessible from other machines!          ║"
+    echo "║  Only use this for testing. Do NOT expose in production.      ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
     echo ""
 else
     server_address="127.0.0.1:8000"
-    access_note="(localhost only)"
+    public_ip=""
 fi
 
 # Expand tilde in bookmarks file path if present
@@ -592,7 +603,7 @@ if $foreground; then
     echo "   Watcher PID: $watcher_pid"
     echo "   URLs:"
     if $listen_all; then
-        echo "     - http://0.0.0.0:8000/ (all interfaces)"
+        echo "     - http://$public_ip:8000/ (public IP)"
         echo "     - http://127.0.0.1:8000/ (IPv4 localhost)"
         echo "     - http://[::1]:8000/ (IPv6 localhost)"
         echo "     - http://localhost:8000/ (localhost auto)"
@@ -683,9 +694,16 @@ else
     echo "   Server PID: $server_pid"
     echo "   Watcher PID: $watcher_pid"
     echo "   URLs:"
-    echo "     - http://127.0.0.1:8000/ (IPv4)"
-    echo "     - http://[::1]:8000/ (IPv6)"
-    echo "     - http://localhost:8000/ (auto)"
+    if $listen_all; then
+        echo "     - http://$public_ip:8000/ (public IP)"
+        echo "     - http://127.0.0.1:8000/ (IPv4 localhost)"
+        echo "     - http://[::1]:8000/ (IPv6 localhost)"
+        echo "     - http://localhost:8000/ (localhost auto)"
+    else
+        echo "     - http://127.0.0.1:8000/ (IPv4)"
+        echo "     - http://[::1]:8000/ (IPv6)"
+        echo "     - http://localhost:8000/ (auto)"
+    fi
     echo "   Log file: /tmp/bunnify.log"
     echo "   Log level: $BUNNIFY_LOG_LEVEL"
     echo ""
