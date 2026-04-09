@@ -3,44 +3,74 @@
 {% block title %}Bunnify - Home{% endblock %}
 
 {% block content %}
-<h2>Welcome to Bunnify</h2>
+<h2>🐰 Welcome to Bunnify</h2>
 
-<p>This application manages URL bookmarks and provides quick redirects.</p>
+<p>Smart bookmark manager with instant Chrome integration.</p>
 
-<h3>How to Use</h3>
+<div style="background-color: #f0f8ff; border-left: 4px solid #3498db; padding: 1.5rem; margin: 2rem 0; border-radius: 4px;">
+    <h3 style="margin-top: 0;">⚡ Quick Setup for Chrome</h3>
+    
+    <p><strong>Make Bunnify your default search engine in 3 steps:</strong></p>
+    
+    <ol>
+        <li>
+            <strong>Go to Chrome settings:</strong><br>
+            Visit <code>chrome://settings/searchEngines</code>
+        </li>
+        <li>
+            <strong>Add Bunnify:</strong><br>
+            Click "Add" and fill in:
+            <ul style="margin: 0.5rem 0;">
+                <li><strong>Search engine:</strong> <code>Bunnify</code></li>
+                <li><strong>Keyword:</strong> <code>b</code></li>
+                <li><strong>URL:</strong> <code>http://127.0.0.1:8000/search/?q=%s</code></li>
+            </ul>
+        </li>
+        <li>
+            <strong>Make it default:</strong><br>
+            Click the three dots (⋮) next to Bunnify and select "Make default"
+        </li>
+    </ol>
+    
+    <p><strong>Now you can use it from Chrome's address bar:</strong></p>
+    <ul>
+        <li>Type <code>c</code> → Opens Calendar</li>
+        <li>Type <code>gh</code> → Opens GitHub</li>
+        <li>Type <code>g django</code> → Google search for "django"</li>
+        <li>Type <code>pr 12345</code> → Opens PR #12345</li>
+    </ul>
+    
+    <p style="margin-bottom: 0;"><em>This single URL handles all your bookmarks automatically!</em></p>
+</div>
+
+<h3>Using Bunnify</h3>
 
 <h4>1. Simple Bookmarks</h4>
 <p>Navigate to <code>/&lt;key&gt;/</code> to be redirected to the bookmark URL.</p>
 <p><strong>Example:</strong></p>
 <ul>
     <li><code>/c/</code> → Redirects to Google Calendar</li>
-    <li><code>/vault/</code> → Redirects to Vault</li>
+    <li><code>/gh/</code> → Redirects to GitHub</li>
 </ul>
 
-<h4>2. Parameterized Bookmarks</h4>
-<p>Some bookmarks require parameters. You can pass them via query parameters or the search interface.</p>
-<p><strong>Query Parameter Examples:</strong></p>
+<h4>2. Search with Parameters</h4>
+<p>Use the unified search endpoint to access bookmarks with parameters:</p>
+<p><strong>Examples:</strong></p>
 <ul>
-    <li><code>/pr/?pr_number=12345</code> → Redirects to PR #12345</li>
-    <li><code>/g/?search_terms=django+tutorial</code> → Redirects to Google search</li>
+    <li><code>/search/?q=g django</code> → Google search for "django"</li>
+    <li><code>/search/?q=pr 12345</code> → Opens PR #12345</li>
+    <li><code>/search/?q=pr 12345 Shopify/shopify-build</code> → Override repo</li>
 </ul>
-<p><strong>Search Interface (Recommended):</strong></p>
-<ul>
-    <li><code>/search/?q=pr 12345</code> → Uses default repo</li>
-    <li><code>/search/?q=pr 12345 Shopify/shopify-build</code> → Overrides default repo</li>
-    <li><code>/search/?q=g django tutorial</code> → Google search</li>
-</ul>
-<p><em>Bookmarks with multiple parameters support defaults. Required parameters come first, optional parameters (with defaults) can be overridden.</em></p>
 
 <h4>3. View All Bookmarks</h4>
-<p>Visit <a href="/list/">/list/</a> to see all available bookmarks.</p>
+<p>Visit <a href="/list/">/list/</a> to see all available bookmarks and their keys.</p>
 
-<h3>Setup Instructions</h3>
-<ol>
-    <li>Run migrations: <code>python manage.py migrate</code></li>
-    <li>Load bookmarks: <code>python manage.py load_bookmarks</code></li>
-    <li>Start server: <code>python manage.py runserver</code></li>
-</ol>
+<h3>Manual Redirect (Without Chrome Setup)</h3>
+<p>You can also access bookmarks directly via query parameters:</p>
+<ul>
+    <li><code>/pr/?pr_number=12345</code> → Opens PR #12345</li>
+    <li><code>/g/?search_terms=django+tutorial</code> → Google search</li>
+</ul>
 
 <p style="margin-top: 2rem;">
     <a href="/list/" style="background-color: #3498db; color: white; padding: 0.75rem 1.5rem; text-decoration: none; border-radius: 4px; display: inline-block;">

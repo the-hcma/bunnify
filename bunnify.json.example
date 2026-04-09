@@ -1,10 +1,7 @@
 {
-  "pr": {
-    "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
-    "url": "https://github.com/#{repo}/pull/#{pr_number}",
-    "defaults": {
-      "repo": "your-org/your-repo"
-    }
+  "c": {
+    "description": "Google Calendar",
+    "url": "https://calendar.google.com"
   },
   "g": {
     "description": "Google Search",
@@ -14,9 +11,12 @@
     "description": "GitHub",
     "url": "https://github.com"
   },
-  "c": {
-    "description": "Google Calendar",
-    "url": "https://calendar.google.com"
+  "pr": {
+    "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
+    "url": "https://github.com/#{repo}/pull/#{pr_number}",
+    "defaults": {
+      "repo": "your-org/your-repo"
+    }
   },
   "rpr": {
     "description": "Request Copilot review for PR",

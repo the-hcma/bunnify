@@ -17,17 +17,21 @@ DESCRIPTION:
     - http://[::1]:8000 (IPv6)
     - http://localhost:8000 (both)
     
-    The server daemonizes itself and runs in the background. Startup messages
-    including PIDs are displayed, but subsequent server output goes to the log
-    file only (unless --console is specified).
+    The server automatically checks if the database is properly initialized
+    on startup. If needed, it will offer to initialize it for you.
+    
+    By default, the server daemonizes and runs in the background with logs
+    sent to /tmp/bunnify.log. Use --console to run in foreground mode with
+    console output (useful for development/debugging).
 
 OPTIONS:
     -h, --help
         Display this help message and exit
 
     -f, --bookmarks FILE
-        Path to the bookmarks JSON file
+        Path to the bookmarks JSON file (REQUIRED)
         Default: ~/work/bunnify/bunnify.json
+        The server will not start if this file does not exist.
 
     --foreground
         Run in the foreground instead of daemonizing.
@@ -35,9 +39,18 @@ OPTIONS:
         Press Ctrl+C to stop the server.
         Default: disabled (runs in background)
 
-    --console
-        Enable console logging in addition to file logging
-        Default: disabled (logs only to file)
+     --console
+         Enable console logging and run in foreground mode.
+         Useful for debugging or interactive development.
+         Press Ctrl+C to stop the server.
+         Default: disabled (runs in background with file logging only)
+
+     --listen-all
+         Listen on all network interfaces (0.0.0.0 and [::]) instead of
+         just localhost (127.0.0.1 and [::1]). This enables external access
+         from other machines. Use only when you want the server accessible
+         from the public network.
+         Default: disabled (localhost only - secure for development)
 
     --log-level LEVEL
         Set the logging level. Valid levels are:
@@ -179,6 +192,7 @@ bookmarks_file="${HOME}/work/bunnify/bunnify.json"
 # Flags
 do_stop=false
 foreground=false
+listen_all=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -205,6 +219,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --console)
             export BUNNIFY_LOG_CONSOLE="true"
+            foreground=true
+            shift
+            ;;
+        --listen-all)
+            listen_all=true
             shift
             ;;
         --log-level)
@@ -405,45 +424,123 @@ fi
 
 echo "🐰 Starting Bunnify server..."
 echo "Directory: $script_dir"
+
+# Show log location
+if [ "$BUNNIFY_LOG_CONSOLE" = "true" ]; then
+    echo "📝 Logging: Console output (foreground mode)"
+else
+    echo "📝 Logging: /tmp/bunnify.log"
+fi
 echo ""
+
+# Determine server binding address
+if $listen_all; then
+    # Get the actual public IP address for display
+    public_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -z "$public_ip" ]; then
+        # Fallback to localhost if we can't determine IP
+        public_ip="127.0.0.1"
+    fi
+    # Pass the actual IP to Django so it displays correctly
+    server_address="$public_ip:8000"
+else
+    server_address="127.0.0.1:8000"
+    public_ip=""
+fi
 
 # Expand tilde in bookmarks file path if present
 bookmarks_file="${bookmarks_file/#\~/$HOME}"
 
-# Check and load bookmarks
-if [ -f "$bookmarks_file" ]; then
-    bookmarks_abs=$(cd "$(dirname "$bookmarks_file")" && pwd)/$(basename "$bookmarks_file")
-    echo "📖 Loading bookmarks from: $bookmarks_abs"
-    
-    # Load bookmarks initially (capture output to check for errors)
-    load_output=$($uv_cmd run python manage.py load_bookmarks --file "$bookmarks_file" 2>&1)
-    load_exit=$?
-    
-    if [ $load_exit -eq 0 ]; then
-        # Extract count from output (looks for "Successfully loaded X bookmarks")
-        bookmark_count=$(echo "$load_output" | grep -o "loaded [0-9]\+ bookmarks" | grep -o "[0-9]\+")
-        if [ -n "$bookmark_count" ]; then
-            echo "✓ Loaded $bookmark_count bookmarks"
-        else
-            echo "✓ Bookmarks loaded"
+# Check database readiness (always run before operations that need the database)
+echo "🔍 Checking database..."
+db_check_output=$($uv_cmd run python manage.py check_database 2>&1)
+db_check_exit=$?
+
+if [ $db_check_exit -eq 0 ]; then
+    # Database is ready - show brief status if console is enabled
+    if [ "$BUNNIFY_LOG_CONSOLE" = "true" ]; then
+        echo "$db_check_output" | head -5
+    fi
+else
+    # Database has issues - offer to fix
+    echo "❌ Database is not ready!"
+    echo ""
+    echo "$db_check_output"
+    echo ""
+    echo -n "Would you like me to initialize the database now? (y/N): "
+    read -r response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo ""
+        $uv_cmd run python manage.py check_database --fix
+        fix_exit=$?
+        if [ $fix_exit -ne 0 ]; then
+            exit 1
         fi
     else
-        echo "⚠️  Warning: Error loading bookmarks"
+        echo "Aborted. Please initialize the database manually with:"
+        echo "  uv run python manage.py migrate"
+        exit 1
     fi
-    echo ""
-else
-    echo "⚠️  Bookmarks file not found: $bookmarks_file"
-    echo "   Server will start but bookmarks may be empty"
-    echo ""
 fi
+echo ""
+
+# Check bookmarks file exists (hard requirement)
+if [ ! -f "$bookmarks_file" ]; then
+    echo "❌ Error: Bookmarks file not found: $bookmarks_file"
+    echo ""
+    echo "The bookmarks file is required to start the server."
+    echo "Please provide a valid bookmarks file using:"
+    echo "  ./bunnify-server --bookmarks /path/to/bunnify.json"
+    echo ""
+    exit 1
+fi
+
+# Load bookmarks
+bookmarks_abs=$(cd "$(dirname "$bookmarks_file")" && pwd)/$(basename "$bookmarks_file")
+echo "📖 Loading bookmarks from: $bookmarks_abs"
+
+# Load bookmarks initially (capture output to check for errors)
+load_output=$($uv_cmd run python manage.py load_bookmarks --file "$bookmarks_file" 2>&1)
+load_exit=$?
+
+if [ $load_exit -eq 0 ]; then
+    # Extract count from output (looks for "Successfully loaded X bookmarks")
+    bookmark_count=$(echo "$load_output" | grep -o "loaded [0-9]\+ bookmarks" | grep -o "[0-9]\+")
+    if [ -n "$bookmark_count" ]; then
+        echo "✓ Loaded $bookmark_count bookmarks"
+    else
+        echo "✓ Bookmarks loaded"
+    fi
+else
+    echo "❌ Error: Failed to load bookmarks"
+    echo ""
+    echo "$load_output"
+    echo ""
+    exit 1
+fi
+echo ""
 
 if $foreground; then
     # Foreground mode: run directly with proper signal handling
     
     # Start the file watcher in the background
-    $uv_cmd run python manage.py watch_bookmarks &
+    $uv_cmd run python manage.py watch_bookmarks --file "$bookmarks_file" &
     watcher_pid=$!
     echo "$watcher_pid" > "$WATCHER_pid_file"
+    
+    # Give the watcher a moment to start
+    sleep 1
+    
+    # Verify watcher started successfully (hard requirement)
+    if ! is_running "$watcher_pid"; then
+        echo "❌ Error: File watcher failed to start"
+        echo ""
+        echo "The file watcher is required for the server to function properly."
+        rm -f "$WATCHER_pid_file"
+        echo ""
+        echo "Please check /tmp/bunnify.log for details."
+        exit 1
+    fi
     
     # Track the Django server PID (will be set when we start it)
     django_pid=""
@@ -495,18 +592,43 @@ if $foreground; then
     echo "✅ Bunnify server starting in foreground mode..."
     echo "   Watcher PID: $watcher_pid"
     echo "   URLs:"
-    echo "     - http://127.0.0.1:8000/ (IPv4)"
-    echo "     - http://[::1]:8000/ (IPv6)"
-    echo "     - http://localhost:8000/ (auto)"
+    if $listen_all; then
+        echo "     - http://$public_ip:8000/ (public IP)"
+        echo "     - http://127.0.0.1:8000/ (IPv4 localhost)"
+        echo "     - http://[::1]:8000/ (IPv6 localhost)"
+        echo "     - http://localhost:8000/ (localhost auto)"
+    else
+        echo "     - http://127.0.0.1:8000/ (IPv4)"
+        echo "     - http://[::1]:8000/ (IPv6)"
+        echo "     - http://localhost:8000/ (auto)"
+    fi
     echo "   Log level: $BUNNIFY_LOG_LEVEL"
     echo ""
     echo "Press Ctrl+C to stop the server"
     echo ""
     
     # Run Django server in foreground (this blocks)
-    # Using [::]:8000 for dual-stack (IPv4 and IPv6) support
-    $uv_cmd run python manage.py runserver "[::]:8000" &
+    $uv_cmd run python manage.py runserver "$server_address" &
     django_pid=$!
+    
+    # Give Django a moment to print its startup messages
+    sleep 2
+    
+    # Show security warning after Django's own warning message
+    if $listen_all; then
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════╗"
+        echo "║                                                              ║"
+        echo "║                     SECURITY WARNING                         ║"
+        echo "║                                                              ║"
+        echo "║     Server is listening on ALL network interfaces            ║"
+        echo "║     This is a DEVELOPMENT server, NOT for production!        ║"
+        echo "║                                                              ║"
+        echo "╚══════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "   Public access: http://$public_ip:8000/"
+        echo ""
+    fi
     
     # Wait for Django to exit (this makes the script interruptible)
     wait $django_pid
@@ -518,15 +640,14 @@ else
     # Background mode (default): daemonize the processes
     
     # Start the file watcher in the background (daemonized)
-    nohup $uv_cmd run python manage.py watch_bookmarks > /dev/null 2>&1 &
+    nohup $uv_cmd run python manage.py watch_bookmarks --file "$bookmarks_file" > /dev/null 2>&1 &
     watcher_pid=$!
     echo "$watcher_pid" > "$WATCHER_pid_file"
     
     # Start the Django development server in the background (daemonized)
-    # Using [::]:8000 for dual-stack (IPv4 and IPv6) support
     # Capture output to temp file for debugging
     startup_log="/tmp/bunnify_startup.log"
-    nohup $uv_cmd run python manage.py runserver "[::]:8000" > "$startup_log" 2>&1 &
+    nohup $uv_cmd run python manage.py runserver "$server_address" > "$startup_log" 2>&1 &
     server_pid=$!
     echo "$server_pid" > "$pid_file"
     
@@ -555,9 +676,24 @@ else
         echo "$server_pid" > "$pid_file"
     fi
     
+    # Check if file watcher started successfully (hard requirement)
     if ! is_running "$watcher_pid"; then
-        echo "⚠️  File watcher failed to start, but server is running"
-        rm -f "$WATCHER_pid_file"
+        echo "❌ Error: File watcher failed to start"
+        echo ""
+        echo "The file watcher is required for the server to function properly."
+        echo "It monitors bookmarks for changes and reloads them automatically."
+        echo ""
+        # Kill the server since we can't proceed
+        echo "🛑 Stopping server due to watcher failure..."
+        kill "$server_pid" 2>/dev/null
+        sleep 1
+        if is_running "$server_pid"; then
+            kill -9 "$server_pid" 2>/dev/null
+        fi
+        rm -f "$pid_file" "$WATCHER_pid_file"
+        echo ""
+        echo "Please check /tmp/bunnify.log for details."
+        exit 1
     fi
     
     # Clear the startup trap now that we're done
@@ -567,9 +703,16 @@ else
     echo "   Server PID: $server_pid"
     echo "   Watcher PID: $watcher_pid"
     echo "   URLs:"
-    echo "     - http://127.0.0.1:8000/ (IPv4)"
-    echo "     - http://[::1]:8000/ (IPv6)"
-    echo "     - http://localhost:8000/ (auto)"
+    if $listen_all; then
+        echo "     - http://$public_ip:8000/ (public IP)"
+        echo "     - http://127.0.0.1:8000/ (IPv4 localhost)"
+        echo "     - http://[::1]:8000/ (IPv6 localhost)"
+        echo "     - http://localhost:8000/ (localhost auto)"
+    else
+        echo "     - http://127.0.0.1:8000/ (IPv4)"
+        echo "     - http://[::1]:8000/ (IPv6)"
+        echo "     - http://localhost:8000/ (auto)"
+    fi
     echo "   Log file: /tmp/bunnify.log"
     echo "   Log level: $BUNNIFY_LOG_LEVEL"
     echo ""

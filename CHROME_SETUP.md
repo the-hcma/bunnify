@@ -1,21 +1,55 @@
 # 🔍 Chrome Search Engine Setup Guide
 
-Configure your bookmark manager as a Chrome built-in search engine for ultra-fast access!
+Configure Bunnify as your primary Chrome search engine for ultra-fast bookmark access!
 
-## Method 1: Automatic Setup (Recommended)
+## ⭐ Recommended Method: OpenSearch (Works for ALL bookmarks)
 
-### Step 1: Visit the Homepage
+This method automatically handles all your bookmarks - simple ones and parameterized ones.
+
+### Step 1: Start the Server
+```bash
+./bunnify-server --bookmarks bunnify.json --console
+```
+
+### Step 2: Add to Chrome
+
+Go to `chrome://settings/searchEngines` and add a new search engine:
+
+**Fill in these fields:**
+- **Search engine:** `Bunnify`
+- **Keyword:** `b` (or your preference)
+- **URL with %s in place of query:**
+  ```
+  http://127.0.0.1:8000/search/?q=%s
+  ```
+
+### Step 3: Set as Default (Optional)
+1. Go back to `chrome://settings/searchEngines`
+2. Find "Bunnify"
+3. Click the three dots (⋮)
+4. Select "Make default"
+
+Now you can use it from Chrome's address bar:
+- Type `c` → Opens Calendar
+- Type `gh` → Opens GitHub
+- Type `g django` → Google search for "django"
+- Type `pr 12345` → Opens PR #12345 (with proper parameters)
+
+---
+
+## Alternative Method: Automatic Detection (Optional)
+
+If you prefer, Chrome can auto-detect Bunnify:
+
 1. Make sure the server is running: `./bunnify-server`
 2. Open Chrome and visit: `http://127.0.0.1:8000/`
 3. Chrome will automatically detect the OpenSearch descriptor
 
-### Step 2: Add to Chrome
-Chrome should auto-detect the search engine, but you can verify in:
-- `chrome://settings/searchEngines`
-- Look for "Bookmarks" in "Site Search" section
+Chrome should offer to add it - but the manual method above is more reliable.
 
-## Method 2: Manual Setup (Always Works)
+---
 
+## Legacy Method: Manual Setup (Not Recommended)
 ### Step 1: Open Chrome Settings
 1. Open Chrome
 2. Go to `chrome://settings/searchEngines`
@@ -27,145 +61,80 @@ Fill in these fields:
 
 **Search engine:**
 ```
-Bookmarks
+Bunnify (Manual)
 ```
 
 **Shortcut/Keyword:**
 ```
 b
 ```
-(You can use any keyword you prefer: `bm`, `go`, `link`, etc.)
+(You can use any keyword you prefer)
 
 **URL with %s in place of query:**
 ```
-http://127.0.0.1:8000/%s/
+http://127.0.0.1:8000/search/?q=%s
 ```
 
 ### Step 3: Click "Add"
 
-## 🚀 Usage
+This is the same setup as the recommended method above.
 
-Once configured, you can use it directly from Chrome's address bar:
+---
 
-### Simple Bookmarks
-Type the keyword followed by the bookmark key:
-- `b c` → Redirects to Google Calendar
-- `b vault` → Redirects to Vault  
-- `b slack` → Redirects to Slack
-- `b gpt` → Redirects to ChatGPT
-
-### Parameterized Bookmarks
-
-For bookmarks requiring parameters, you'll need to type the full URL:
-
-**Option A: Use the bookmark key + manual parameters**
-1. Type: `b pr`
-2. You'll get an error about missing `pr_id`
-3. Instead, navigate directly: `http://127.0.0.1:8000/pr/?pr_id=12345`
-
-**Option B: Create specific shortcuts for common patterns**
-
-You can create multiple search engines for different patterns:
-
-#### For Pull Requests
-- **Search engine:** PR
-- **Keyword:** `pr`
-- **URL:** `http://127.0.0.1:8000/pr/?pr_id=%s`
-
-Usage: `pr 12345` → Opens PR #12345
-
-#### For Google Search
-- **Search engine:** BM Google
-- **Keyword:** `bmg`
-- **URL:** `http://127.0.0.1:8000/g/?search_terms=%s`
-
-Usage: `bmg django tutorial` → Google search
-
-#### For Commits
-- **Search engine:** Commit
-- **Keyword:** `cm`
-- **URL:** `http://127.0.0.1:8000/cw/?commit_id=%s`
-
-Usage: `cm abc123` → Opens commit
-
-#### For GitHub Search
-- **Search engine:** GH Search
-- **Keyword:** `ghs`
-- **URL:** `http://127.0.0.1:8000/ghs/?search_terms=%s`
-
-Usage: `ghs DatabaseError` → Searches GitHub
-
-## 💡 Pro Tips
-
-### 1. Set as Default (Optional)
-You can set "Bookmarks" as your default search engine:
-1. Go to `chrome://settings/searchEngines`
-2. Find "Bookmarks"
-3. Click the three dots (⋮)
-4. Select "Make default"
-
-Now just typing `c` in the address bar will redirect to Calendar!
-
-### 2. Multiple Keywords
-Create variations for frequently used bookmarks:
-- `cal` → `http://127.0.0.1:8000/c/` (Calendar)
-- `mail` → `http://127.0.0.1:8000/m/` (Gmail)
-
-### 3. Quick Access Pattern
-Best workflow:
-- Use short keyword like `b` for general bookmarks
-- Create specific keywords for parameterized ones (`pr`, `cm`, etc.)
-
-## 📋 Common Bookmark Keywords to Set Up
-
-Here are suggested search engines to create:
-
-| Keyword | Description | URL Pattern |
-|---------|-------------|-------------|
-| `b` | General bookmarks | `http://127.0.0.1:8000/%s/` |
-| `pr` | Pull requests | `http://127.0.0.1:8000/pr/?pr_id=%s` |
-| `cm` | Commits | `http://127.0.0.1:8000/cw/?commit_id=%s` |
-| `bmg` | Google via bookmark | `http://127.0.0.1:8000/g/?search_terms=%s` |
-| `ghs` | GitHub search | `http://127.0.0.1:8000/ghs/?search_terms=%s` |
-| `inc` | Incidents | `http://127.0.0.1:8000/incident/?incident_number=%s` |
-
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Search engine not appearing
-- Make sure server is running
-- Visit `http://127.0.0.1:8000/` first
-- Manually add it using Method 2
+- Make sure server is running: `./bunnify-server --bookmarks bunnify.json --console`
+- Check the server is responding: Visit `http://127.0.0.1:8000/` in your browser
+- Manual setup (above) always works if auto-detection fails
 
-### Redirects not working
-- Check server is running: `curl http://127.0.0.1:8000/c/`
-- Verify the bookmark exists: Visit `http://127.0.0.1:8000/list/`
+### Bookmarks not found
+- Visit `http://127.0.0.1:8000/list/` to see all loaded bookmarks
+- Make sure your `bunnify.json` is being loaded correctly
+- Check the server console for errors
 
 ### OpenSearch XML not loading
-- Visit directly: `http://127.0.0.1:8000/opensearch.xml`
+- Visit: `http://127.0.0.1:8000/opensearch.xml`
 - Should see XML with search configuration
+- If it shows an error, restart the server
 
-## 🎯 Example Workflow
+---
 
-1. **Morning routine:**
-   - Type `b c` → Calendar
-   - Type `b m` → Email
-   - Type `b slack` → Slack
+## 🚀 Usage Examples
 
-2. **Code review:**
-   - Type `pr 54321` → Opens PR #54321
-   - Type `b mq` → Opens merge queue
+Once configured, use from Chrome's address bar:
 
-3. **Search:**
-   - Type `bmg django models` → Google search
-   - Type `ghs authentication bug` → GitHub search
+### Simple Bookmarks
+- `b c` → Opens Google Calendar
+- `b gh` → Opens GitHub
+- `b slack` → Opens Slack (if configured)
 
-## 🌐 For Production (Optional)
+### With Parameters
+- `b g django tutorials` → Google search for "django tutorials"
+- `b pr 12345` → Opens PR #12345
+- `b commit abc123` → Opens commit abc123
 
-If you deploy this to a server (e.g., `bookmarks.company.com`), update the URLs:
+---
+
+## Pro Tips
+
+### 1. Single Key Shortcuts
+You can skip the `b` keyword entirely! Go to `chrome://settings/searchEngines` and:
+1. Find your Bunnify search engine
+2. Change the keyword to just a single letter (like `g` or `c`)
+3. Now type just `c` → Calendar (no need for `b c`)
+
+### 2. See All Your Bookmarks
+Visit `http://127.0.0.1:8000/list/` to see all available bookmarks and their keys.
+
+---
+
+## For Production Deployment
+
+If you deploy Bunnify to a server (e.g., `bookmarks.company.com`), update the URL:
 
 ```
-http://bookmarks.company.com/%s/
-http://bookmarks.company.com/pr/?pr_id=%s
+http://bookmarks.company.com/search/?q=%s
 ```
 
 ---
