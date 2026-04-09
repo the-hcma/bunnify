@@ -45,6 +45,13 @@ OPTIONS:
          Press Ctrl+C to stop the server.
          Default: disabled (runs in background with file logging only)
 
+     --listen-all
+         Listen on all network interfaces (0.0.0.0 and [::]) instead of
+         just localhost (127.0.0.1 and [::1]). This enables external access
+         from other machines. Use only when you want the server accessible
+         from the public network.
+         Default: disabled (localhost only - secure for development)
+
     --log-level LEVEL
         Set the logging level. Valid levels are:
             DEBUG    - Detailed diagnostic information
@@ -185,6 +192,7 @@ bookmarks_file="${HOME}/work/bunnify/bunnify.json"
 # Flags
 do_stop=false
 foreground=false
+listen_all=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -212,6 +220,10 @@ while [[ $# -gt 0 ]]; do
         --console)
             export BUNNIFY_LOG_CONSOLE="true"
             foreground=true
+            shift
+            ;;
+        --listen-all)
+            listen_all=true
             shift
             ;;
         --log-level)
@@ -421,6 +433,20 @@ else
 fi
 echo ""
 
+# Determine server binding address
+if $listen_all; then
+    server_address="0.0.0.0:8000"
+    access_note="(accessible from other machines)"
+    echo ""
+    echo "⚠️  WARNING: Server will listen on all interfaces (0.0.0.0:8000)"
+    echo "    This makes the development server accessible from other machines."
+    echo "    Only use --listen-all if you intend to access this server remotely."
+    echo ""
+else
+    server_address="127.0.0.1:8000"
+    access_note="(localhost only)"
+fi
+
 # Expand tilde in bookmarks file path if present
 bookmarks_file="${bookmarks_file/#\~/$HOME}"
 
@@ -565,17 +591,23 @@ if $foreground; then
     echo "✅ Bunnify server starting in foreground mode..."
     echo "   Watcher PID: $watcher_pid"
     echo "   URLs:"
-    echo "     - http://127.0.0.1:8000/ (IPv4)"
-    echo "     - http://[::1]:8000/ (IPv6)"
-    echo "     - http://localhost:8000/ (auto)"
+    if $listen_all; then
+        echo "     - http://0.0.0.0:8000/ (all interfaces)"
+        echo "     - http://127.0.0.1:8000/ (IPv4 localhost)"
+        echo "     - http://[::1]:8000/ (IPv6 localhost)"
+        echo "     - http://localhost:8000/ (localhost auto)"
+    else
+        echo "     - http://127.0.0.1:8000/ (IPv4)"
+        echo "     - http://[::1]:8000/ (IPv6)"
+        echo "     - http://localhost:8000/ (auto)"
+    fi
     echo "   Log level: $BUNNIFY_LOG_LEVEL"
     echo ""
     echo "Press Ctrl+C to stop the server"
     echo ""
     
     # Run Django server in foreground (this blocks)
-    # Using [::]:8000 for dual-stack (IPv4 and IPv6) support
-    $uv_cmd run python manage.py runserver "[::]:8000" &
+    $uv_cmd run python manage.py runserver "$server_address" &
     django_pid=$!
     
     # Wait for Django to exit (this makes the script interruptible)
@@ -593,10 +625,9 @@ else
     echo "$watcher_pid" > "$WATCHER_pid_file"
     
     # Start the Django development server in the background (daemonized)
-    # Using [::]:8000 for dual-stack (IPv4 and IPv6) support
     # Capture output to temp file for debugging
     startup_log="/tmp/bunnify_startup.log"
-    nohup $uv_cmd run python manage.py runserver "[::]:8000" > "$startup_log" 2>&1 &
+    nohup $uv_cmd run python manage.py runserver "$server_address" > "$startup_log" 2>&1 &
     server_pid=$!
     echo "$server_pid" > "$pid_file"
     
