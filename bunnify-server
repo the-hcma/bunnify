@@ -36,7 +36,10 @@ OPTIONS:
         Default: disabled (runs in background)
 
     --console
-        Enable console logging in addition to file logging
+        Enable console logging in addition to file logging.
+        Also performs a database readiness check at startup to ensure
+        the database is properly initialized. If the database needs
+        migration, you'll see a message with instructions.
         Default: disabled (logs only to file)
 
     --log-level LEVEL
@@ -406,6 +409,23 @@ fi
 echo "🐰 Starting Bunnify server..."
 echo "Directory: $script_dir"
 echo ""
+
+# Check database readiness (only when console logging is enabled)
+if [ "$BUNNIFY_LOG_CONSOLE" = "true" ]; then
+    echo "🔍 Checking database..."
+    db_check_output=$($uv_cmd run python manage.py check_database 2>&1)
+    db_check_exit=$?
+    
+    if [ $db_check_exit -eq 0 ]; then
+        echo "$db_check_output" | head -5
+    else
+        echo "❌ Database is not ready!"
+        echo ""
+        echo "$db_check_output"
+        exit 1
+    fi
+    echo ""
+fi
 
 # Expand tilde in bookmarks file path if present
 bookmarks_file="${bookmarks_file/#\~/$HOME}"
