@@ -29,8 +29,9 @@ OPTIONS:
         Display this help message and exit
 
     -f, --bookmarks FILE
-        Path to the bookmarks JSON file
+        Path to the bookmarks JSON file (REQUIRED)
         Default: ~/work/bunnify/bunnify.json
+        The server will not start if this file does not exist.
 
     --foreground
         Run in the foreground instead of daemonizing.
@@ -446,32 +447,41 @@ else
 fi
 echo ""
 
-# Check and load bookmarks
-if [ -f "$bookmarks_file" ]; then
-    bookmarks_abs=$(cd "$(dirname "$bookmarks_file")" && pwd)/$(basename "$bookmarks_file")
-    echo "📖 Loading bookmarks from: $bookmarks_abs"
-    
-    # Load bookmarks initially (capture output to check for errors)
-    load_output=$($uv_cmd run python manage.py load_bookmarks --file "$bookmarks_file" 2>&1)
-    load_exit=$?
-    
-    if [ $load_exit -eq 0 ]; then
-        # Extract count from output (looks for "Successfully loaded X bookmarks")
-        bookmark_count=$(echo "$load_output" | grep -o "loaded [0-9]\+ bookmarks" | grep -o "[0-9]\+")
-        if [ -n "$bookmark_count" ]; then
-            echo "✓ Loaded $bookmark_count bookmarks"
-        else
-            echo "✓ Bookmarks loaded"
-        fi
-    else
-        echo "⚠️  Warning: Error loading bookmarks"
-    fi
+# Check bookmarks file exists (hard requirement)
+if [ ! -f "$bookmarks_file" ]; then
+    echo "❌ Error: Bookmarks file not found: $bookmarks_file"
     echo ""
-else
-    echo "⚠️  Bookmarks file not found: $bookmarks_file"
-    echo "   Server will start but bookmarks may be empty"
+    echo "The bookmarks file is required to start the server."
+    echo "Please provide a valid bookmarks file using:"
+    echo "  ./bunnify-server --bookmarks /path/to/bunnify.json"
     echo ""
+    exit 1
 fi
+
+# Load bookmarks
+bookmarks_abs=$(cd "$(dirname "$bookmarks_file")" && pwd)/$(basename "$bookmarks_file")
+echo "📖 Loading bookmarks from: $bookmarks_abs"
+
+# Load bookmarks initially (capture output to check for errors)
+load_output=$($uv_cmd run python manage.py load_bookmarks --file "$bookmarks_file" 2>&1)
+load_exit=$?
+
+if [ $load_exit -eq 0 ]; then
+    # Extract count from output (looks for "Successfully loaded X bookmarks")
+    bookmark_count=$(echo "$load_output" | grep -o "loaded [0-9]\+ bookmarks" | grep -o "[0-9]\+")
+    if [ -n "$bookmark_count" ]; then
+        echo "✓ Loaded $bookmark_count bookmarks"
+    else
+        echo "✓ Bookmarks loaded"
+    fi
+else
+    echo "❌ Error: Failed to load bookmarks"
+    echo ""
+    echo "$load_output"
+    echo ""
+    exit 1
+fi
+echo ""
 
 if $foreground; then
     # Foreground mode: run directly with proper signal handling
