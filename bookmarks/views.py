@@ -54,10 +54,14 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
     
     key = parts[0]
     
-    # Special case: "h" or "help" - show all bookmarks
+    # Special case: "h", "help", "cmd" - internal commands
     if key in ('h', 'help'):
         logger.info(f"Redirecting to help/list page for key='{key}'")
         return redirect('/list/')
+    
+    if key == 'cmd':
+        logger.info(f"Redirecting to command palette for key='{key}'")
+        return redirect('/cmd/')
     
     param_string = parts[1] if len(parts) > 1 else ''
     
@@ -140,6 +144,13 @@ def redirect_bookmark(request: HttpRequest, key: str) -> HttpResponse:
     Redirect to the bookmark URL, handling parameter substitution
     """
     logger.info(f"Direct bookmark redirect request: key='{key}'")
+    
+    # Internal special commands
+    if key in ('h', 'help'):
+        return redirect('/list/')
+    if key == 'cmd':
+        return redirect('/cmd/')
+    
     try:
         bookmark = Bookmark.objects.get(key=key)
     except Bookmark.DoesNotExist:
