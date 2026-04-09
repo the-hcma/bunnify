@@ -20,9 +20,9 @@ DESCRIPTION:
     The server automatically checks if the database is properly initialized
     on startup. If needed, it will offer to initialize it for you.
     
-    The server daemonizes itself and runs in the background. Startup messages
-    including PIDs are displayed, but subsequent server output goes to the log
-    file only (unless --console is specified).
+    By default, the server daemonizes and runs in the background with logs
+    sent to /tmp/bunnify.log. Use --console to run in foreground mode with
+    console output (useful for development/debugging).
 
 OPTIONS:
     -h, --help
@@ -40,8 +40,10 @@ OPTIONS:
         Default: disabled (runs in background)
 
      --console
-         Enable console logging in addition to file logging.
-         Default: disabled (logs only to file)
+         Enable console logging and run in foreground mode.
+         Useful for debugging or interactive development.
+         Press Ctrl+C to stop the server.
+         Default: disabled (runs in background with file logging only)
 
     --log-level LEVEL
         Set the logging level. Valid levels are:
@@ -209,6 +211,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --console)
             export BUNNIFY_LOG_CONSOLE="true"
+            foreground=true
             shift
             ;;
         --log-level)
@@ -409,6 +412,13 @@ fi
 
 echo "🐰 Starting Bunnify server..."
 echo "Directory: $script_dir"
+
+# Show log location
+if [ "$BUNNIFY_LOG_CONSOLE" = "true" ]; then
+    echo "📝 Logging: Console output (foreground mode)"
+else
+    echo "📝 Logging: /tmp/bunnify.log"
+fi
 echo ""
 
 # Expand tilde in bookmarks file path if present
