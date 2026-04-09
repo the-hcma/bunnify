@@ -443,16 +443,6 @@ if $listen_all; then
         # Fallback to localhost if we can't determine IP
         public_ip="127.0.0.1"
     fi
-    
-    # Show prominent warning early
-    echo ""
-    echo "╔════════════════════════════════════════════════════════════════╗"
-    echo "║                       ⚠️  SECURITY WARNING ⚠️                    ║"
-    echo "║  Development server will listen on ALL network interfaces      ║"
-    echo "║  This server will be accessible from other machines!          ║"
-    echo "║  Only use this for testing. Do NOT expose in production.      ║"
-    echo "╚════════════════════════════════════════════════════════════════╝"
-    echo ""
 else
     server_address="127.0.0.1:8000"
     public_ip=""
@@ -620,6 +610,25 @@ if $foreground; then
     # Run Django server in foreground (this blocks)
     $uv_cmd run python manage.py runserver "$server_address" &
     django_pid=$!
+    
+    # Give Django a moment to print its startup messages
+    sleep 2
+    
+    # Show security warning after Django's own warning message
+    if $listen_all; then
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════╗"
+        echo "║                                                              ║"
+        echo "║                     SECURITY WARNING                         ║"
+        echo "║                                                              ║"
+        echo "║     Server is listening on ALL network interfaces            ║"
+        echo "║     This is a DEVELOPMENT server, NOT for production!        ║"
+        echo "║                                                              ║"
+        echo "╚══════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "   Public access: http://$public_ip:8000/"
+        echo ""
+    fi
     
     # Wait for Django to exit (this makes the script interruptible)
     wait $django_pid
