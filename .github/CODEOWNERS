@@ -1,16 +1,5 @@
 # Code owners for bunnify
 # These owners will be automatically requested for review when PRs are opened
 
-# Primary repository owner
+# Default owner for everything in the repo
 * @thehcma
-
-# Infrastructure and configuration
-/.github/ @thehcma
-/pyproject.toml @thehcma
-/requirements.txt @thehcma
-
-# Core server and bookmarks logic
-/bunnify-server @thehcma
-/bookmarks/ @thehcma
-/bunnify/ @thehcma
-/manage.py @thehcma
