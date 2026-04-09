@@ -17,6 +17,9 @@ DESCRIPTION:
     - http://[::1]:8000 (IPv6)
     - http://localhost:8000 (both)
     
+    The server automatically checks if the database is properly initialized
+    on startup. If needed, it will offer to initialize it for you.
+    
     The server daemonizes itself and runs in the background. Startup messages
     including PIDs are displayed, but subsequent server output goes to the log
     file only (unless --console is specified).
@@ -35,11 +38,9 @@ OPTIONS:
         Press Ctrl+C to stop the server.
         Default: disabled (runs in background)
 
-    --console
-        Enable console logging in addition to file logging.
-        Also performs a database readiness check at startup and offers to
-        automatically initialize the database if needed.
-        Default: disabled (logs only to file)
+     --console
+         Enable console logging in addition to file logging.
+         Default: disabled (logs only to file)
 
     --log-level LEVEL
         Set the logging level. Valid levels are:
@@ -409,39 +410,41 @@ echo "🐰 Starting Bunnify server..."
 echo "Directory: $script_dir"
 echo ""
 
-# Check database readiness (only when console logging is enabled)
-if [ "$BUNNIFY_LOG_CONSOLE" = "true" ]; then
-    echo "🔍 Checking database..."
-    db_check_output=$($uv_cmd run python manage.py check_database 2>&1)
-    db_check_exit=$?
-    
-    if [ $db_check_exit -eq 0 ]; then
-        echo "$db_check_output" | head -5
-    else
-        echo "❌ Database is not ready!"
-        echo ""
-        echo "$db_check_output"
-        echo ""
-        echo -n "Would you like me to initialize the database now? (y/N): "
-        read -r response
-        if [[ "$response" =~ ^[Yy]$ ]]; then
-            echo ""
-            $uv_cmd run python manage.py check_database --fix
-            fix_exit=$?
-            if [ $fix_exit -ne 0 ]; then
-                exit 1
-            fi
-        else
-            echo "Aborted. Please initialize the database manually with:"
-            echo "  uv run python manage.py migrate"
-            exit 1
-        fi
-    fi
-    echo ""
-fi
-
 # Expand tilde in bookmarks file path if present
 bookmarks_file="${bookmarks_file/#\~/$HOME}"
+
+# Check database readiness (always run before operations that need the database)
+echo "🔍 Checking database..."
+db_check_output=$($uv_cmd run python manage.py check_database 2>&1)
+db_check_exit=$?
+
+if [ $db_check_exit -eq 0 ]; then
+    # Database is ready - show brief status if console is enabled
+    if [ "$BUNNIFY_LOG_CONSOLE" = "true" ]; then
+        echo "$db_check_output" | head -5
+    fi
+else
+    # Database has issues - offer to fix
+    echo "❌ Database is not ready!"
+    echo ""
+    echo "$db_check_output"
+    echo ""
+    echo -n "Would you like me to initialize the database now? (y/N): "
+    read -r response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo ""
+        $uv_cmd run python manage.py check_database --fix
+        fix_exit=$?
+        if [ $fix_exit -ne 0 ]; then
+            exit 1
+        fi
+    else
+        echo "Aborted. Please initialize the database manually with:"
+        echo "  uv run python manage.py migrate"
+        exit 1
+    fi
+fi
+echo ""
 
 # Check and load bookmarks
 if [ -f "$bookmarks_file" ]; then
