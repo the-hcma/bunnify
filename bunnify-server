@@ -491,6 +491,20 @@ if $foreground; then
     watcher_pid=$!
     echo "$watcher_pid" > "$WATCHER_pid_file"
     
+    # Give the watcher a moment to start
+    sleep 1
+    
+    # Verify watcher started successfully (hard requirement)
+    if ! is_running "$watcher_pid"; then
+        echo "❌ Error: File watcher failed to start"
+        echo ""
+        echo "The file watcher is required for the server to function properly."
+        rm -f "$WATCHER_pid_file"
+        echo ""
+        echo "Please check /tmp/bunnify.log for details."
+        exit 1
+    fi
+    
     # Track the Django server PID (will be set when we start it)
     django_pid=""
     
@@ -601,9 +615,24 @@ else
         echo "$server_pid" > "$pid_file"
     fi
     
+    # Check if file watcher started successfully (hard requirement)
     if ! is_running "$watcher_pid"; then
-        echo "⚠️  File watcher failed to start, but server is running"
-        rm -f "$WATCHER_pid_file"
+        echo "❌ Error: File watcher failed to start"
+        echo ""
+        echo "The file watcher is required for the server to function properly."
+        echo "It monitors bookmarks for changes and reloads them automatically."
+        echo ""
+        # Kill the server since we can't proceed
+        echo "🛑 Stopping server due to watcher failure..."
+        kill "$server_pid" 2>/dev/null
+        sleep 1
+        if is_running "$server_pid"; then
+            kill -9 "$server_pid" 2>/dev/null
+        fi
+        rm -f "$pid_file" "$WATCHER_pid_file"
+        echo ""
+        echo "Please check /tmp/bunnify.log for details."
+        exit 1
     fi
     
     # Clear the startup trap now that we're done
