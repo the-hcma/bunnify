@@ -4,7 +4,7 @@ A powerful Django-based bookmark manager and URL shortcut system with advanced c
 
 ## Prerequisites
 
-- **Python 3.13+**
+- **Python 3.14+**
 - **[uv](https://docs.astral.sh/uv/)** - Fast Python package manager
 
 ```bash
@@ -316,7 +316,7 @@ This will clear existing bookmarks and load fresh data.
 - **Django 6.0**: Web framework
 - **jsonschema**: JSON validation
 - **SQLite**: Database (default Django DB)
-- **Python 3.13**: Programming language with type hints
+- **Python 3.14**: Programming language with type hints
 - **uv**: Fast Python package manager
 - **pathlib**: Modern file path handling
 - **OpenSearch**: Browser integration protocol

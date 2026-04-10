@@ -40,7 +40,7 @@ Go to repository → About section → Settings (⚙️) → Add topics:
 Settings → Branches → Add branch protection rule for `main`:
 - ✅ Require status checks to pass before merging
 - ✅ Require branches to be up to date before merging
-- Select: `test (3.11)`, `test (3.12)`, `test (3.13)`
+- Select: `test (3.14)`
 
 ### Repository Description
 Update the description to:
@@ -54,7 +54,7 @@ After pushing, go to:
 https://github.com/thehcma/bunnify/actions
 
 You should see the Django CI workflow running. It will:
-- Test on Python 3.11, 3.12, and 3.13
+- Test on Python 3.14
 - Run Django checks
 - Run migrations
 - Validate example bookmark file

@@ -14,7 +14,7 @@
 - ✅ `README.md` - Comprehensive documentation with features, setup, usage
 - ✅ `CONTRIBUTING.md` - Contribution guidelines
 - ✅ `bunnify.json.example` - Example bookmark configuration
-- ✅ `.github/workflows/django.yml` - CI for Python 3.11, 3.12, 3.13
+- ✅ `.github/workflows/bunnify.yml` - CI for Python 3.14
 
 ### Documentation ✓
 - ✅ Features list with all capabilities
@@ -86,7 +86,7 @@ These are in `.gitignore` and won't be pushed:
 - **Total Commits:** 2
 - **Commit Signatures:** GPG signed ✓
 - **License:** MIT
-- **Python Version:** 3.13 (supports 3.11+)
+- **Python Version:** 3.14 (supports 3.14+)
 - **Django Version:** 6.0.1
 
 ## Features Included in This Release
