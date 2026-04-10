@@ -7,21 +7,28 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='Bookmark',
+            name="Bookmark",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('key', models.CharField(db_index=True, max_length=100, unique=True)),
-                ('description', models.TextField()),
-                ('url', models.URLField(max_length=1000)),
-                ('old_url', models.URLField(blank=True, max_length=1000, null=True)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("key", models.CharField(db_index=True, max_length=100, unique=True)),
+                ("description", models.TextField()),
+                ("url", models.URLField(max_length=1000)),
+                ("old_url", models.URLField(blank=True, max_length=1000, null=True)),
             ],
             options={
-                'ordering': ['key'],
+                "ordering": ["key"],
             },
         ),
     ]

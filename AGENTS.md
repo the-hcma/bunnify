@@ -56,9 +56,13 @@ This file defines the non-negotiable standards for all contributors (human or AI
 
 ## Shell Scripts
 
-- **`shellcheck`** is strongly recommended for all shell scripts.
-- Non-exported variables must be lowercase.
-- Use `local` for all function-scoped variables in bash scripts.
+ - Do not use `.sh` extensions for shell script files.
+ - **`shellcheck`** is strongly recommended for all shell scripts.
+ - Non-exported variables must be lowercase; only exported environment variables should be UPPERCASE.
+ - Use `local` for all function-scoped variables in bash scripts and prefer `readonly` for values that must not change.
+ - Prefer long, verbose command-line arguments (e.g. `curl --silent` over `curl -s`) when composing shell scripts, as they are intrinsically self-documenting.
+ - Always add explicit timeouts for network or long-running external commands: use `curl --max-time <s>` for HTTP requests and `timeout <s>` for commands that may hang.
+ - When writing server scripts that accept a `--port` argument, support `0` as a valid value to let the OS choose an ephemeral port (useful for tests and CI).
 
 ---
 
@@ -80,3 +84,14 @@ uv run pyright
 ```
 
 No PR may be merged if the above commands fail.
+
+### Pre-PR Local Checklist (recommended)
+
+- **Run the unified preflight script:** Prefer using `scripts/checks` which runs formatting, linters, unit tests and (optionally) integration tests with sensible timeouts.
+- **Formatting & linting:** `uv run isort --check-only --diff .` and `uv run black --check .` and `uv run pyright --warnings` must pass locally before creating a PR.
+- **Shell linting:** Run `shellcheck bunnify-server test_integration scripts/*` and ensure there are no new errors or warnings.
+- **Unit tests:** Run `./test_bunnify` and ensure all tests pass.
+- **Integration tests (required pre-PR):** Run `./test_integration` — this script uses OS-chosen ephemeral ports when passed `--port 0` and includes explicit timeouts; run it locally to validate end-to-end behavior.
+- **Parallelization guidance:** When possible, run formatting and static checks in parallel to reduce feedback time (our CI runs `isort`, `black`, and `pyright` in a separate job from shellcheck and tests). Locally, `scripts/checks` can be used as a single-entrypoint; CI runs jobs in parallel automatically.
+
+If any of the above fail locally, fix the issues before opening a PR. The CI will re-run these checks in parallel and block merges on failures.

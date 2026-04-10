@@ -129,7 +129,8 @@ fi
 
 # PID file location
 pid_file="$script_dir/.bunnify.pid"
-WATCHER_pid_file="$script_dir/.bunnify_watcher.pid"
+watcher_pid_file="$script_dir/.bunnify_watcher.pid"
+port_file="$script_dir/.bunnify.port"
 
 # Cleanup function to stop all processes
 cleanup() {
@@ -154,7 +155,7 @@ cleanup() {
     fi
     
     # Clean up PID files
-    rm -f "$pid_file" "$WATCHER_pid_file"
+    rm -f "$pid_file" "$watcher_pid_file" "$port_file"
     
     echo "✅ Bunnify stopped."
     exit "$exit_code"
@@ -174,7 +175,7 @@ cleanup_startup() {
         kill "$watcher_pid" 2>/dev/null
     fi
     
-    rm -f "$pid_file" "$WATCHER_pid_file"
+    rm -f "$pid_file" "$watcher_pid_file"
     echo "❌ Startup aborted."
     exit 130
 }
@@ -193,6 +194,7 @@ bookmarks_file="${HOME}/work/bunnify/bunnify.json"
 do_stop=false
 foreground=false
 listen_all=false
+server_port="8000"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -200,6 +202,15 @@ while [[ $# -gt 0 ]]; do
         --stop)
             do_stop=true
             shift
+            ;;
+        --port)
+            if [ -z "$2" ]; then
+                echo "Error: --port requires a value"
+                echo "Run './bunnify-server --help' for more information"
+                exit 1
+            fi
+            server_port="$2"
+            shift 2
             ;;
         --foreground)
             foreground=true
@@ -236,6 +247,15 @@ while [[ $# -gt 0 ]]; do
             export BUNNIFY_LOG_LEVEL="$2"
             shift 2
             ;;
+        --log-file)
+            if [ -z "$2" ]; then
+                echo "Error: --log-file requires a file path"
+                echo "Run './bunnify-server --help' for more information"
+                exit 1
+            fi
+            export BUNNIFY_LOG_FILE="$2"
+            shift 2
+            ;;
         *)
             echo "Error: Unknown option: $1"
             echo "Run './bunnify-server --help' for usage information"
@@ -243,6 +263,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# If server_port is 0, ask the OS for a free ephemeral port, then hand that fixed port to Django.
+# We close the socket immediately so Django can bind to it; there is a brief TOCTOU window
+# but this is acceptable for local development and CI.
+if [ "$server_port" = "0" ]; then
+    server_port=$($uv_cmd run python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    echo "$server_port" > "$port_file"
+fi
 
 # Function to check if process is running
 is_running() {
@@ -257,9 +285,9 @@ is_running() {
     fi
 }
 
-# Function to check if port 8000 is in use
+# Function to check if port is in use
 is_port_in_use() {
-    lsof -ti:8000 > /dev/null 2>&1
+    lsof -ti:"$server_port" > /dev/null 2>&1
 }
 # Function to check if process is Bunnify
 is_bunnify_process() {
@@ -289,30 +317,38 @@ do_stop() {
             fi
             found_process=true
         fi
-        rm -f "$pid_file"
+        rm -f "$pid_file" "$port_file"
     fi
     
-    if [ -f "$WATCHER_pid_file" ]; then
-        watcher_pid=$(cat "$WATCHER_pid_file")
+    if [ -f "$watcher_pid_file" ]; then
+        watcher_pid=$(cat "$watcher_pid_file")
         if is_running "$watcher_pid"; then
             echo "🛑 Stopping file watcher (PID: $watcher_pid)..."
             kill "$watcher_pid" 2>/dev/null
             found_process=true
         fi
-        rm -f "$WATCHER_pid_file"
+        rm -f "$watcher_pid_file" "$port_file"
     fi
     
-    # Also check for any orphaned processes on port 8000
-    if is_port_in_use; then
-        port_pid=$(lsof -ti:8000 2>/dev/null | head -1)
-        if [ -n "$port_pid" ] && is_bunnify_process "$port_pid"; then
-            echo "🛑 Stopping orphaned Bunnify process (PID: $port_pid)..."
-            kill "$port_pid" 2>/dev/null
-            sleep 1
-            if is_running "$port_pid"; then
-                kill -9 "$port_pid" 2>/dev/null
+    # Also check for any orphaned processes on the target port
+    local check_port
+    if [ -f "$port_file" ]; then
+        check_port=$(cat "$port_file" 2>/dev/null || true)
+    else
+        check_port="$server_port"
+    fi
+    if [ -n "$check_port" ] && [ "$check_port" != "0" ]; then
+        if lsof -ti:"$check_port" > /dev/null 2>&1; then
+            port_pid=$(lsof -ti:"$check_port" 2>/dev/null | head -1)
+            if [ -n "$port_pid" ] && is_bunnify_process "$port_pid"; then
+                echo "🛑 Stopping orphaned Bunnify process (PID: $port_pid)..."
+                kill "$port_pid" 2>/dev/null
+                sleep 1
+                if is_running "$port_pid"; then
+                    kill -9 "$port_pid" 2>/dev/null
+                fi
+                found_process=true
             fi
-            found_process=true
         fi
     fi
     
@@ -349,28 +385,34 @@ stop_server() {
         rm -f "$pid_file"
     fi
     
-    if [ -f "$WATCHER_pid_file" ]; then
-        watcher_pid=$(cat "$WATCHER_pid_file")
+    if [ -f "$watcher_pid_file" ]; then
+        watcher_pid=$(cat "$watcher_pid_file")
         if is_running "$watcher_pid"; then
             echo "🛑 Stopping file watcher (PID: $watcher_pid)..."
             kill "$watcher_pid" 2>/dev/null
         fi
-        rm -f "$WATCHER_pid_file"
+        rm -f "$watcher_pid_file"
     fi
     
     # Check if port is still in use
-    if is_port_in_use; then
-        port_pid=$(lsof -ti:8000 2>/dev/null | head -1)
+    local check_port
+    if [ -f "$port_file" ]; then
+        check_port=$(cat "$port_file" 2>/dev/null || true)
+    else
+        check_port="$server_port"
+    fi
+    if [ -n "$check_port" ] && [ "$check_port" != "0" ] && lsof -ti:"$check_port" > /dev/null 2>/dev/null; then
+        port_pid=$(lsof -ti:"$check_port" 2>/dev/null | head -1)
         if [ -n "$port_pid" ]; then
             proc_cmd=$(ps -p "$port_pid" -o command= 2>/dev/null)
             
             # Check if it's a Bunnify process
             if is_bunnify_process "$port_pid"; then
-                echo "🛑 Port 8000 still in use by Bunnify process (PID: $port_pid), killing..."
+                echo "🛑 Port $check_port still in use by Bunnify process (PID: $port_pid), killing..."
                 kill -9 "$port_pid" 2>/dev/null
                 sleep 1
             else
-                echo "⚠️  WARNING: Port 8000 is in use by a non-Bunnify process!"
+                echo "⚠️  WARNING: Port $check_port is in use by a non-Bunnify process!"
                 echo "   PID: $port_pid"
                 echo "   Command: $proc_cmd"
                 echo ""
@@ -405,7 +447,7 @@ if [ -f "$pid_file" ]; then
         done
     else
         echo "🧹 Cleaning up stale PID file..."
-        rm -f "$pid_file" "$WATCHER_pid_file"
+        rm -f "$pid_file" "$watcher_pid_file" "$port_file"
     fi
 elif is_port_in_use; then
     port_pid=$(lsof -ti:8000 2>/dev/null | head -1)
@@ -441,11 +483,11 @@ if $listen_all; then
         # Fallback to localhost if we can't determine IP
         public_ip="127.0.0.1"
     fi
-    # Pass the actual IP to Django so it displays correctly
-    server_address="$public_ip:8000"
+    # Listen on all IPv4 addresses (will handle IPv6 if OS configured to map IPv4 to v6)
+    server_address="$public_ip:$server_port"
 else
-    server_address="127.0.0.1:8000"
-    public_ip=""
+    # Listen on localhost IPv4 only (most secure default)
+    server_address="127.0.0.1:$server_port"
 fi
 
 # Expand tilde in bookmarks file path if present
@@ -526,7 +568,7 @@ if $foreground; then
     # Start the file watcher in the background
     $uv_cmd run python manage.py watch_bookmarks --file "$bookmarks_file" &
     watcher_pid=$!
-    echo "$watcher_pid" > "$WATCHER_pid_file"
+    echo "$watcher_pid" > "$watcher_pid_file"
     
     # Give the watcher a moment to start
     sleep 1
@@ -536,7 +578,7 @@ if $foreground; then
         echo "❌ Error: File watcher failed to start"
         echo ""
         echo "The file watcher is required for the server to function properly."
-        rm -f "$WATCHER_pid_file"
+        rm -f "$watcher_pid_file"
         echo ""
         echo "Please check /tmp/bunnify.log for details."
         exit 1
@@ -568,17 +610,17 @@ if $foreground; then
             kill "$watcher_pid" 2>/dev/null
         fi
         
-        # Clean up any processes still using port 8000
+        # Clean up any processes still using the target port
         if is_port_in_use; then
             local port_pid
-            port_pid=$(lsof -ti:8000 2>/dev/null | head -1)
+            port_pid=$(lsof -ti:"$server_port" 2>/dev/null | head -1)
             if [ -n "$port_pid" ]; then
                 kill "$port_pid" 2>/dev/null
             fi
         fi
         
         # Clean up PID files
-        rm -f "$pid_file" "$WATCHER_pid_file"
+        rm -f "$pid_file" "$watcher_pid_file"
         
         echo "✅ Bunnify stopped."
         exit "$exit_code"
@@ -593,14 +635,14 @@ if $foreground; then
     echo "   Watcher PID: $watcher_pid"
     echo "   URLs:"
     if $listen_all; then
-        echo "     - http://$public_ip:8000/ (public IP)"
-        echo "     - http://127.0.0.1:8000/ (IPv4 localhost)"
-        echo "     - http://[::1]:8000/ (IPv6 localhost)"
-        echo "     - http://localhost:8000/ (localhost auto)"
+        echo "     - http://$public_ip:$server_port/ (public IP)"
+        echo "     - http://127.0.0.1:$server_port/ (IPv4 localhost)"
+        echo "     - http://[::1]:$server_port/ (IPv6 localhost)"
+        echo "     - http://localhost:$server_port/ (localhost auto)"
     else
-        echo "     - http://127.0.0.1:8000/ (IPv4)"
-        echo "     - http://[::1]:8000/ (IPv6)"
-        echo "     - http://localhost:8000/ (auto)"
+        echo "     - http://127.0.0.1:$server_port/ (IPv4)"
+        echo "     - http://[::1]:$server_port/ (IPv6)"
+        echo "     - http://localhost:$server_port/ (auto)"
     fi
     echo "   Log level: $BUNNIFY_LOG_LEVEL"
     echo ""
@@ -642,7 +684,7 @@ else
     # Start the file watcher in the background (daemonized)
     nohup $uv_cmd run python manage.py watch_bookmarks --file "$bookmarks_file" > /dev/null 2>&1 &
     watcher_pid=$!
-    echo "$watcher_pid" > "$WATCHER_pid_file"
+    echo "$watcher_pid" > "$watcher_pid_file"
     
     # Start the Django development server in the background (daemonized)
     # Capture output to temp file for debugging
@@ -654,11 +696,11 @@ else
     # Wait for processes to start (uv spawns python which takes a moment)
     sleep 3
     
-    # The PID we captured is uv's PID, but we need to check if port 8000 is now in use
+    # The PID we captured is uv's PID, but we need to check if port is now in use
     # as that indicates the server actually started successfully
     if ! is_port_in_use; then
         echo "❌ Failed to start Django server"
-        rm -f "$pid_file" "$WATCHER_pid_file"
+        rm -f "$pid_file" "$watcher_pid_file"
         # Show startup log if it exists
         if [ -f "$startup_log" ] && [ -s "$startup_log" ]; then
             echo "   Startup output:"
@@ -668,11 +710,11 @@ else
         fi
         exit 1
     fi
-    
+
     # Update PID file with actual Django process PID
-    ACTUAL_server_pid=$(lsof -ti:8000 2>/dev/null | head -1)
-    if [ -n "$ACTUAL_server_pid" ]; then
-        server_pid=$ACTUAL_server_pid
+    actual_server_pid=$(lsof -ti:"$server_port" 2>/dev/null | head -1)
+    if [ -n "$actual_server_pid" ]; then
+        server_pid=$actual_server_pid
         echo "$server_pid" > "$pid_file"
     fi
     
@@ -690,7 +732,7 @@ else
         if is_running "$server_pid"; then
             kill -9 "$server_pid" 2>/dev/null
         fi
-        rm -f "$pid_file" "$WATCHER_pid_file"
+        rm -f "$pid_file" "$watcher_pid_file"
         echo ""
         echo "Please check /tmp/bunnify.log for details."
         exit 1
@@ -704,14 +746,14 @@ else
     echo "   Watcher PID: $watcher_pid"
     echo "   URLs:"
     if $listen_all; then
-        echo "     - http://$public_ip:8000/ (public IP)"
-        echo "     - http://127.0.0.1:8000/ (IPv4 localhost)"
-        echo "     - http://[::1]:8000/ (IPv6 localhost)"
-        echo "     - http://localhost:8000/ (localhost auto)"
+        echo "     - http://$public_ip:$server_port/ (public IP)"
+        echo "     - http://127.0.0.1:$server_port/ (IPv4 localhost)"
+        echo "     - http://[::1]:$server_port/ (IPv6 localhost)"
+        echo "     - http://localhost:$server_port/ (localhost auto)"
     else
-        echo "     - http://127.0.0.1:8000/ (IPv4)"
-        echo "     - http://[::1]:8000/ (IPv6)"
-        echo "     - http://localhost:8000/ (auto)"
+        echo "     - http://127.0.0.1:$server_port/ (IPv4)"
+        echo "     - http://[::1]:$server_port/ (IPv6)"
+        echo "     - http://localhost:$server_port/ (auto)"
     fi
     echo "   Log file: /tmp/bunnify.log"
     echo "   Log level: $BUNNIFY_LOG_LEVEL"

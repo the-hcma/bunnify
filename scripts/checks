@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Local preflight checks for formatting, linting and tests.
+# Usage: scripts/checks [--skip-integration]
+
+readonly UV_CMD="uv"
+
+usage() {
+    echo "Usage: $0 [--skip-integration]"
+    exit 2
+}
+
+SKIP_INTEGRATION=false
+if [ "${1-}" = "--skip-integration" ]; then
+    SKIP_INTEGRATION=true
+elif [ "${1-}" != "" ]; then
+    usage
+fi
+
+run() {
+    local cmd
+    cmd="$1"
+    echo "+ $cmd"
+    eval "$cmd"
+}
+
+echo "🔎 Running preflight checks"
+
+# Python formatting and linting
+run "$UV_CMD run isort --check-only --diff ."
+run "$UV_CMD run black --check ."
+run "$UV_CMD run pyright --warnings"
+
+# Shell linting (only when shellcheck is available)
+if command -v shellcheck >/dev/null 2>&1; then
+    run "shellcheck bunnify-server"
+    run "shellcheck test_integration"
+    if [ -d scripts ]; then
+        run "shellcheck scripts/* || true"
+    fi
+else
+    echo "⚠️  shellcheck not installed — skipping shell lint"
+fi
+
+# Django checks and unit tests
+run "$UV_CMD run python manage.py check"
+run "./test_bunnify"
+
+if [ "$SKIP_INTEGRATION" != "true" ]; then
+    echo "⏳ Running integration script (timeout 120s)"
+    run "chmod +x ./test_integration && timeout 120 ./test_integration"
+else
+    echo "ℹ️  Skipping integration tests (use --skip-integration to skip)"
+fi
+
+echo "✅ Preflight checks completed"

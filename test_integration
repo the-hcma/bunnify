@@ -1,0 +1,114 @@
+#!/bin/bash
+set -eo pipefail
+
+# Cleanup: stop the server and remove all temp files created by this script.
+# Registered on EXIT so it runs on normal exit, errors, and signals alike.
+# shellcheck disable=SC2317  # called indirectly via trap
+cleanup() {
+    echo "🧹 Cleaning up..."
+    timeout 30 ./bunnify-server --stop 2>/dev/null || true
+    if [ -n "${server_pid:-}" ]; then
+        kill "$server_pid" 2>/dev/null || true
+    fi
+    rm -f "${log_file:-}" /tmp/test_bookmarks.json
+}
+trap cleanup EXIT
+
+echo "🧪 Starting Integration Tests..."
+
+# Initialize test bookmarks
+cp bunnify.json.example /tmp/test_bookmarks.json
+
+# Ensure no existing server is running before we start
+timeout 10 ./bunnify-server --stop 2>/dev/null || true
+sleep 1
+
+# Isolated log file for this run (path passed via CLI, not env var)
+log_file=$(mktemp)
+echo "📝 Routing logs to isolated file: $log_file"
+
+# Start the server with an OS-chosen ephemeral port, debug logging, and isolated log file
+timeout 60 ./bunnify-server \
+    --bookmarks /tmp/test_bookmarks.json \
+    --port 0 \
+    --log-level DEBUG \
+    --log-file "$log_file" \
+    > /dev/null 2>&1 &
+server_pid=$!
+
+echo "⏳ Waiting for server to boot and select its port..."
+
+max_attempts=40
+attempt=0
+port=""
+while [ -z "$port" ]; do
+    attempt=$((attempt+1))
+    if [ "$attempt" -gt "$max_attempts" ]; then
+        echo "❌ Server failed to bind to a port in time!"
+        cat "$log_file" || true
+        exit 1
+    fi
+    sleep 0.5
+    if [ -f .bunnify.port ]; then
+        port=$(cat .bunnify.port 2>/dev/null || true)
+    fi
+done
+echo "🎯 Server securely routed to dynamic OS port: $port"
+
+echo "⏳ Waiting for HTTP endpoint mapping resolution..."
+attempt=0
+while ! curl --silent --output /dev/null --max-time 5 "http://127.0.0.1:$port/list/"; do
+    attempt=$((attempt+1))
+    if [ "$attempt" -gt "$max_attempts" ]; then
+        echo "❌ Server failed to respond to HTTP validations in time!"
+        cat "$log_file" || true
+        exit 1
+    fi
+    sleep 0.5
+done
+echo "✅ Server is up!"
+
+# Define tests
+failed=0
+
+assert_redirect() {
+    local path=$1
+    local expected_url=$2
+    
+    echo "  Testing shortcut: $path"
+    
+    # Extract the 'Location' header from the HTTP response
+    local location
+    location=$(curl --silent --dump-header - --output /dev/null --max-time 5 "http://127.0.0.1:$port$path" | grep -i "^location:" | awk '{print $2}' | tr -d '\r')
+    
+    if [ "$location" = "$expected_url" ]; then
+        echo "    ✅ Redirects to expected URL: $location"
+    else
+        echo "    ❌ Expected redirect to: $expected_url"
+        echo "       Actually redirected to:   $location"
+        failed=1
+    fi
+}
+
+echo "🔍 Running endpoint validations..."
+# Test standard redirection
+assert_redirect "/c/" "https://calendar.google.com"
+
+# Test exact parameter match
+assert_redirect "/gh/" "https://github.com"
+
+# Test parameter substitution URL
+# E.g. "g query" mapped via `search_redirect` view which catches /search/?q=g%20query
+assert_redirect "/search/?q=g%20hello" "https://www.google.com/search?q=hello"
+
+# Test multi parameter substitution PR bookmark
+assert_redirect "/search/?q=pr%20123%20my-org/bunnify" "https://github.com/my-org/bunnify/pull/123"
+
+# EXIT trap handles shutdown and cleanup
+if [ "$failed" -eq 0 ]; then
+    echo "🎉 All integration tests passed!"
+    exit 0
+else
+    echo "🚨 Integration tests failed!"
+    exit 1
+fi
