@@ -1,0 +1,90 @@
+name: Bunnify CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches-ignore:
+      - '**/graphite-base/**'
+
+jobs:
+  lint-python:
+    name: Python lint & format checks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.14
+      run: uv python install 3.14
+
+    - name: Install dependencies (including dev)
+      run: uv sync --all-groups
+
+    - name: Check import sorting (isort)
+      run: uv run isort --check-only --diff .
+
+    - name: Check formatting (black)
+      run: uv run black --check .
+
+    - name: Type check (pyright)
+      run: uv run pyright --warnings
+
+  lint-shell:
+    name: Shell script linting
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install shellcheck
+      run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+    - name: Lint bash scripts with shellcheck
+      run: |
+        shellcheck bunnify-server
+        shellcheck test_integration
+        if [ -d scripts ]; then shellcheck scripts/* || true; fi
+
+  test:
+    name: Tests & validations
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.14
+      run: uv python install 3.14
+
+    - name: Install dependencies
+      run: uv sync --all-groups
+
+    - name: Run Django checks
+      run: uv run python manage.py check
+
+    - name: Run migrations
+      run: uv run python manage.py migrate
+
+    - name: Validate example bookmark file
+      run: |
+        cp bunnify.json.example /tmp/test_bookmarks.json
+        uv run python manage.py load_bookmarks --file /tmp/test_bookmarks.json
+
+    - name: Validate bunnify-server script
+      run: ./bunnify-server --help
+
+    - name: Run unit tests
+      run: ./test_bunnify
+
+    - name: Run integration script (timeout protected)
+      run: |
+        chmod +x ./test_integration
+        ./test_integration

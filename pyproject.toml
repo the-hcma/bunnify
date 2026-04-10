@@ -17,6 +17,7 @@ build-backend = "hatchling.build"
 dev = [
     "isort>=7.0.0",
     "pyright>=1.1.408",
+    "black>=24.3.0",
 ]
 
 [tool.isort]

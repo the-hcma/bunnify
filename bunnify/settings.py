@@ -20,65 +20,63 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure--399tt_+5^q05=s3(ypxc3mez)qzo61dsoj7ok5u!#oyl$*ngq'
+SECRET_KEY = "django-insecure--399tt_+5^q05=s3(ypxc3mez)qzo61dsoj7ok5u!#oyl$*ngq"
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'bookmarks',
-
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-
+    "bookmarks",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'bunnify.urls'
+ROOT_URLCONF = "bunnify.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'bunnify.wsgi.application'
+WSGI_APPLICATION = "bunnify.wsgi.application"
 
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
     }
 }
 
@@ -88,16 +86,16 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -105,9 +103,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "UTC"
 
 USE_I18N = True
 
@@ -117,7 +115,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
 
 # Logging Configuration
 import os
@@ -125,64 +123,64 @@ import sys
 from pathlib import Path
 
 # Get log level from environment variable, default to WARNING
-LOG_LEVEL = os.environ.get('BUNNIFY_LOG_LEVEL', 'WARNING').upper()
+LOG_LEVEL = os.environ.get("BUNNIFY_LOG_LEVEL", "WARNING").upper()
 
 # Determine if logging to console (check for flag)
-LOG_TO_CONSOLE = os.environ.get('BUNNIFY_LOG_CONSOLE', 'false').lower() == 'true'
+LOG_TO_CONSOLE = os.environ.get("BUNNIFY_LOG_CONSOLE", "false").lower() == "true"
 
 # Log file path
-LOG_FILE = str(Path('/tmp') / 'bunnify.log')
+LOG_FILE = os.environ.get("BUNNIFY_LOG_FILE", str(Path("/tmp") / "bunnify.log"))
 
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '[{asctime}] [{levelname}] [PID:{process}] [{name}:{funcName}:{lineno}] {message}',
-            'style': '{',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[{asctime}] [{levelname}] [PID:{process}] [{name}:{funcName}:{lineno}] {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
-        'simple': {
-            'format': '[{asctime}] [{levelname}] {message}',
-            'style': '{',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
-        },
-    },
-    'handlers': {
-        'file': {
-            'level': LOG_LEVEL,
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOG_FILE,
-            'maxBytes': 10 * 1024 * 1024,  # 10 MB
-            'backupCount': 5,
-            'formatter': 'verbose',
-        },
-        'console': {
-            'level': LOG_LEVEL,
-            'class': 'logging.StreamHandler',
-            'stream': sys.stdout,
-            'formatter': 'verbose',
+        "simple": {
+            "format": "[{asctime}] [{levelname}] {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },
-    'loggers': {
-        'bunnify': {
-            'handlers': ['file'] if not LOG_TO_CONSOLE else ['file', 'console'],
-            'level': LOG_LEVEL,
-            'propagate': False,
+    "handlers": {
+        "file": {
+            "level": LOG_LEVEL,
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_FILE,
+            "maxBytes": 10 * 1024 * 1024,  # 10 MB
+            "backupCount": 5,
+            "formatter": "verbose",
         },
-        'bookmarks': {
-            'handlers': ['file'] if not LOG_TO_CONSOLE else ['file', 'console'],
-            'level': LOG_LEVEL,
-            'propagate': False,
-        },
-        'django': {
-            'handlers': ['file'] if not LOG_TO_CONSOLE else ['file', 'console'],
-            'level': 'WARNING',  # Keep Django logs at WARNING regardless
-            'propagate': False,
+        "console": {
+            "level": LOG_LEVEL,
+            "class": "logging.StreamHandler",
+            "stream": sys.stdout,
+            "formatter": "verbose",
         },
     },
-    'root': {
-        'handlers': ['file'] if not LOG_TO_CONSOLE else ['file', 'console'],
-        'level': LOG_LEVEL,
+    "loggers": {
+        "bunnify": {
+            "handlers": ["file"] if not LOG_TO_CONSOLE else ["file", "console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "bookmarks": {
+            "handlers": ["file"] if not LOG_TO_CONSOLE else ["file", "console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "django": {
+            "handlers": ["file"] if not LOG_TO_CONSOLE else ["file", "console"],
+            "level": "WARNING",  # Keep Django logs at WARNING regardless
+            "propagate": False,
+        },
+    },
+    "root": {
+        "handlers": ["file"] if not LOG_TO_CONSOLE else ["file", "console"],
+        "level": LOG_LEVEL,
     },
 }
