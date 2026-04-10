@@ -236,6 +236,22 @@ enable the frontend warning (PR 2) to display it.
 
 ---
 
+## Modern Graphite Features (v1.0.0+)
+
+### SQLite Backend (v1.8.0+)
+Graphite has migrated its metadata storage from Git objects to **SQLite**. This change significantly improves performance by allowing Graphite to validate metadata only when relevant changes are detected.
+
+### Signed Commits
+Graphite supports signed commits during remote operations (like rebasing) to ensure they are marked as **Verified** on GitHub.
+1. Generate a personal key pair in the [Graphite Settings](https://app.graphite.com/settings).
+2. Add the generated public key to your [GitHub SSH keys](https://github.com/settings/keys).
+
+### Requirements & Environment
+- **Node.js**: Support for Node 18 was dropped in v1.6.0. **Node 20+** is required.
+- **Config Location**: Graphite uses XDG-compliant locations (typically `~/.config/graphite/`).
+
+---
+
 ## Troubleshooting
 
 | Problem | Solution |
