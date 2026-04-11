@@ -6,11 +6,20 @@ set -eo pipefail
 # shellcheck disable=SC2317  # called indirectly via trap
 cleanup() {
     echo "🧹 Cleaning up..."
-    timeout 30 ./bunnify-server --stop 2>/dev/null || true
+    timeout 30 ./bunnify-server --stop --pid-dir "$pid_dir" 2>/dev/null || true
+    # Belt-and-suspenders: kill Django/watcher directly from PID files if --stop failed
+    if [ -f "${pid_dir:-}/.bunnify.pid" ]; then
+        kill "$(cat "$pid_dir/.bunnify.pid")" 2>/dev/null || true
+    fi
+    if [ -f "${pid_dir:-}/.bunnify_watcher.pid" ]; then
+        kill "$(cat "$pid_dir/.bunnify_watcher.pid")" 2>/dev/null || true
+    fi
     if [ -n "${server_pid:-}" ]; then
         kill "$server_pid" 2>/dev/null || true
     fi
-    rm -f "${log_file:-}" /tmp/test_bookmarks.json
+    rm -f "${log_file:-}"
+    rm -rf "${pid_dir:-}"
+    rm -f /tmp/test_bookmarks.json
 }
 trap cleanup EXIT
 
@@ -19,9 +28,8 @@ echo "🧪 Starting Integration Tests..."
 # Initialize test bookmarks
 cp bunnify.json.example /tmp/test_bookmarks.json
 
-# Ensure no existing server is running before we start
-timeout 10 ./bunnify-server --stop 2>/dev/null || true
-sleep 1
+# Isolated pid/port directory — avoids touching any production server's PID files
+pid_dir=$(mktemp --directory)
 
 # Isolated log file for this run (path passed via CLI, not env var)
 log_file=$(mktemp)
@@ -31,6 +39,7 @@ echo "📝 Routing logs to isolated file: $log_file"
 timeout 60 ./bunnify-server \
     --bookmarks /tmp/test_bookmarks.json \
     --port 0 \
+    --pid-dir "$pid_dir" \
     --log-level DEBUG \
     --log-file "$log_file" \
     > /dev/null 2>&1 &
@@ -49,8 +58,8 @@ while [ -z "$port" ]; do
         exit 1
     fi
     sleep 0.5
-    if [ -f .bunnify.port ]; then
-        port=$(cat .bunnify.port 2>/dev/null || true)
+    if [ -f "$pid_dir/.bunnify.port" ]; then
+        port=$(cat "$pid_dir/.bunnify.port" 2>/dev/null || true)
     fi
 done
 echo "🎯 Server securely routed to dynamic OS port: $port"
@@ -102,7 +111,7 @@ assert_redirect "/gh/" "https://github.com"
 assert_redirect "/search/?q=g%20hello" "https://www.google.com/search?q=hello"
 
 # Test multi parameter substitution PR bookmark
-assert_redirect "/search/?q=pr%20123%20my-org/bunnify" "https://github.com/my-org/bunnify/pull/123"
+assert_redirect "/search/?q=pr%20123%20bunnify" "https://github.com/the-hcma/bunnify/pull/123"
 
 # EXIT trap handles shutdown and cleanup
 if [ "$failed" -eq 0 ]; then

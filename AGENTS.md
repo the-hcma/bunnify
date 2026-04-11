@@ -39,7 +39,6 @@ This file defines the non-negotiable standards for all contributors (human or AI
 
 - Remote: `https://github.com/thehcma/bunnify.git`
 - Never commit secrets, credentials, or API keys.
-- Do not commit your local `bunnify.json` bookmarks file.
 
 ---
 

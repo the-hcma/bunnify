@@ -55,11 +55,19 @@
     "description": "YouTube Music New Release Mix",
     "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_m_S_9S_9S_9S_9S_9S_9S_9S_9S_9S_9S"
   },
+  "cop": {
+    "description": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com"
+  },
+  "gk": {
+    "description": "Google Keep",
+    "url": "https://keep.google.com"
+  },
   "pr": {
     "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
-    "url": "https://github.com/#{repo}/pull/#{pr_number}",
+    "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}",
     "defaults": {
-      "repo": "your-org/your-repo"
+      "repo": "bunnify"
     }
   },
   "rpr": {

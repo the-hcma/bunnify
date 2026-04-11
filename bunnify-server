@@ -65,6 +65,11 @@ OPTIONS:
         Stop the running Bunnify server and file watcher.
         Uses PID files to identify processes to stop.
 
+    --pid-dir DIR
+        Directory for PID and port files (default: script directory).
+        Use a unique temp directory in tests/CI to avoid interfering
+        with a concurrently running production server.
+
 EXAMPLES:
     # Start with default settings (WARNING level, file logging only)
     ./bunnify-server
@@ -127,10 +132,11 @@ else
     exit 1
 fi
 
-# PID file location
-pid_file="$script_dir/.bunnify.pid"
-watcher_pid_file="$script_dir/.bunnify_watcher.pid"
-port_file="$script_dir/.bunnify.port"
+# PID/port file directory (overridable via --pid-dir for isolated test runs)
+pid_dir="$script_dir"
+pid_file="$pid_dir/.bunnify.pid"
+watcher_pid_file="$pid_dir/.bunnify_watcher.pid"
+port_file="$pid_dir/.bunnify.port"
 
 # Cleanup function to stop all processes
 cleanup() {
@@ -195,6 +201,7 @@ do_stop=false
 foreground=false
 listen_all=false
 server_port="8000"
+pid_dir_override=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -202,6 +209,15 @@ while [[ $# -gt 0 ]]; do
         --stop)
             do_stop=true
             shift
+            ;;
+        --pid-dir)
+            if [ -z "$2" ]; then
+                echo "Error: --pid-dir requires a directory path"
+                echo "Run './bunnify-server --help' for more information"
+                exit 1
+            fi
+            pid_dir_override="$2"
+            shift 2
             ;;
         --port)
             if [ -z "$2" ]; then
@@ -263,6 +279,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Apply --pid-dir override now that all args are parsed
+if [ -n "$pid_dir_override" ]; then
+    pid_dir="$pid_dir_override"
+    pid_file="$pid_dir/.bunnify.pid"
+    watcher_pid_file="$pid_dir/.bunnify_watcher.pid"
+    port_file="$pid_dir/.bunnify.port"
+fi
 
 # If server_port is 0, ask the OS for a free ephemeral port, then hand that fixed port to Django.
 # We close the socket immediately so Django can bind to it; there is a brief TOCTOU window

@@ -13,9 +13,9 @@
   },
   "pr": {
     "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
-    "url": "https://github.com/#{repo}/pull/#{pr_number}",
+    "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}",
     "defaults": {
-      "repo": "your-org/your-repo"
+      "repo": "bunnify"
     }
   },
   "rpr": {
