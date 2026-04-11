@@ -23,6 +23,10 @@
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
   },
+  "gd": {
+    "description": "Google Drive",
+    "url": "https://drive.google.com/drive/my-drive"
+  },
   "gda": {
     "description": "hcma.info Google Domain Admin",
     "url": "https://admin.google.com/ac/domains/manage"
