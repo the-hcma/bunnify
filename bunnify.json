@@ -31,6 +31,10 @@
     "description": "the-hcma's GitHub repo",
     "url": "https://github.com/the-hcma/#{repo}/"
   },
+  "ghp": {
+    "description": "GitHub Profile",
+    "url": "https://github.com/settings/profile"
+  },
   "gpt": {
     "description": "ChatGPT",
     "url": "https://chat.com"
