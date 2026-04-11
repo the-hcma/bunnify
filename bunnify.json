@@ -15,6 +15,10 @@
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
   },
+  "gda": {
+    "description": "hcma.info Google Domain Admin",
+    "url": "https://admin.google.com/ac/domains/manage"
+  },
   "gemini": {
     "description": "Gemini",
     "url": "https://gemini.google.com"
