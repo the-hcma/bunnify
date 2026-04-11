@@ -4,16 +4,16 @@ set -euo pipefail
 # Local preflight checks for formatting, linting and tests.
 # Usage: scripts/checks [--skip-integration]
 
-readonly UV_CMD="uv"
+readonly uv_cmd="uv"
 
 usage() {
     echo "Usage: $0 [--skip-integration]"
     exit 2
 }
 
-SKIP_INTEGRATION=false
+skip_integration=false
 if [ "${1-}" = "--skip-integration" ]; then
-    SKIP_INTEGRATION=true
+    skip_integration=true
 elif [ "${1-}" != "" ]; then
     usage
 fi
@@ -28,9 +28,9 @@ run() {
 echo "🔎 Running preflight checks"
 
 # Python formatting and linting
-run "$UV_CMD run isort --check-only --diff ."
-run "$UV_CMD run black --check ."
-run "$UV_CMD run pyright --warnings"
+run "$uv_cmd run isort --check-only --diff ."
+run "$uv_cmd run black --check ."
+run "$uv_cmd run pyright --warnings"
 
 # Shell linting (only when shellcheck is available)
 if command -v shellcheck >/dev/null 2>&1; then
@@ -44,10 +44,10 @@ else
 fi
 
 # Django checks and unit tests
-run "$UV_CMD run python manage.py check"
+run "$uv_cmd run python manage.py check"
 run "./test_bunnify"
 
-if [ "$SKIP_INTEGRATION" != "true" ]; then
+if [ "$skip_integration" != "true" ]; then
     echo "⏳ Running integration script (timeout 120s)"
     run "chmod +x ./test_integration && timeout 120 ./test_integration"
 else
