@@ -329,6 +329,14 @@ do_stop() {
     local server_pid
     local watcher_pid
     local port_pid
+    # Read the port before any file deletions so the orphaned-process check
+    # always uses the correct port rather than falling back to the default (8000).
+    local check_port
+    if [ -f "$port_file" ]; then
+        check_port=$(cat "$port_file" 2>/dev/null || true)
+    else
+        check_port="$server_port"
+    fi
     
     if [ -f "$pid_file" ]; then
         server_pid=$(cat "$pid_file")
@@ -355,12 +363,6 @@ do_stop() {
     fi
     
     # Also check for any orphaned processes on the target port
-    local check_port
-    if [ -f "$port_file" ]; then
-        check_port=$(cat "$port_file" 2>/dev/null || true)
-    else
-        check_port="$server_port"
-    fi
     if [ -n "$check_port" ] && [ "$check_port" != "0" ]; then
         if lsof -ti:"$check_port" > /dev/null 2>&1; then
             port_pid=$(lsof -ti:"$check_port" 2>/dev/null | head -1)
