@@ -11,6 +11,14 @@
     "description": "Claude",
     "url": "https://claude.ai"
   },
+  "cop": {
+    "description": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com"
+  },
+  "fpdf": {
+    "description": "fpdf",
+    "url": "http://fpdf.hcma.info:8001"
+  },
   "g": {
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
@@ -22,6 +30,10 @@
   "gemini": {
     "description": "Gemini",
     "url": "https://gemini.google.com"
+  },
+  "genesis": {
+    "description": "Genesis (DMDC Identity Management)",
+    "url": "https://myaccess.dmdc.osd.mil/identitymanagement/app/login"
   },
   "gh": {
     "description": "GitHub",
@@ -35,6 +47,14 @@
     "description": "GitHub Profile",
     "url": "https://github.com/settings/profile"
   },
+  "gk": {
+    "description": "Google Keep",
+    "url": "https://keep.google.com"
+  },
+  "gpr": {
+    "description": "Graphite PR review (Usage: gpr <org/repo> <pr_number>)",
+    "url": "https://app.graphite.com/github/#{repo}/pull/#{pr_number}"
+  },
   "gpt": {
     "description": "ChatGPT",
     "url": "https://chat.com"
@@ -42,6 +62,14 @@
   "gri": {
     "description": "Graphite's inbox",
     "url": "https://app.graphite.com/#needs-your-review"
+  },
+  "hgpr": {
+    "description": "Graphite PR review for the-hcma org (Usage: hgpr <repo> <pr_number>)",
+    "url": "https://app.graphite.com/github/the-hcma/#{repo}/pull/#{pr_number}"
+  },
+  "hpr": {
+    "description": "the-hcma GitHub Pull Request (Usage: hpr <repo> <pr_number>)",
+    "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}"
   },
   "l": {
     "description": "LinkedIn",
@@ -63,20 +91,9 @@
     "description": "YouTube Music New Release Mix",
     "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_m_S_9S_9S_9S_9S_9S_9S_9S_9S_9S_9S"
   },
-  "cop": {
-    "description": "Microsoft Copilot",
-    "url": "https://copilot.microsoft.com"
-  },
-  "gk": {
-    "description": "Google Keep",
-    "url": "https://keep.google.com"
-  },
   "pr": {
-    "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
-    "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}",
-    "defaults": {
-      "repo": "bunnify"
-    }
+    "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
+    "url": "https://github.com/#{repo}/pull/#{pr_number}"
   },
   "rpr": {
     "description": "Request Copilot review for PR",

@@ -12,11 +12,8 @@
     "url": "https://github.com"
   },
   "pr": {
-    "description": "GitHub Pull Request (Usage: pr <pr_number> [repo])",
-    "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}",
-    "defaults": {
-      "repo": "bunnify"
-    }
+    "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
+    "url": "https://github.com/#{repo}/pull/#{pr_number}"
   },
   "rpr": {
     "description": "Request Copilot review for PR",

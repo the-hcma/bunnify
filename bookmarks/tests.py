@@ -127,7 +127,7 @@ class SmokeTests(TestCase):
 
     def test_multi_param_override_default(self):
         """Test multi-parameter bookmark overriding default"""
-        response = self.client.get("/search/", {"q": "pr 12345 Shopify/shopify-build"})
+        response = self.client.get("/search/", {"q": "pr Shopify/shopify-build 12345"})
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"], "https://github.com/Shopify/shopify-build/pull/12345"

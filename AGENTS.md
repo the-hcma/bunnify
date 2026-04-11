@@ -50,6 +50,7 @@ This file defines the non-negotiable standards for all contributors (human or AI
 - Submit stacks with `gt submit` — do not open PRs manually via the GitHub UI.
 - Follow **Conventional Commits**: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`.
 - Keep commits focused. One logical change per commit.
+- **Always run the full local pre-PR checklist (see below) before calling `gt submit`.** Do not rely on CI to catch issues that can be caught locally.
 
 ---
 

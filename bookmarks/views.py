@@ -101,39 +101,40 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
             # Multiple parameters - split by whitespace
             param_values = param_string.split() if param_string else []
 
-            # Separate required and optional parameters
-            required_params = [
-                p for p in placeholders if p not in (bookmark.defaults or {})
-            ]
-            optional_params = [
-                p for p in placeholders if p in (bookmark.defaults or {})
-            ]
+            if len(param_values) > len(placeholders):
+                return HttpResponse(
+                    f"Too many parameters for bookmark '{key}'.",
+                    status=400,
+                )
 
-            # Map values: required params first, then optional params
-            value_index = 0
-            for placeholder in required_params:
-                if value_index < len(param_values):
-                    param_mapping[placeholder] = param_values[value_index]
-                    value_index += 1
+            # Assign args to placeholders from the end (right-to-left in template
+            # order). This lets optional leading params use their defaults when
+            # the user provides fewer args than there are placeholders.
+            # Example: placeholders=[repo, pr_number], defaults={repo: "org/repo"}
+            #   "pr 194"               -> repo=default, pr_number=194
+            #   "pr the-hcma/fpdf 194" -> repo=the-hcma/fpdf, pr_number=194
+            arg_offset = len(placeholders) - len(param_values)
+            for i, placeholder in enumerate(placeholders):
+                arg_idx = i - arg_offset
+                if arg_idx >= 0:
+                    param_mapping[placeholder] = param_values[arg_idx]
+                elif placeholder in (bookmark.defaults or {}):
+                    param_mapping[placeholder] = bookmark.defaults[placeholder]
                 else:
+                    required_params = [
+                        p for p in placeholders if p not in (bookmark.defaults or {})
+                    ]
+                    optional_params = [
+                        p for p in placeholders if p in (bookmark.defaults or {})
+                    ]
                     return HttpResponse(
                         f"Bookmark '{key}' requires parameter(s): {', '.join(required_params)}\n"
                         f"Usage: {key} {' '.join(f'<{p}>' for p in required_params)}"
                         + (
-                            f" [{'  '.join(optional_params)}]"
-                            if optional_params
-                            else ""
+                            f" [{' '.join(optional_params)}]" if optional_params else ""
                         ),
                         status=400,
                     )
-
-            # Map remaining values to optional params, or use defaults
-            for placeholder in optional_params:
-                if value_index < len(param_values):
-                    param_mapping[placeholder] = param_values[value_index]
-                    value_index += 1
-                else:
-                    param_mapping[placeholder] = bookmark.defaults[placeholder]
 
         # Replace all placeholders with their values
         for placeholder, value in param_mapping.items():

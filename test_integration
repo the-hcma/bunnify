@@ -111,7 +111,7 @@ assert_redirect "/gh/" "https://github.com"
 assert_redirect "/search/?q=g%20hello" "https://www.google.com/search?q=hello"
 
 # Test multi parameter substitution PR bookmark
-assert_redirect "/search/?q=pr%20123%20bunnify" "https://github.com/the-hcma/bunnify/pull/123"
+assert_redirect "/search/?q=pr%20the-hcma%2Fbunnify%20123" "https://github.com/the-hcma/bunnify/pull/123"
 
 # EXIT trap handles shutdown and cleanup
 if [ "$failed" -eq 0 ]; then
