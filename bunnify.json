@@ -44,15 +44,15 @@
     "url": "https://www.linkedin.com/feed/"
   },
   "mqb": {
-    "description": "Graphite's merge queue",
+    "description": "Graphite's merge queue for bunnify",
     "url": "https://app.graphite.com/merges?repo=bunnify&org=the-hcma&tab=queue"
   },
   "mqf": {
-    "description": "Graphite's merge queue",
+    "description": "Graphite's merge queue for fpdf",
     "url": "https://app.graphite.com/merges?repo=fpdf&org=the-hcma&tab=queue"
   },
   "mqmt": {
-    "description": "Graphite's merge queue",
+    "description": "Graphite's merge queue for my-tracks",
     "url": "https://app.graphite.com/merges?repo=my-tracks&org=the-hcma&tab=queue"
   },
   "nm": {
