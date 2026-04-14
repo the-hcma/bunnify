@@ -67,6 +67,10 @@
     "description": "Graphite's inbox",
     "url": "https://app.graphite.com/#needs-your-review"
   },
+  "gtcl": {
+    "description": "Graphite CLI changelog",
+    "url": "https://graphite.com/docs/cli-changelog"
+  },
   "hgpr": {
     "description": "Graphite PR review for the-hcma org (Usage: hgpr <repo> <pr_number>)",
     "url": "https://app.graphite.com/github/the-hcma/#{repo}/pull/#{pr_number}"

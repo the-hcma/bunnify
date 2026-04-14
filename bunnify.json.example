@@ -11,6 +11,10 @@
     "description": "GitHub",
     "url": "https://github.com"
   },
+  "gtcl": {
+    "description": "Graphite CLI changelog",
+    "url": "https://graphite.com/docs/cli-changelog"
+  },
   "pr": {
     "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
     "url": "https://github.com/#{repo}/pull/#{pr_number}"
