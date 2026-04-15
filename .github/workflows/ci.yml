@@ -12,6 +12,7 @@ jobs:
   lint-python:
     name: Python lint & format checks
     runs-on: ubuntu-latest
+    if: github.actor != 'graphite-app[bot]' || (github.event.pull_request.draft == true && !startsWith(github.head_ref, 'gtmq_merge_'))
     steps:
     - uses: actions/checkout@v6
 
@@ -38,6 +39,7 @@ jobs:
   lint-shell:
     name: Shell script linting
     runs-on: ubuntu-latest
+    if: github.actor != 'graphite-app[bot]' || (github.event.pull_request.draft == true && !startsWith(github.head_ref, 'gtmq_merge_'))
     steps:
     - uses: actions/checkout@v6
 
@@ -53,6 +55,7 @@ jobs:
   test:
     name: Tests & validations
     runs-on: ubuntu-latest
+    if: github.actor != 'graphite-app[bot]' || (github.event.pull_request.draft == true && !startsWith(github.head_ref, 'gtmq_merge_'))
     steps:
     - uses: actions/checkout@v6
 
