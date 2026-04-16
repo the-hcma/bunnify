@@ -47,7 +47,9 @@ name = "bunnify"
 version = "0.1.1"
 source = { editable = "." }
 dependencies = [
+    { name = "black" },
     { name = "django" },
+    { name = "isort" },
     { name = "jsonschema" },
     { name = "packaging" },
 ]
@@ -61,8 +63,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "django", specifier = ">=6.0" },
-    { name = "jsonschema", specifier = ">=4.0" },
+    { name = "black", specifier = ">=26.3.1" },
+    { name = "django", specifier = ">=6.0.4" },
+    { name = "isort", specifier = ">=8.0.1" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "packaging", specifier = "==26.1" },
 ]
 
