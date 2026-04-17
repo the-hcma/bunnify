@@ -1,9 +1,18 @@
 #!/bin/bash
-# scripts/dev/start_development - Session initialization and worktree cleanup
+# scripts/dev/start_development - Session initialization and worktree management
 set -euo pipefail
 
-# Configuration
-MAIN_REPO="/a_star/home/hcma/work/ai/bunnify"
+readonly main_repo="/a_star/home/hcma/work/ai/bunnify"
+readonly worktrees_dir="$main_repo/.worktrees"
+
+# Parse arguments
+resume=false
+for arg in "$@"; do
+    case "$arg" in
+        --resume) resume=true ;;
+        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+    esac
+done
 
 echo "=========================================="
 echo "    Bunnify Session Initialization        "
@@ -11,71 +20,120 @@ echo "=========================================="
 
 # 1. Clean up stale worktree metadata
 echo "Pruning stale worktree metadata..."
-git -C "$MAIN_REPO" worktree prune
+git -C "$main_repo" worktree prune
 
-# 2. Identify and cleanup merged/closed worktrees
+# 2. Check each worktree: remove merged/closed, collect pending ones
 echo "Checking for Git worktrees..."
 
-# Get all worktrees in porcelain format to parse reliably
-WT_INFO=$(git -C "$MAIN_REPO" worktree list --porcelain)
+wt_info=$(git -C "$main_repo" worktree list --porcelain)
+current_path=""
+current_branch=""
+pending_worktrees=()
 
-# Parse the porcelain output
-# worktree <path>
-# HEAD <sha>
-# branch refs/heads/<branch>
-# (empty line)
-
-CURRENT_PATH=""
-CURRENT_BRANCH=""
 while IFS= read -r line; do
     if [[ "$line" =~ ^worktree\ (.*) ]]; then
-        CURRENT_PATH="${BASH_REMATCH[1]}"
-        CURRENT_BRANCH="" # Reset for new worktree
+        current_path="${BASH_REMATCH[1]}"
+        current_branch=""
     elif [[ "$line" =~ ^branch\ refs/heads/(.*) ]]; then
-        CURRENT_BRANCH="${BASH_REMATCH[1]}"
-        
-        # Skip the main repository worktree
-        if [[ "$CURRENT_PATH" == "$MAIN_REPO" ]]; then
+        current_branch="${BASH_REMATCH[1]}"
+
+        if [[ "$current_path" == "$main_repo" ]]; then
             continue
         fi
-        
-        echo " - Checking worktree: $CURRENT_BRANCH ($CURRENT_PATH)..."
-        
-        # Check PR state using gh
-        # We check the branch's PR state. 
-        PR_STATE=$(gh -R the-hcma/bunnify pr view "$CURRENT_BRANCH" --json state --template '{{.state}}' 2>/dev/null || echo "NOT_FOUND")
-        
-        if [[ "$PR_STATE" == "MERGED" || "$PR_STATE" == "CLOSED" ]]; then
-            echo "   [!] PR is $PR_STATE. Removing worktree..."
-            git -C "$MAIN_REPO" worktree remove --force "$CURRENT_PATH"
+
+        echo " - Checking worktree: $current_branch ($current_path)..."
+
+        pr_state=$(timeout 15 gh --repo the-hcma/bunnify pr view "$current_branch" \
+            --json state --template '{{.state}}' 2>/dev/null || echo "NOT_FOUND")
+
+        if [[ "$pr_state" == "MERGED" || "$pr_state" == "CLOSED" ]]; then
+            echo "   [!] PR is $pr_state. Removing worktree..."
+            git -C "$main_repo" worktree remove --force "$current_path"
         else
-            echo "   [+] PR is $PR_STATE. Keeping worktree."
+            echo "   [+] PR is $pr_state. Keeping worktree."
+            pending_worktrees+=("$current_path|$current_branch")
         fi
     fi
-done <<< "$WT_INFO"
+done <<< "$wt_info"
 
-# 3. Synchronize Graphite and clean up merged branches
+# 3. Synchronize Graphite and prune merged branches
 echo "Synchronizing Graphite (gt sync -f -d -a)..."
 
-# Ensure we have no conflicting changes in main repo before syncing
-HAS_CHANGES=$(git -C "$MAIN_REPO" status --porcelain)
-STASHED=false
-if [[ -n "$HAS_CHANGES" ]]; then
+has_changes=$(git -C "$main_repo" status --porcelain)
+stashed=false
+if [[ -n "$has_changes" ]]; then
     echo "Stashing local changes in main repo..."
-    git -C "$MAIN_REPO" stash push -m "start_development: automatic stash before sync"
-    STASHED=true
+    git -C "$main_repo" stash push --message "start_development: automatic stash before sync"
+    stashed=true
 fi
 
-# We run gt sync --force --delete-all --all to remove local branches 
-# across all stacks that have been merged/closed.
-gt --cwd "$MAIN_REPO" sync -q -f -d -a
+gt --cwd "$main_repo" sync -q -f -d -a
 
-if [[ "$STASHED" == "true" ]]; then
+if [[ "$stashed" == "true" ]]; then
     echo "Restoring local changes in main repo..."
-    git -C "$MAIN_REPO" stash pop
+    git -C "$main_repo" stash pop
 fi
 
 echo "=========================================="
-echo "Tip: You can use the hidden "gt state" command to debug Graphite metadata issues."
+
+# 4. Determine which worktree to work in
+num_pending=${#pending_worktrees[@]}
+selected_path=""
+
+if [[ "$resume" == "true" && "$num_pending" -gt 0 ]]; then
+    if [[ "$num_pending" -eq 1 ]]; then
+        wt_path="${pending_worktrees[0]%%|*}"
+        wt_branch="${pending_worktrees[0]##*|}"
+        echo "Found 1 pending worktree: $wt_branch"
+        read -rp "Resume this worktree? [Y/n] " choice
+        if [[ "${choice,,}" != "n" ]]; then
+            selected_path="$wt_path"
+        fi
+    else
+        echo "Found $num_pending pending worktrees:"
+        for i in "${!pending_worktrees[@]}"; do
+            echo "  $((i+1))) ${pending_worktrees[$i]##*|}  (${pending_worktrees[$i]%%|*})"
+        done
+        echo "  $((num_pending+1))) Start new work"
+        echo ""
+        read -rp "Choose [1-$((num_pending+1))]: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$num_pending" ]]; then
+            idx=$((choice - 1))
+            selected_path="${pending_worktrees[$idx]%%|*}"
+        fi
+        # If user chose "new" or entered invalid input, fall through to creation below
+    fi
+elif [[ "$resume" == "true" && "$num_pending" -eq 0 ]]; then
+    echo "No pending worktrees found. Creating a new one..."
+fi
+
+# Create a new worktree if nothing was selected (default mode, or user chose new work)
+if [[ -z "$selected_path" ]]; then
+    echo ""
+    read -rp "New stack name (e.g. 'auth-bugfix'): " stack_name
+
+    if [[ -z "$stack_name" ]]; then
+        echo "No stack name provided. Exiting." >&2
+        exit 1
+    fi
+
+    selected_path="$worktrees_dir/$stack_name"
+    branch_name="${stack_name}-wt"
+
+    echo ""
+    echo "Creating worktree '$branch_name' at $selected_path..."
+    git -C "$main_repo" worktree add -b "$branch_name" "$selected_path" main
+    gt --cwd "$selected_path" track --parent main
+
+    echo ""
+    echo "Start your first branch with:"
+    echo "  gt create $stack_name/<description> -m 'feat: ...'"
+fi
+
+echo ""
+echo "To work on this stack, run:"
+echo "  cd $selected_path"
+echo "=========================================="
+echo "Tip: Use 'gt state' to debug Graphite metadata issues."
 echo "    Initialization Complete               "
 echo "=========================================="

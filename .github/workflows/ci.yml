@@ -50,7 +50,7 @@ jobs:
       run: |
         shellcheck bunnify-server
         shellcheck test_integration
-        if [ -d scripts ]; then shellcheck scripts/* || true; fi
+        if [ -d scripts ]; then find scripts -type f -not -path 'scripts/systemd/*' | xargs shellcheck; fi
 
   test:
     name: Tests & validations

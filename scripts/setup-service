@@ -6,7 +6,8 @@
 set -e
 
 # Configuration
-readonly REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPO_DIR
 readonly SERVICE_FILENAME="bunnify.service"
 readonly SOURCE_SERVICE="${REPO_DIR}/scripts/systemd/${SERVICE_FILENAME}"
 readonly TARGET_DIR="${HOME}/.config/systemd/user"

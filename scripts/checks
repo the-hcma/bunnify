@@ -37,7 +37,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     run "shellcheck bunnify-server"
     run "shellcheck test_integration"
     if [ -d scripts ]; then
-        run "shellcheck scripts/* || true"
+        run "find scripts -type f -not -path 'scripts/systemd/*' | xargs shellcheck"
     fi
 else
     echo "⚠️  shellcheck not installed — skipping shell lint"
