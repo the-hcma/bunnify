@@ -123,6 +123,63 @@ The server is accessible at:
 - Click the three dots next to "Bunnify" and select "Make default"
 - Now you can type bookmarks directly without any prefix!
 
+### 5. Persistent Bunnify Service (Linux)
+
+To ensure Bunnify runs automatically across reboots and remains persistent even when you are logged out, you can set it up as a systemd user service.
+
+1.  **Enable lingering** for your user (required for the service to run without an active session):
+    ```bash
+    sudo loginctl enable-linger $USER
+    ```
+
+2.  **Create the systemd user directory** (if it doesn't exist):
+    ```bash
+    mkdir -p ~/.config/systemd/user/
+    ```
+
+3.  **Symlink the service unit** to the systemd directory:
+    ```bash
+    ln -s ~/work/ai/bunnify/scripts/systemd/bunnify.service ~/.config/systemd/user/bunnify.service
+    ```
+    *Note: Adjust the path if your repository is located elsewhere.*
+
+4.  **Manage the service**:
+    ```bash
+    # Reload systemd to recognize the new unit
+    systemctl --user daemon-reload
+
+    # Start and enable the service
+    systemctl --user enable --now bunnify.service
+    ```
+
+### 6. Verification & Troubleshooting
+
+To ensure the persistent service is running correctly:
+
+1.  **Check Service Status**:
+    ```bash
+    systemctl --user status bunnify.service
+    ```
+    The status should be `active (running)`.
+
+2.  **Verify Health Check**:
+    ```bash
+    # Run from the terminal to ensure the server is responsive
+    curl http://localhost:8001/health
+    ```
+    *Expected output:* `ok`
+
+3.  **Monitor Logs**:
+    ```bash
+    journalctl --user -u bunnify.service -f
+    ```
+
+4.  **Reset Failed State**:
+    If the service fails to start multiple times (exceeding restart limits), it may enter a `failed` state. You can reset this with:
+    ```bash
+    systemctl --user reset-failed bunnify.service
+    ```
+
 ## Usage
 
 ### Command Palette (Recommended)
