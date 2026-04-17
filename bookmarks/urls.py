@@ -14,5 +14,6 @@ urlpatterns = [
     path("api/suggestions/", views.search_suggestions, name="suggestions"),
     path("api/history/", views.command_history, name="history"),
     path("review-pr/", views.request_copilot_review, name="review_pr"),
+    path("health", views.health_check, name="health_check"),
     path("<str:key>/", views.redirect_bookmark, name="redirect"),
 ]

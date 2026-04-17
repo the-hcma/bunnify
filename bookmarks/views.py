@@ -664,6 +664,13 @@ def request_copilot_review(
             logger.error(f"Error during streaming: {e}", exc_info=True)
             yield f'<script>document.querySelector(".spinner").style.display = "none"; document.getElementById("status-text").innerHTML = "❌ Error: {html_module.escape(str(e))}";</script>'
 
-    from django.http import StreamingHttpResponse
-
     return StreamingHttpResponse(stream_review(), content_type="text/html")
+
+
+@require_http_methods(["GET"])
+def health_check(request: HttpRequest) -> HttpResponse:
+    """
+    Simple health check endpoint that returns 'ok'
+    Used by systemd and monitoring tools to verify the service is alive.
+    """
+    return HttpResponse("ok", content_type="text/plain")

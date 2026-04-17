@@ -132,3 +132,10 @@ class SmokeTests(TestCase):
         self.assertEqual(
             response["Location"], "https://github.com/Shopify/shopify-build/pull/12345"
         )
+
+    def test_health_check_loads(self):
+        """Test that the health check endpoint loads successfully"""
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content.decode(), "ok")
+        self.assertEqual(response["Content-Type"], "text/plain")
