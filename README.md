@@ -1,6 +1,6 @@
 # Bunnify 🐰
 
-A powerful Django-based bookmark manager and URL shortcut system with advanced command palette, Chrome integration, and real-time GitHub Copilot code reviews.
+A powerful Python-based bookmark manager and URL shortcut system with advanced command palette, Chrome integration, and real-time GitHub Copilot code reviews.
 
 ## Prerequisites
 
@@ -79,7 +79,7 @@ uv run python manage.py load_bookmarks
 ```
 
 This will:
-- Start the Django server on port 8000 (dual-stack IPv4/IPv6 binding)
+- Start the server on port 8000 (dual-stack IPv4/IPv6 binding)
 - Start the bookmark file watcher for auto-reload
 - Daemonize both processes
 - Show URLs for access
@@ -203,7 +203,7 @@ Visit `http://127.0.0.1:8000/cmd/` for the enhanced command palette:
 
 Type in Chrome's address bar:
 - `s pr 12345` → Opens PR #12345
-- `s g django tutorial` → Google search for "django tutorial"
+- `s g python tutorial` → Google search for "python tutorial"
 - `s vault` → Opens Vault
 - `s h` → Shows all bookmarks
 
@@ -215,7 +215,7 @@ Type in Chrome's address bar:
 
 **Parameterized redirects:**
 - `http://127.0.0.1:8000/pr/?pr_id=12345` → PR #12345
-- `http://127.0.0.1:8000/g/?search_terms=django+tutorial` → Google search
+- `http://127.0.0.1:8000/g/?search_terms=python+tutorial` → Google search
 
 **Special endpoints:**
 - `http://127.0.0.1:8000/list/` → Browse all bookmarks
@@ -249,7 +249,7 @@ URLs can contain placeholders in the format `#{parameter_name}`:
     }
 }
 ```
-Usage: `g django tutorial` → `https://www.google.com/search?q=django+tutorial`
+Usage: `g python tutorial` → `https://www.google.com/search?q=python+tutorial`
 
 **Multiple Parameters with Defaults:**
 ```json
@@ -287,10 +287,10 @@ bunnify/
 │   ├── views.py                     # View logic (includes search_redirect)
 │   └── urls.py                      # URL routing
 ├── bunnify/
-│   ├── settings.py                  # Django settings
+│   ├── settings.py                  # Application settings
 │   └── urls.py                      # Main URL config
 ├── .venv/                           # Virtual environment (managed by uv)
-├── manage.py                        # Django management script
+├── manage.py                        # Management script
 └── pyproject.toml                   # Project dependencies
 ```
 
@@ -372,7 +372,7 @@ This will clear existing bookmarks and load fresh data.
 
 - **Django 6.0**: Web framework
 - **jsonschema**: JSON validation
-- **SQLite**: Database (default Django DB)
+- **SQLite**: Database (default storage)
 - **Python 3.14**: Programming language with type hints
 - **uv**: Fast Python package manager
 - **pathlib**: Modern file path handling
@@ -384,7 +384,7 @@ This will clear existing bookmarks and load fresh data.
 
 ```
 bunnify/
-├── bookmarks/              # Main Django app
+├── bookmarks/              # Core application logic
 │   ├── management/
 │   │   └── commands/      # Management commands
 │   │       ├── load_bookmarks.py    # Load bookmarks from JSON
@@ -398,13 +398,13 @@ bunnify/
 │   ├── models.py          # Bookmark model
 │   ├── views.py           # View functions
 │   └── urls.py            # URL routing
-├── bunnify/               # Django project settings
+├── bunnify/               # Main configuration directory
 │   ├── settings.py        # Configuration with logging
 │   └── urls.py            # Root URL configuration
 ├── scripts/               # Helper scripts
 │   ├── get_copilot_review.sh        # Copilot review helper
 │   └── request_copilot_review.sh    # Legacy review script
-├── manage.py              # Django management script
+├── manage.py              # Management script
 ├── start                  # Server startup script
 ├── requirements.txt       # Python dependencies
 └── bunnify.json.example   # Example bookmark configuration
@@ -433,7 +433,36 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 1. **Quick Access**: Set Bunnify as your default search engine for the fastest access
 2. **Discover Bookmarks**: Type `h` to quickly see all available shortcuts
 3. **Parameterized Shortcuts**: For frequently used parameterized bookmarks (like `pr`), you can create individual Chrome search engines for even faster access
-4. **Auto-start**: Consider setting up a system service or startup script to run the server automatically
+4. **Auto-start**: Run `scripts/setup-service` to configure Bunnify as a persistent systemd service.
+
+
+## Persistent Background Service
+
+For production-like use, you should run Bunnify as a systemd user service. This ensures it starts on boot and restarts automatically if it crashes.
+
+### Automated Setup
+
+We provide a script to automate the systemd configuration and enable lingering:
+
+```bash
+./scripts/setup-service
+```
+
+### Manual Verification
+
+You can check the service status with:
+
+```bash
+systemctl --user status bunnify.service
+```
+
+### Lingering
+
+To ensure the service runs even when you are not logged in, lingering must be enabled (the setup script does this for you):
+
+```bash
+loginctl enable-linger $(whoami)
+```
 
 ## Troubleshooting
 
