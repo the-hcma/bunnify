@@ -12,6 +12,115 @@ readonly SOURCE_SERVICE="${REPO_DIR}/scripts/systemd/${SERVICE_FILENAME}"
 readonly TARGET_DIR="${HOME}/.config/systemd/user"
 readonly TARGET_SERVICE="${TARGET_DIR}/${SERVICE_FILENAME}"
 
+# Function to display help
+show_help() {
+    cat << EOF
+🐰 Bunnify Setup Utility - Persistent Service
+
+USAGE:
+    ./scripts/setup-service [OPTIONS]
+
+DESCRIPTION:
+    Configures Bunnify to run as a persistent background service using systemd.
+    Ensures lingering is enabled for the user so the service starts on boot
+    and remains active without a logout session.
+
+OPTIONS:
+    -s, --status
+        Check the current configuration status and service health.
+
+    -h, --help
+        Display this help message and exit.
+
+    (no options)
+        Install or update the systemd service configuration.
+
+EXAMPLES:
+    # Set up or update the service
+    ./scripts/setup-service
+
+    # Check the current status
+    ./scripts/setup-service --status
+EOF
+    exit 0
+}
+
+# Function to check current status
+check_status() {
+    local all_good=true
+    echo "🔍 Verifying Bunnify service configuration..."
+    echo "----------------------------------------"
+
+    # 1. Check symlink
+    if [[ -L "$TARGET_SERVICE" ]]; then
+        local link_target
+        link_target=$(readlink -f "$TARGET_SERVICE")
+        if [[ "$link_target" == "$SOURCE_SERVICE" ]]; then
+            echo "✅ Symlink:  Correct ($TARGET_SERVICE)"
+        else
+            echo "❌ Symlink:  Wrong target! Points to $link_target"
+            echo "               Expected: $SOURCE_SERVICE"
+            all_good=false
+        fi
+    else
+        echo "❌ Symlink:  Missing (Run setup to create it)"
+        all_good=false
+    fi
+
+    # 2. Check Lingering
+    local current_user
+    current_user=$(whoami)
+    if loginctl show-user "$current_user" --property=Linger | grep -q "Linger=yes"; then
+        echo "✅ Linger:   Enabled for $current_user"
+    else
+        echo "❌ Linger:   Disabled (Service won't survive reboots!)"
+        all_good=false
+    fi
+
+    # 3. Check Systemd Service Status
+    if systemctl --user is-active bunnify.service > /dev/null 2>&1; then
+        echo "✅ Active:   Running"
+    else
+        echo "❌ Active:   Inactive (Stopped)"
+        all_good=false
+    fi
+
+    if systemctl --user is-enabled bunnify.service > /dev/null 2>&1; then
+        echo "✅ Enabled:  Auto-start is active"
+    else
+        echo "❌ Enabled:  Auto-start is disabled"
+        all_good=false
+    fi
+
+    echo "----------------------------------------"
+    if $all_good; then
+        echo "✨ Everything looks good! Bunnify is correctly configured."
+        return 0
+    else
+        echo "⚠️  Some issues were found. Run ./scripts/setup-service to fix them."
+        return 1
+    fi
+}
+
+# Handle arguments
+if [[ $# -gt 0 ]]; then
+    case $1 in
+        -h|--help)
+            show_help
+            ;;
+        -s|--status)
+            check_status
+            exit $?
+            ;;
+        *)
+            echo "❌ Error: Unknown option: $1"
+            echo "Run './scripts/setup-service --help' for usage information"
+            exit 1
+            ;;
+    esac
+fi
+
+# Main installation flow
 echo "🐰 Setting up Bunnify systemd service..."
 
 # 1. Verify source service file exists
@@ -51,8 +160,6 @@ systemctl --user restart bunnify.service
 
 echo ""
 echo "✨ Bunnify service successfully configured!"
-echo "----------------------------------------"
-echo "Status:   $(systemctl --user is-active bunnify.service)"
-echo "Enabled:  $(systemctl --user is-enabled bunnify.service)"
+check_status
 echo "Logs:     tail -f /tmp/bunnify.log"
 echo "----------------------------------------"
