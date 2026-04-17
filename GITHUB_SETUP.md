@@ -5,7 +5,7 @@
 1. Go to https://github.com/new
 2. Fill in the details:
    - **Repository name:** `bunnify`
-   - **Description:** "A powerful Django-based bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews"
+   - **Description:** "A powerful Python-based bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews"
    - **Visibility:** Public (or Private if preferred)
    - **DO NOT** initialize with README, .gitignore, or license (we already have these)
 3. Click "Create repository"
@@ -28,7 +28,7 @@ git push -u origin main
 
 ### Topics (for discoverability)
 Go to repository → About section → Settings (⚙️) → Add topics:
-- `django`
+- `python`
 - `bookmark-manager`
 - `url-shortener`
 - `chrome-extension`
@@ -45,7 +45,7 @@ Settings → Branches → Add branch protection rule for `main`:
 ### Repository Description
 Update the description to:
 ```
-🐰 A powerful Django bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews
+🐰 A powerful Python bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews
 ```
 
 ## Verifying GitHub Actions
@@ -53,9 +53,9 @@ Update the description to:
 After pushing, go to:
 https://github.com/thehcma/bunnify/actions
 
-You should see the Django CI workflow running. It will:
+You should see the CI workflow running. It will:
 - Test on Python 3.14
-- Run Django checks
+- Run system checks
 - Run migrations
 - Validate example bookmark file
 

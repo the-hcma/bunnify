@@ -31,7 +31,7 @@
 Go to https://github.com/new and create a new repository:
 - **Owner:** thehcma
 - **Repository name:** bunnify
-- **Description:** 🐰 A powerful Django bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews
+- **Description:** 🐰 A powerful Python bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews
 - **Visibility:** Public (recommended) or Private
 - **DO NOT** check "Initialize this repository with a README"
 
@@ -53,7 +53,7 @@ After pushing:
 
 **Add Topics:**
 Repository → About → Settings (⚙️) → Topics:
-- django
+- python
 - bookmark-manager  
 - url-shortener
 - chrome-extension
@@ -66,7 +66,7 @@ Should work automatically - check at:
 https://github.com/thehcma/bunnify/actions
 
 **Add Repository Description:**
-🐰 A powerful Django bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews
+🐰 A powerful Python bookmark manager with command palette, Chrome integration, and GitHub Copilot code reviews
 
 ## What's NOT Included (By Design)
 

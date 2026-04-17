@@ -44,7 +44,7 @@ This PR introduces robust startup validation, database management, and crystal-c
 - Default remains localhost-only (secure for development)
 - Prominent security warning when `--listen-all` is used
 - Auto-detects public IP and displays in startup messages
-- Django displays correct clickable URL (not invalid 0.0.0.0)
+- Server displays correct clickable URL (not invalid 0.0.0.0)
 
 ### 5. Unified Chrome Integration
 - Documented the canonical `/search/?q=%s` endpoint for Chrome integration
@@ -159,7 +159,7 @@ If ANY requirement fails:
 6. 02643e0 - Improve startup UX: show log location and console implies foreground
 7. d10f8d6 - Fix: Pass bookmarks file path to file watcher command
 8. 49f1833 - Add --listen-all option for public interface binding
-9. 7211ad8 - Fix: Properly align warning box and show after Django startup
+9. 7211ad8 - Fix: Properly align warning box and show after server startup
 10. e561164 - Fix: Use actual public IP when binding to all interfaces
 11. 03091cc - docs: Clarify OpenSearch as preferred Chrome setup method
 12. 0a4f0f9 - feat: Prominent Chrome setup instructions on homepage

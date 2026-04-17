@@ -144,7 +144,7 @@ grep "File change detected" /tmp/bunnify.log
 ### Loggers Configured
 - `bunnify`: Main application logger
 - `bookmarks`: Bookmarks app logger
-- `django`: Django framework logger
+- `framework`: Core framework logger
 - `root`: Catch-all logger
 
 ### Handlers

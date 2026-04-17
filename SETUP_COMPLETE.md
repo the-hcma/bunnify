@@ -2,7 +2,7 @@
 
 ## What Was Created
 
-A fully functional Django web application that:
+A fully functional Python web application that:
 
 1. ✅ **Reads** the `~/work/bunnify/bunnify.json` file
 2. ✅ **Validates** the JSON schema
@@ -27,7 +27,7 @@ The server is currently running at: **http://127.0.0.1:8000/**
 
 **Parameterized Redirects:**
 - http://127.0.0.1:8000/pr/?pr_id=12345 → GitHub PR
-- http://127.0.0.1:8000/g/?search_terms=django → Google Search
+- http://127.0.0.1:8000/g/?search_terms=python → Google Search
 - http://127.0.0.1:8000/cw/?commit_id=abc123 → Commit
 
 ## Development Commands
@@ -38,7 +38,7 @@ Using **uv** for dependency management:
 # Install dependencies
 uv sync
 
-# Run Django commands
+# Run management commands
 uv run python manage.py migrate
 uv run python manage.py load_bookmarks
 uv run python manage.py createsuperuser
@@ -57,10 +57,10 @@ uv add <package-name>
 
 ```
 ~/work/ai/
-├── bookmark_manager/        # Main Django project
+├── bunnify/                 # Main configuration project
 │   ├── settings.py         # Configuration
 │   └── urls.py             # URL routing
-├── bookmarks/              # Django app
+├── bookmarks/              # Application logic
 │   ├── models.py           # Bookmark model
 │   ├── views.py            # View logic
 │   ├── urls.py             # App URLs
@@ -72,7 +72,7 @@ uv add <package-name>
 │           ├── base.html
 │           ├── index.html
 │           └── list.html
-├── manage.py               # Django CLI
+├── manage.py               # Application CLI
 ├── pyproject.toml         # Dependencies
 ├── README.md              # Documentation
 └── db.sqlite3             # Database (55 bookmarks loaded)
@@ -126,7 +126,7 @@ Press Ctrl+C in the terminal
 
 ## Next Steps (Optional)
 
-1. **Admin Interface:** Create superuser to manage bookmarks via Django admin
+1. **Admin Interface:** Create superuser to manage bookmarks via the admin interface
    ```bash
    python manage.py createsuperuser
    ```
