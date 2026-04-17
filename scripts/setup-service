@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# Setup script for Bunnify systemd service
+# This script configures Bunnify to run as a persistent background service
+
+set -e
+
+# Configuration
+readonly REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly SERVICE_FILENAME="bunnify.service"
+readonly SOURCE_SERVICE="${REPO_DIR}/scripts/systemd/${SERVICE_FILENAME}"
+readonly TARGET_DIR="${HOME}/.config/systemd/user"
+readonly TARGET_SERVICE="${TARGET_DIR}/${SERVICE_FILENAME}"
+
+echo "🐰 Setting up Bunnify systemd service..."
+
+# 1. Verify source service file exists
+if [[ ! -f "$SOURCE_SERVICE" ]]; then
+    echo "❌ Error: Source service file not found at $SOURCE_SERVICE"
+    exit 1
+fi
+
+# 2. Ensure target directory exists
+mkdir -p "$TARGET_DIR"
+
+# 3. Create/Update symlink
+if [[ -L "$TARGET_SERVICE" ]]; then
+    echo "🔗 Updating existing symlink..."
+    rm "$TARGET_SERVICE"
+elif [[ -f "$TARGET_SERVICE" ]]; then
+    echo "⚠️  Found existing regular file at $TARGET_SERVICE. Backing up..."
+    mv "$TARGET_SERVICE" "${TARGET_SERVICE}.bak"
+fi
+
+ln -s "$SOURCE_SERVICE" "$TARGET_SERVICE"
+echo "✅ Symlink created: $TARGET_SERVICE -> $SOURCE_SERVICE"
+
+# 4. Enable lingering for the current user
+current_user=$(whoami)
+echo "👤 Enabling lingering for user: $current_user"
+loginctl enable-linger "$current_user"
+
+# 5. Reload systemd user daemon
+echo "🔄 Reloading systemd user daemon..."
+systemctl --user daemon-reload
+
+# 6. Enable and start the service
+echo "🚀 Enabling and starting bunnify.service..."
+systemctl --user enable bunnify.service
+systemctl --user restart bunnify.service
+
+echo ""
+echo "✨ Bunnify service successfully configured!"
+echo "----------------------------------------"
+echo "Status:   $(systemctl --user is-active bunnify.service)"
+echo "Enabled:  $(systemctl --user is-enabled bunnify.service)"
+echo "Logs:     tail -f /tmp/bunnify.log"
+echo "----------------------------------------"
