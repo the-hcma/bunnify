@@ -2,8 +2,10 @@
 # scripts/dev/start-development - Session initialization and worktree management
 set -euo pipefail
 
-readonly script_dir; script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly main_repo; main_repo="$(git -C "$script_dir" rev-parse --show-toplevel)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+main_repo="$(git -C "$script_dir" rev-parse --show-toplevel)"
+readonly main_repo
 readonly worktrees_dir="$main_repo/.worktrees"
 
 # Parse arguments
