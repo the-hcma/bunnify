@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/dev/start_development - Session initialization and worktree management
+# scripts/dev/start-development - Session initialization and worktree management
 set -euo pipefail
 
 readonly main_repo="/a_star/home/hcma/work/ai/bunnify"
@@ -63,7 +63,7 @@ has_changes=$(git -C "$main_repo" status --porcelain)
 stashed=false
 if [[ -n "$has_changes" ]]; then
     echo "Stashing local changes in main repo..."
-    git -C "$main_repo" stash push --message "start_development: automatic stash before sync"
+    git -C "$main_repo" stash push --message "start-development: automatic stash before sync"
     stashed=true
 fi
 
@@ -72,6 +72,16 @@ gt --cwd "$main_repo" sync -q -f -d -a
 if [[ "$stashed" == "true" ]]; then
     echo "Restoring local changes in main repo..."
     git -C "$main_repo" stash pop
+fi
+
+# Update main if behind origin and restart service if updated
+local_main=$(git -C "$main_repo" rev-parse main)
+remote_main=$(git -C "$main_repo" rev-parse origin/main)
+if [[ "$local_main" != "$remote_main" ]]; then
+    echo "Main is outdated. Pulling latest..."
+    git -C "$main_repo" merge --ff-only origin/main
+    echo "Restarting bunnify service..."
+    systemctl --user restart bunnify
 fi
 
 echo "=========================================="
@@ -117,7 +127,7 @@ if [[ -z "$selected_path" ]]; then
         exit 1
     fi
 
-    selected_path="$worktrees_dir/$stack_name"
+    selected_path="$worktrees_dir/${stack_name}-wt"
     branch_name="${stack_name}-wt"
 
     echo ""
@@ -128,6 +138,7 @@ if [[ -z "$selected_path" ]]; then
     echo ""
     echo "Start your first branch with:"
     echo "  gt create $stack_name/<description> -m 'feat: ...'"
+    echo "  gt track --parent main   # reparent directly to main (required for gt submit)"
 fi
 
 echo ""
