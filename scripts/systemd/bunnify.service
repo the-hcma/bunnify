@@ -1,0 +1,19 @@
+[Unit]
+Description=Bunnify - Smart Bookmark Manager
+After=network.target
+StartLimitIntervalSec=100
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Assumes Bunnify is located in ~/work/ai/bunnify
+# Adjust the path below if your repository is in a different location
+WorkingDirectory=/a_star/home/hcma/work/ai/bunnify
+ExecStart=/a_star/home/hcma/work/ai/bunnify/bunnify-server --foreground --listen-all --port 8001 --bookmarks /a_star/home/hcma/work/ai/bunnify/bunnify.json
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/bunnify.log
+StandardError=append:/tmp/bunnify.log
+
+[Install]
+WantedBy=default.target
