@@ -23,6 +23,14 @@
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
   },
+  "gc": {
+    "description": "Google Contacts",
+    "url": "https://contacts.google.com"
+  },
+  "gcs": {
+    "description": "Google Contacts Search",
+    "url": "https://contacts.google.com/search/#{query}"
+  },
   "gd": {
     "description": "Google Drive",
     "url": "https://drive.google.com/drive/my-drive"
