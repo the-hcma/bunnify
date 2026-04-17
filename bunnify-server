@@ -501,16 +501,26 @@ else
 fi
 echo ""
 
+# Robust IP detection: try ip route first, then hostname, then fallback
+get_best_ip() {
+    local primary_ip
+    # Try to find the interface used for internet access (most likely the primary subnet IP)
+    primary_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1)
+    
+    if [ -z "$primary_ip" ]; then
+        # Fallback to hostname -I
+        primary_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    
+    echo "${primary_ip:-127.0.0.1}"
+}
+
 # Determine server binding address
 if $listen_all; then
-    # Get the actual public IP address for display
-    public_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-    if [ -z "$public_ip" ]; then
-        # Fallback to localhost if we can't determine IP
-        public_ip="127.0.0.1"
-    fi
-    # Listen on all IPv4 addresses (will handle IPv6 if OS configured to map IPv4 to v6)
-    server_address="$public_ip:$server_port"
+    # Get a "good" public IP for display (even if we bind to 0.0.0.0)
+    public_ip=$(get_best_ip)
+    # Listen on all IPv4 addresses
+    server_address="0.0.0.0:$server_port"
 else
     # Listen on localhost IPv4 only (most secure default)
     server_address="127.0.0.1:$server_port"
@@ -659,16 +669,13 @@ if $foreground; then
     
     echo "✅ Bunnify server starting in foreground mode..."
     echo "   Watcher PID: $watcher_pid"
-    echo "   URLs:"
+    echo "   Access Points:"
     if $listen_all; then
-        echo "     - http://$public_ip:$server_port/ (public IP)"
-        echo "     - http://127.0.0.1:$server_port/ (IPv4 localhost)"
-        echo "     - http://[::1]:$server_port/ (IPv6 localhost)"
-        echo "     - http://localhost:$server_port/ (localhost auto)"
+        echo "     🌍 Network:   http://$public_ip:$server_port/ (primary IP)"
+        echo "     🏠 Local:     http://localhost:$server_port/"
+        echo "     🛡️  Binding:   http://0.0.0.0:$server_port/ (all interfaces)"
     else
-        echo "     - http://127.0.0.1:$server_port/ (IPv4)"
-        echo "     - http://[::1]:$server_port/ (IPv6)"
-        echo "     - http://localhost:$server_port/ (auto)"
+        echo "     🏠 Local:     http://localhost:$server_port/"
     fi
     echo "   Log level: $BUNNIFY_LOG_LEVEL"
     echo ""
