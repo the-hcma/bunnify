@@ -18,7 +18,7 @@ Reference guide for working with Graphite (`gt`) for creating, navigating, and m
 | Submit stack for review | `gt submit --no-interactive` |
 | Rebase stack on trunk | `gt restack` |
 | Change branch parent | `gt track --parent <branch>` |
-| Rename current branch | `gt rename <new-name>` |
+| Rename current branch | `gt rename <new-name>` |\n| Debug Graphite state | `gt state` (hidden) |
 | Move branch in stack | `gt move` |
 
 ---

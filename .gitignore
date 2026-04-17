@@ -65,3 +65,4 @@ temp_settings_patch.py
 test_redirects.sh
 .bunnify.pid
 .bunnify_watcher.pid
+.worktrees/

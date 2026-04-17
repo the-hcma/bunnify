@@ -1,0 +1,81 @@
+#!/bin/bash
+# scripts/dev/start_development - Session initialization and worktree cleanup
+set -euo pipefail
+
+# Configuration
+MAIN_REPO="/a_star/home/hcma/work/ai/bunnify"
+
+echo "=========================================="
+echo "    Bunnify Session Initialization        "
+echo "=========================================="
+
+# 1. Clean up stale worktree metadata
+echo "Pruning stale worktree metadata..."
+git -C "$MAIN_REPO" worktree prune
+
+# 2. Identify and cleanup merged/closed worktrees
+echo "Checking for Git worktrees..."
+
+# Get all worktrees in porcelain format to parse reliably
+WT_INFO=$(git -C "$MAIN_REPO" worktree list --porcelain)
+
+# Parse the porcelain output
+# worktree <path>
+# HEAD <sha>
+# branch refs/heads/<branch>
+# (empty line)
+
+CURRENT_PATH=""
+CURRENT_BRANCH=""
+while IFS= read -r line; do
+    if [[ "$line" =~ ^worktree\ (.*) ]]; then
+        CURRENT_PATH="${BASH_REMATCH[1]}"
+        CURRENT_BRANCH="" # Reset for new worktree
+    elif [[ "$line" =~ ^branch\ refs/heads/(.*) ]]; then
+        CURRENT_BRANCH="${BASH_REMATCH[1]}"
+        
+        # Skip the main repository worktree
+        if [[ "$CURRENT_PATH" == "$MAIN_REPO" ]]; then
+            continue
+        fi
+        
+        echo " - Checking worktree: $CURRENT_BRANCH ($CURRENT_PATH)..."
+        
+        # Check PR state using gh
+        # We check the branch's PR state. 
+        PR_STATE=$(gh -R the-hcma/bunnify pr view "$CURRENT_BRANCH" --json state --template '{{.state}}' 2>/dev/null || echo "NOT_FOUND")
+        
+        if [[ "$PR_STATE" == "MERGED" || "$PR_STATE" == "CLOSED" ]]; then
+            echo "   [!] PR is $PR_STATE. Removing worktree..."
+            git -C "$MAIN_REPO" worktree remove --force "$CURRENT_PATH"
+        else
+            echo "   [+] PR is $PR_STATE. Keeping worktree."
+        fi
+    fi
+done <<< "$WT_INFO"
+
+# 3. Synchronize Graphite and clean up merged branches
+echo "Synchronizing Graphite (gt sync -f -d -a)..."
+
+# Ensure we have no conflicting changes in main repo before syncing
+HAS_CHANGES=$(git -C "$MAIN_REPO" status --porcelain)
+STASHED=false
+if [[ -n "$HAS_CHANGES" ]]; then
+    echo "Stashing local changes in main repo..."
+    git -C "$MAIN_REPO" stash push -m "start_development: automatic stash before sync"
+    STASHED=true
+fi
+
+# We run gt sync --force --delete-all --all to remove local branches 
+# across all stacks that have been merged/closed.
+gt --cwd "$MAIN_REPO" sync -q -f -d -a
+
+if [[ "$STASHED" == "true" ]]; then
+    echo "Restoring local changes in main repo..."
+    git -C "$MAIN_REPO" stash pop
+fi
+
+echo "=========================================="
+echo "Tip: You can use the hidden "gt state" command to debug Graphite metadata issues."
+echo "    Initialization Complete               "
+echo "=========================================="
