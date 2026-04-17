@@ -115,10 +115,6 @@
     "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
     "url": "https://github.com/#{repo}/pull/#{pr_number}"
   },
-  "rpr": {
-    "description": "Request Copilot review for PR",
-    "url": "http://127.0.0.1:8000/review-pr/?pr=#{pr_id}"
-  },
   "vm": {
     "description": "Google Voice Messages",
     "url": "https://voice.google.com/u/0/messages"
