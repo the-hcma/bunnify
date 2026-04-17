@@ -1,8 +1,4 @@
 {
-  "c": {
-    "description": "Google Calendar",
-    "url": "https://calendar.google.com"
-  },
   "cf": {
     "description": "Cloudflare hcma's DNS",
     "url": "https://dash.cloudflare.com/0c64ddce44e8d30fb31a52697ce2a737/hcma.info/dns/records"
@@ -17,7 +13,7 @@
   },
   "fpdf": {
     "description": "fpdf",
-    "url": "http://fpdf.hcma.info:8001"
+    "url": "https://fpdf.hcma.info"
   },
   "g": {
     "description": "Google Search",
@@ -26,6 +22,14 @@
   "gc": {
     "description": "Google Contacts",
     "url": "https://contacts.google.com"
+  },
+  "gcal": {
+    "description": "Google Calendar",
+    "url": "https://calendar.google.com"
+  },
+  "gcals": {
+    "description": "Google Calendar Search",
+    "url": "https://calendar.google.com/calendar/r/search?q=#{search_terms}"
   },
   "gcs": {
     "description": "Google Contacts Search",
