@@ -52,19 +52,14 @@ check_status() {
     echo "🔍 Verifying Bunnify service configuration..."
     echo "----------------------------------------"
 
-    # 1. Check symlink
-    if [[ -L "$TARGET_SERVICE" ]]; then
-        local link_target
-        link_target=$(readlink -f "$TARGET_SERVICE")
-        if [[ "$link_target" == "$SOURCE_SERVICE" ]]; then
-            echo "✅ Symlink:  Correct ($TARGET_SERVICE)"
-        else
-            echo "❌ Symlink:  Wrong target! Points to $link_target"
-            echo "               Expected: $SOURCE_SERVICE"
-            all_good=false
-        fi
+    # 1. Check service file is installed and up to date
+    if [[ ! -f "$TARGET_SERVICE" ]]; then
+        echo "❌ Service:  Not installed (Run setup to install it)"
+        all_good=false
+    elif diff --brief <(sed "s|@@REPO_DIR@@|${REPO_DIR}|g" "$SOURCE_SERVICE") "$TARGET_SERVICE" > /dev/null 2>&1; then
+        echo "✅ Service:  Up to date ($TARGET_SERVICE)"
     else
-        echo "❌ Symlink:  Missing (Run setup to create it)"
+        echo "❌ Service:  Outdated (Run setup to update it)"
         all_good=false
     fi
 
@@ -163,15 +158,22 @@ current_user=$(whoami)
 echo "👤 Enabling lingering for user: $current_user"
 loginctl enable-linger "$current_user"
 
-# 6. Reload systemd user daemon and restart only if service file changed
+# 6. Reload daemon only if service file changed
 if [[ "$service_changed" == "true" ]]; then
     echo "🔄 Reloading systemd user daemon..."
     systemctl --user daemon-reload
-    echo "🚀 Enabling and starting bunnify.service..."
-    systemctl --user enable bunnify.service
+fi
+
+# 7. Always ensure the service is enabled and running
+systemctl --user enable bunnify.service
+if [[ "$service_changed" == "true" ]]; then
+    echo "🔄 Restarting bunnify.service (config changed)..."
     systemctl --user restart bunnify.service
+elif ! systemctl --user is-active --quiet bunnify.service; then
+    echo "🚀 Starting bunnify.service (was not running)..."
+    systemctl --user start bunnify.service
 else
-    echo "⏭️  Service file unchanged — skipping daemon-reload and restart."
+    echo "⏭️  Service file unchanged and service already running — no restart needed."
 fi
 
 echo ""
