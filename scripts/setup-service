@@ -9,7 +9,7 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_DIR
 readonly SERVICE_FILENAME="bunnify.service"
-readonly SOURCE_SERVICE="${REPO_DIR}/scripts/systemd/${SERVICE_FILENAME}"
+readonly SOURCE_SERVICE="${REPO_DIR}/etc/systemd/${SERVICE_FILENAME}"
 readonly TARGET_DIR="${HOME}/.config/systemd/user"
 readonly TARGET_SERVICE="${TARGET_DIR}/${SERVICE_FILENAME}"
 

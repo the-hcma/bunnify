@@ -14,6 +14,7 @@ Restart=always
 RestartSec=5
 StandardOutput=append:/tmp/bunnify.log
 StandardError=append:/tmp/bunnify.log
+ExecStartPost=/usr/bin/curl --silent --fail --max-time 5 --retry 12 --retry-delay 1 --retry-connrefused http://127.0.0.1:8001/health
 
 [Install]
 WantedBy=default.target
