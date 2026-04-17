@@ -8,12 +8,12 @@ StartLimitBurst=5
 Type=simple
 # Assumes Bunnify is located in ~/work/ai/bunnify
 # Adjust the path below if your repository is in a different location
-WorkingDirectory=/a_star/home/hcma/work/ai/bunnify
-ExecStart=/a_star/home/hcma/work/ai/bunnify/bunnify-server --foreground --listen-all --port 8001 --bookmarks /a_star/home/hcma/work/ai/bunnify/bunnify.json
+WorkingDirectory=@@REPO_DIR@@
+ExecStart=@@REPO_DIR@@/bunnify-server --foreground --listen-all --port 8001 --bookmarks @@REPO_DIR@@/bunnify.json
 Restart=always
 RestartSec=5
-StandardOutput=append:/tmp/bunnify.log
-StandardError=append:/tmp/bunnify.log
+StandardOutput=append:%h/scratch/bunnify/bunnify.log
+StandardError=append:%h/scratch/bunnify/bunnify.log
 ExecStartPost=/usr/bin/curl --silent --fail --max-time 5 --retry 12 --retry-delay 1 --retry-connrefused http://127.0.0.1:8001/health
 
 [Install]

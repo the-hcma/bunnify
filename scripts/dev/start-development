@@ -2,21 +2,56 @@
 # scripts/dev/start-development - Session initialization and worktree management
 set -euo pipefail
 
-readonly main_repo="/a_star/home/hcma/work/ai/bunnify"
+readonly script_dir; script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly main_repo; main_repo="$(git -C "$script_dir" rev-parse --show-toplevel)"
 readonly worktrees_dir="$main_repo/.worktrees"
 
 # Parse arguments
 resume=false
+refresh=false
 for arg in "$@"; do
     case "$arg" in
+        --help)
+            echo "Usage: scripts/dev/start-development [--help] [--refresh] [--resume]"
+            echo ""
+            echo "Options:"
+            echo "  --help     Show this help message"
+            echo "  --refresh  Pull latest main and restart the bunnify service if it is running"
+            echo "  --resume   Resume an existing in-progress worktree (or create a new one)"
+            exit 0
+            ;;
+        --refresh) refresh=true ;;
         --resume) resume=true ;;
-        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+        *) echo "Unknown argument: $arg" >&2
+           echo "Run 'scripts/dev/start-development --help' for usage." >&2
+           exit 1 ;;
     esac
 done
 
 echo "=========================================="
 echo "    Bunnify Session Initialization        "
 echo "=========================================="
+
+# --refresh mode: pull main + restart service if running, then exit
+if [[ "$refresh" == "true" ]]; then
+    cd "$main_repo"
+    echo "Fetching latest remote state..."
+    git fetch origin
+    local_main=$(git rev-parse main)
+    remote_main=$(git rev-parse origin/main)
+    if [[ "$local_main" != "$remote_main" ]]; then
+        echo "Main is outdated. Pulling latest..."
+        git merge --ff-only origin/main
+        if systemctl --user is-active --quiet bunnify; then
+            echo "Restarting bunnify service..."
+            systemctl --user restart bunnify
+        fi
+    else
+        echo "Main is already up to date."
+    fi
+    echo "=========================================="
+    exit 0
+fi
 
 # 1. Clean up stale worktree metadata
 echo "Pruning stale worktree metadata..."

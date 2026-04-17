@@ -133,34 +133,49 @@ fi
 # 2. Ensure target directory exists
 mkdir -p "$TARGET_DIR"
 
-# 3. Create/Update symlink
+# 3. Generate service file with repo path substituted
+generated=$(sed "s|@@REPO_DIR@@|${REPO_DIR}|g" "$SOURCE_SERVICE")
+service_changed=true
+
 if [[ -L "$TARGET_SERVICE" ]]; then
-    echo "🔗 Updating existing symlink..."
+    echo "🔗 Removing old symlink..."
     rm "$TARGET_SERVICE"
 elif [[ -f "$TARGET_SERVICE" ]]; then
-    echo "⚠️  Found existing regular file at $TARGET_SERVICE. Backing up..."
-    mv "$TARGET_SERVICE" "${TARGET_SERVICE}.bak"
+    if diff --brief <(echo "$generated") "$TARGET_SERVICE" > /dev/null 2>&1; then
+        echo "✅ Service file unchanged: $TARGET_SERVICE"
+        service_changed=false
+    else
+        echo "🔄 Service file changed. Updating..."
+    fi
 fi
 
-ln -s "$SOURCE_SERVICE" "$TARGET_SERVICE"
-echo "✅ Symlink created: $TARGET_SERVICE -> $SOURCE_SERVICE"
+if [[ "$service_changed" == "true" ]]; then
+    echo "$generated" > "$TARGET_SERVICE"
+    echo "✅ Service file generated: $TARGET_SERVICE (repo: $REPO_DIR)"
+fi
 
-# 4. Enable lingering for the current user
+# 4. Create log directory
+mkdir -p "${HOME}/scratch/bunnify"
+echo "✅ Log directory: ${HOME}/scratch/bunnify"
+
+# 5. Enable lingering for the current user
 current_user=$(whoami)
 echo "👤 Enabling lingering for user: $current_user"
 loginctl enable-linger "$current_user"
 
-# 5. Reload systemd user daemon
-echo "🔄 Reloading systemd user daemon..."
-systemctl --user daemon-reload
-
-# 6. Enable and start the service
-echo "🚀 Enabling and starting bunnify.service..."
-systemctl --user enable bunnify.service
-systemctl --user restart bunnify.service
+# 6. Reload systemd user daemon and restart only if service file changed
+if [[ "$service_changed" == "true" ]]; then
+    echo "🔄 Reloading systemd user daemon..."
+    systemctl --user daemon-reload
+    echo "🚀 Enabling and starting bunnify.service..."
+    systemctl --user enable bunnify.service
+    systemctl --user restart bunnify.service
+else
+    echo "⏭️  Service file unchanged — skipping daemon-reload and restart."
+fi
 
 echo ""
 echo "✨ Bunnify service successfully configured!"
 check_status
-echo "Logs:     tail -f /tmp/bunnify.log"
+echo "Logs:     tail -f ${HOME}/scratch/bunnify/bunnify.log"
 echo "----------------------------------------"
