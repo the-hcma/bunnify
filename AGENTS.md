@@ -46,7 +46,7 @@ This file defines the non-negotiable standards for all contributors (human or AI
 
 ## Commits, Stacking & Pull Requests
 
-- This project uses **Graphite** (`gt`) for branch stacking.\n- **Worktree-per-Stack**: Every new stack/PR must be created in its own Git worktree to ensure isolation.\n    - Create worktree: `git worktree add -b <stack-name> ../bunnify-stacks/<stack-name> main`\n    - Initialize stack: `gt track -p main`
+- This project uses **Graphite** (`gt`) for branch stacking.\n- **Worktree-per-Stack**: Every new stack/PR must be created in its own Git worktree to ensure isolation.\n    - Create worktree: `git worktree add -b <stack-name>-wt .worktrees/<stack-name> main` (the `-wt` suffix prevents git ref namespace conflicts with PR branches named `<stack-name>/<description>`)\n    - Initialize stack: `gt track -p main`
 - All work is done in stacked branches via `gt create`, `gt modify`, and `gt submit`.
 - Never work directly on `main`. Always create a stack branch: `gt create -m "feat: description"`.
 - Submit stacks with `gt submit` — do not open PRs manually via the GitHub UI.

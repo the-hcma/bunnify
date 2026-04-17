@@ -61,15 +61,19 @@ auth-bugfix/handle-401-status-codes
 
 ### Basic Workflow (Worktree-per-Stack)
 
-1. Create a new worktree for the stack:
+> **Important:** Use a `-wt` suffix for the worktree base branch (e.g., `auth-bugfix-wt`).
+> Git's ref namespace uses `/` as a path separator, so a base branch named `auth-bugfix`
+> would conflict with PR branches named `auth-bugfix/fix-description` and cause a fatal error.
+
+1. Create a new worktree for the stack (note the `-wt` suffix on the branch name):
    ```bash
-   git worktree add -b <stack-name> ../bunnify-stacks/<stack-name> main
+   git worktree add -b <stack-name>-wt .worktrees/<stack-name> main
    ```
-2. Navigate to the new worktree: `cd ../bunnify-stacks/<stack-name>`
+2. Navigate to the new worktree: `cd .worktrees/<stack-name>`
 3. Initialize the stack base: `gt track -p main`
 4. Make changes to files
 5. Stage changes: `git add <files>`
-6. Create branch: `gt create branch-name -m "commit message"`
+6. Create branch: `gt create <stack-name>/branch-name -m "commit message"`
 7. Repeat for each PR in the stack
 8. Submit: `gt submit --no-interactive`
 
