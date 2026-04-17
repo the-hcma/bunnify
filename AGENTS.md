@@ -5,7 +5,7 @@ This file defines the non-negotiable standards for all contributors (human or AI
 ---
 
 
-## Session Startup & Cleanup\n\n- **Mandatory Action**: At the beginning of every session (before starting any task), run `scripts/dev/startup`.\n- This script cleans up merged worktrees, prunes stale metadata, and runs `gt sync --force` to keep your local environment synchronized with the remote.\n
+## Session Startup & Cleanup\n\n- **Mandatory Action**: At the beginning of every session (before starting any task), run `scripts/dev/start_development`.\n- This script cleans up merged worktrees, prunes stale metadata, and runs `gt sync --force` to keep your local environment synchronized with the remote.\n
 ## Language & Runtime
 
 - Target **Python 3.14+** and **Django 6.0+**. No deprecated APIs.

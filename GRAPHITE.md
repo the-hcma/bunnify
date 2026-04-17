@@ -15,7 +15,7 @@ Reference guide for working with Graphite (`gt`) for creating, navigating, and m
 | Jump to top of stack | `gt top` |
 | Jump to bottom of stack | `gt bottom` |
 | View stack structure | `gt ls` |
-| Session Startup Cleanup | `scripts/dev/startup` |
+| Session Startup Cleanup | `scripts/dev/start_development` |
 | Submit stack for review | `gt submit --no-interactive` |
 | Rebase stack on trunk | `gt restack` |
 | Change branch parent | `gt track --parent <branch>` |
