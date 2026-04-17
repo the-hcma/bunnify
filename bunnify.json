@@ -55,6 +55,10 @@
     "description": "Google Keep",
     "url": "https://keep.google.com"
   },
+  "gm": {
+    "description": "Gmail",
+    "url": "https://mail.google.com"
+  },
   "gpr": {
     "description": "Graphite PR review (Usage: gpr <org/repo> <pr_number>)",
     "url": "https://app.graphite.com/github/#{repo}/pull/#{pr_number}"

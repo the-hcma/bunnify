@@ -7,6 +7,10 @@
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
   },
+  "gm": {
+    "description": "Gmail",
+    "url": "https://mail.google.com"
+  },
   "gh": {
     "description": "GitHub",
     "url": "https://github.com"
