@@ -16,7 +16,7 @@ This file defines the non-negotiable standards for all contributors (human or AI
 
 - **Imports**: We use `isort` configured with the "black" profile. Run `uv run isort .` to organize imports.
 - **Type Checking**: We use **pyright** in basic mode for static analysis, configured in `pyproject.toml`.
-  - Django has dynamic attributes, so certain pyright rules (e.g., `reportAttributeAccessIssue`, `reportOptionalMemberAccess`) are disabled to avoid false positives.
+  - The web framework has dynamic attributes, so certain pyright rules (e.g., `reportAttributeAccessIssue`, `reportOptionalMemberAccess`) are disabled to avoid false positives.
   - Run `uv run pyright` and ensure there are zero errors before submitting a PR.
 - Keep the codebase clean and descriptive.
 
@@ -24,7 +24,7 @@ This file defines the non-negotiable standards for all contributors (human or AI
 
 ## Testing
 
-- The project relies on Django unit test suites.
+- The project relies on built-in unit test suites.
 - Use `./test_bunnify` to run all tests.
 - For targeting specific tests, you can append the test module or class:
   ```bash
@@ -71,7 +71,7 @@ This file defines the non-negotiable standards for all contributors (human or AI
 - All dependencies are managed via `uv` in `pyproject.toml`.
 - Separate runtime dependencies from `dependency-groups.dev` correctly.
 - Run `uv sync` to install/update the environment.
-- Do not pull in dependencies for functionality that can be trivially recreated using standard Python or Django natively.
+- Do not pull in dependencies for functionality that can be trivially recreated using standard Python or built-in framework features natively.
 
 ---
 

@@ -32,7 +32,7 @@ Go to `chrome://settings/searchEngines` and add a new search engine:
 Now you can use it from Chrome's address bar:
 - Type `c` → Opens Calendar
 - Type `gh` → Opens GitHub
-- Type `g django` → Google search for "django"
+- Type `g python` → Google search for "python"
 - Type `pr 12345` → Opens PR #12345 (with proper parameters)
 
 ---
@@ -110,7 +110,7 @@ Once configured, use from Chrome's address bar:
 - `b slack` → Opens Slack (if configured)
 
 ### With Parameters
-- `b g django tutorials` → Google search for "django tutorials"
+- `b g python tutorials` → Google search for "python tutorials"
 - `b pr 12345` → Opens PR #12345
 - `b commit abc123` → Opens commit abc123
 
