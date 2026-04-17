@@ -448,6 +448,14 @@ We provide a script to automate the systemd configuration and enable lingering:
 ./scripts/setup-service
 ```
 
+### Verifying Configuration
+
+You can verify that everything is correctly configured using the `--status` flag:
+
+```bash
+./scripts/setup-service --status
+```
+
 ### Manual Verification
 
 You can check the service status with:
