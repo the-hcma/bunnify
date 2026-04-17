@@ -15,6 +15,7 @@ Reference guide for working with Graphite (`gt`) for creating, navigating, and m
 | Jump to top of stack | `gt top` |
 | Jump to bottom of stack | `gt bottom` |
 | View stack structure | `gt ls` |
+| Session Startup Cleanup | `scripts/dev/startup` |
 | Submit stack for review | `gt submit --no-interactive` |
 | Rebase stack on trunk | `gt restack` |
 | Change branch parent | `gt track --parent <branch>` |
@@ -58,13 +59,19 @@ auth-bugfix/handle-401-status-codes
 
 ## Creating a Stack
 
-### Basic Workflow
+### Basic Workflow (Worktree-per-Stack)
 
-1. Make changes to files
-2. Stage changes: `git add <files>`
-3. Create branch: `gt create branch-name -m "commit message"`
-4. Repeat for each PR in the stack
-5. Submit: `gt submit --no-interactive`
+1. Create a new worktree for the stack:
+   ```bash
+   git worktree add -b <stack-name> ../bunnify-stacks/<stack-name> main
+   ```
+2. Navigate to the new worktree: `cd ../bunnify-stacks/<stack-name>`
+3. Initialize the stack base: `gt track -p main`
+4. Make changes to files
+5. Stage changes: `git add <files>`
+6. Create branch: `gt create branch-name -m "commit message"`
+7. Repeat for each PR in the stack
+8. Submit: `gt submit --no-interactive`
 
 ### Handle Untracked Branches (common with worktrees)
 
