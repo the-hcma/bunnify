@@ -18,7 +18,7 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --help     Show this help message"
-            echo "  --refresh  Pull latest main and restart the bunnify service if it is running"
+            echo "  --refresh  Pull latest main; run setup-service if not installed, otherwise ensure service is running"
             echo "  --resume   Resume an existing in-progress worktree (or create a new one)"
             exit 0
             ;;
@@ -34,7 +34,7 @@ echo "=========================================="
 echo "    Bunnify Session Initialization        "
 echo "=========================================="
 
-# --refresh mode: pull main + restart service if running, then exit
+# --refresh mode: pull main + ensure service is installed and running, then exit
 if [[ "$refresh" == "true" ]]; then
     cd "$main_repo"
     echo "Fetching latest remote state..."
@@ -44,12 +44,24 @@ if [[ "$refresh" == "true" ]]; then
     if [[ "$local_main" != "$remote_main" ]]; then
         echo "Main is outdated. Pulling latest..."
         git merge --ff-only origin/main
-        if systemctl --user is-active --quiet bunnify; then
-            echo "Restarting bunnify service..."
-            systemctl --user restart bunnify
-        fi
     else
         echo "Main is already up to date."
+    fi
+    readonly service_unit="${HOME}/.config/systemd/user/bunnify.service"
+    if [[ ! -f "$service_unit" ]]; then
+        echo "Service not installed. Running setup-service..."
+        "$main_repo/scripts/setup-service"
+    else
+        systemctl --user daemon-reload
+        if systemctl --user is-active --quiet bunnify; then
+            if [[ "$local_main" != "$remote_main" ]]; then
+                echo "Restarting bunnify service..."
+                systemctl --user restart bunnify
+            fi
+        else
+            echo "Starting bunnify service..."
+            systemctl --user start bunnify
+        fi
     fi
     echo "=========================================="
     exit 0
