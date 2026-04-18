@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from django.core.cache import cache
 from django.db import models
@@ -25,6 +26,34 @@ if TYPE_CHECKING:
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
+PLACEHOLDER_PATTERN = re.compile(r"#\{(\w+)\}")
+
+
+def _encode_placeholder_value(url_template: str, placeholder: str, value: str) -> str:
+    """Encode placeholder values while preserving path separators when needed."""
+    token = f"#{{{placeholder}}}"
+    placeholder_start = url_template.index(token)
+    query_start = url_template.rfind("?", 0, placeholder_start)
+    last_ampersand = url_template.rfind("&", 0, placeholder_start)
+    last_equals = url_template.rfind("=", 0, placeholder_start)
+
+    if last_equals > max(query_start, last_ampersand):
+        return quote(value, safe="")
+
+    return quote(value, safe="/:@-._~")
+
+
+def _substitute_placeholder_values(
+    url_template: str, param_mapping: dict[str, str]
+) -> str:
+    """Replace URL placeholders with encoded values."""
+    substituted_url = url_template
+
+    for placeholder, value in param_mapping.items():
+        encoded_value = _encode_placeholder_value(url_template, placeholder, value)
+        substituted_url = substituted_url.replace(f"#{{{placeholder}}}", encoded_value)
+
+    return substituted_url
 
 
 @require_http_methods(["GET"])
@@ -77,7 +106,7 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
     url = bookmark.url
 
     # Find all placeholders in the URL (e.g., #{pr_id}, #{repo})
-    placeholders = re.findall(r"#\{(\w+)\}", url)
+    placeholders = PLACEHOLDER_PATTERN.findall(url)
 
     if placeholders:
         # Build parameter mapping
@@ -136,8 +165,7 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
                     )
 
         # Replace all placeholders with their values
-        for placeholder, value in param_mapping.items():
-            url = url.replace(f"#{{{placeholder}}}", value)
+        url = _substitute_placeholder_values(url, param_mapping)
 
     # Check if this is a special protocol (chrome://, about://, etc.)
     # Browsers block navigation to these URLs from web pages for security
@@ -173,11 +201,12 @@ def redirect_bookmark(request: HttpRequest, key: str) -> HttpResponse:
     url = bookmark.url
 
     # Find all placeholders in the URL (e.g., #{pr_id}, #{search_terms})
-    placeholders = re.findall(r"#\{(\w+)\}", url)
+    placeholders = PLACEHOLDER_PATTERN.findall(url)
 
     if placeholders:
         logger.debug(f"URL contains placeholders: {placeholders}")
         # Get parameters from query string
+        param_mapping: dict[str, str] = {}
         for placeholder in placeholders:
             param_value = request.GET.get(placeholder, "")
             if not param_value:
@@ -190,8 +219,9 @@ def redirect_bookmark(request: HttpRequest, key: str) -> HttpResponse:
                     f"Usage: /{key}/?{placeholder}=value",
                     status=400,
                 )
-            # Replace the placeholder with the actual value
-            url = url.replace(f"#{{{placeholder}}}", param_value)
+            param_mapping[placeholder] = param_value
+
+        url = _substitute_placeholder_values(url, param_mapping)
 
     logger.info(f"Redirecting to: {url}")
     # Check if this is a special protocol (chrome://, about://, etc.)
@@ -220,7 +250,7 @@ def list_bookmarks(request: HttpRequest) -> HttpResponse:
     # Extract parameter names from URLs for display
     bookmarks_with_params = []
     for bookmark in bookmarks:
-        placeholders = re.findall(r"#\{(\w+)\}", bookmark.url)
+        placeholders = PLACEHOLDER_PATTERN.findall(bookmark.url)
         bookmarks_with_params.append({"bookmark": bookmark, "params": placeholders})
 
     return render(
@@ -242,7 +272,7 @@ def cmd_palette(request: HttpRequest) -> HttpResponse:
     # Prepare bookmark data with params for JavaScript
     bookmarks_data = []
     for bookmark in bookmarks:
-        placeholders = re.findall(r"#\{(\w+)\}", bookmark.url)
+        placeholders = PLACEHOLDER_PATTERN.findall(bookmark.url)
         bookmarks_data.append(
             {
                 "key": bookmark.key,

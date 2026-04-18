@@ -51,7 +51,16 @@ class SmokeTests(TestCase):
         response = self.client.get("/search/", {"q": "g django tutorial"})
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
-            response["Location"], "https://www.google.com/search?q=django tutorial"
+            response["Location"], "https://www.google.com/search?q=django%20tutorial"
+        )
+
+    def test_search_with_unicode_parameter(self):
+        """Test search redirect percent-encodes Unicode query parameters."""
+        response = self.client.get("/search/", {"q": "g canción romántica"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            "https://www.google.com/search?q=canci%C3%B3n%20rom%C3%A1ntica",
         )
 
     def test_search_without_parameter(self):
@@ -76,6 +85,15 @@ class SmokeTests(TestCase):
         response = self.client.get("/gh/")
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "https://github.com")
+
+    def test_direct_bookmark_redirect_encodes_query_parameter(self):
+        """Test direct URL redirect encodes query parameters before redirecting."""
+        response = self.client.get("/g/", {"search_terms": "café con leche"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            "https://www.google.com/search?q=caf%C3%A9%20con%20leche",
+        )
 
     def test_help_command(self):
         """Test that 'h' redirects to list page"""
