@@ -51,11 +51,10 @@ uv run python manage.py load_bookmarks
 
 Before submitting a PR:
 
-1. Test all existing functionality still works
-2. Test your new feature/fix thoroughly
-3. Check for any error messages in logs
-4. Verify Chrome integration still works
-5. Test command palette features
+1. Run the preflight script: `./scripts/checks`
+2. If needed for faster iteration, run: `./scripts/checks --skip-integration`
+3. Test your new feature/fix thoroughly
+4. Verify command palette and Chrome integration behavior still works
 
 ## Pull Request Guidelines
 

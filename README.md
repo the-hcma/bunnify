@@ -125,60 +125,23 @@ The server is accessible at:
 
 ### 5. Persistent Bunnify Service (Linux)
 
-To ensure Bunnify runs automatically across reboots and remains persistent even when you are logged out, you can set it up as a systemd user service.
+Use the provided setup script instead of manual systemd steps:
 
-1.  **Enable lingering** for your user (required for the service to run without an active session):
-    ```bash
-    sudo loginctl enable-linger $USER
-    ```
+```bash
+./scripts/setup-service
+```
 
-2.  **Create the systemd user directory** (if it doesn't exist):
-    ```bash
-    mkdir -p ~/.config/systemd/user/
-    ```
+To verify configuration and service health:
 
-3.  **Symlink the service unit** to the systemd directory:
-    ```bash
-    ln -s ~/work/ai/bunnify/scripts/systemd/bunnify.service ~/.config/systemd/user/bunnify.service
-    ```
-    *Note: Adjust the path if your repository is located elsewhere.*
+```bash
+./scripts/setup-service --status
+```
 
-4.  **Manage the service**:
-    ```bash
-    # Reload systemd to recognize the new unit
-    systemctl --user daemon-reload
+For live logs:
 
-    # Start and enable the service
-    systemctl --user enable --now bunnify.service
-    ```
-
-### 6. Verification & Troubleshooting
-
-To ensure the persistent service is running correctly:
-
-1.  **Check Service Status**:
-    ```bash
-    systemctl --user status bunnify.service
-    ```
-    The status should be `active (running)`.
-
-2.  **Verify Health Check**:
-    ```bash
-    # Run from the terminal to ensure the server is responsive
-    curl http://localhost:8001/health
-    ```
-    *Expected output:* `ok`
-
-3.  **Monitor Logs**:
-    ```bash
-    journalctl --user -u bunnify.service -f
-    ```
-
-4.  **Reset Failed State**:
-    If the service fails to start multiple times (exceeding restart limits), it may enter a `failed` state. You can reset this with:
-    ```bash
-    systemctl --user reset-failed bunnify.service
-    ```
+```bash
+journalctl --user -u bunnify.service -f
+```
 
 ## Usage
 
@@ -370,7 +333,7 @@ This will clear existing bookmarks and load fresh data.
 
 ## Technologies Used
 
-- **Django 6.0**: Web framework
+- **Python web stack**: ASGI/WSGI app with URL routing and templates
 - **jsonschema**: JSON validation
 - **SQLite**: Database (default storage)
 - **Python 3.14**: Programming language with type hints
@@ -402,10 +365,11 @@ bunnify/
 │   ├── settings.py        # Configuration with logging
 │   └── urls.py            # Root URL configuration
 ├── scripts/               # Helper scripts
-│   ├── get_copilot_review.sh        # Copilot review helper
-│   └── request_copilot_review.sh    # Legacy review script
+│   ├── checks             # Local preflight checks (format/lint/tests)
+│   ├── setup-service      # Systemd user service setup/status helper
+│   └── dev/start-development  # Session bootstrap for worktree/dev setup
 ├── manage.py              # Management script
-├── start                  # Server startup script
+├── bunnify-server         # Server startup + watcher script
 ├── requirements.txt       # Python dependencies
 └── bunnify.json.example   # Example bookmark configuration
 ```
@@ -424,7 +388,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- Built with Django and modern Python features
+- Built with modern Python features
 - Inspired by browser bookmark management needs
 - Enhanced with GitHub Copilot integration for code reviews
 
@@ -496,7 +460,3 @@ uv run python manage.py load_bookmarks
 1. Make sure the server is running at `http://127.0.0.1:8000/`
 2. Visit the homepage to trigger OpenSearch detection
 3. Manually add the search engine with URL: `http://127.0.0.1:8000/search/?q=%s`
-
-## License
-
-This project is created for managing bookmarks efficiently. 🐰✨
