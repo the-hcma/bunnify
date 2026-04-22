@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# scripts/on-deploy - Build hook called by setup-service before starting/restarting the service.
+#
+# Runs all steps required to bring the service up to date after a code change.
+#
+# Exit code contract (required by setup-service):
+#   0 — steps were executed; service must be restarted to pick up changes.
+#   1 — nothing changed; no restart needed.
+#   2+ — unexpected failure; setup-service will abort.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(cd "$script_dir/.." && pwd)"
+
+cd "$repo_dir"
+
+# Add uv to PATH if it exists in the standard location.
+if [[ -d "$HOME/.local/bin" ]]; then
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+# Record the deployed commit SHA so subsequent runs can skip unchanged builds.
+current_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+sha_file="$HOME/scratch/bunnify/on-deploy-sha"
+
+# Skip the expensive build steps if this commit was already deployed.
+if [[ -n "$current_sha" ]] && [[ -f "$sha_file" ]] && [[ "$(cat "$sha_file")" == "$current_sha" ]]; then
+    echo " Already deployed at commit ${current_sha:0:7} — skipping build steps."
+    echo "on-deploy complete."
+    exit 1
+fi
+
+echo "Running on-deploy build steps..."
+
+# Apply any pending database migrations.
+echo " Applying database migrations..."
+uv run python manage.py migrate --noinput
+
+# Record the deployed commit so the next run can skip unchanged builds.
+if [[ -n "$current_sha" ]]; then
+    mkdir -p "$(dirname "$sha_file")"
+    echo "$current_sha" > "$sha_file"
+fi
+
+echo "on-deploy complete."
+
+# Exit 0: steps ran; service must be restarted to pick up changes.
+exit 0
