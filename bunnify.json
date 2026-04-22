@@ -87,6 +87,10 @@
     "description": "Gmail",
     "url": "https://mail.google.com"
   },
+  "gms": {
+    "description": "Gmail Search",
+    "url": "https://mail.google.com/mail/u/0/#search/#{search_terms}"
+  },
   "gks": {
     "description": "Google Keep Search",
     "url": "https://keep.google.com/#search/text=#{search_terms}"
@@ -115,6 +119,10 @@
     "description": "Google Translate - Portuguese to English",
     "url": "https://translate.google.com/?sl=pt&tl=en&text=#{phrase}&op=translate"
   },
+  "gw": {
+    "description": "Google Wallet",
+    "url": "https://wallet.google.com"
+  },
   "hgpr": {
     "description": "Graphite PR review for the-hcma org (Usage: hgpr <repo> <pr_number>)",
     "url": "https://app.graphite.com/github/pr/the-hcma/#{repo}/#{pr_number}"
@@ -135,6 +143,10 @@
     "description": "LinkedIn",
     "url": "https://www.linkedin.com/feed/"
   },
+  "ls": {
+    "description": "LinkedIn Search",
+    "url": "https://www.linkedin.com/search/results/all/?keywords=#{search_terms}"
+  },
   "mqb": {
     "description": "Graphite's merge queue for bunnify",
     "url": "https://app.graphite.com/merges?repo=bunnify&org=the-hcma&tab=queue"
@@ -146,6 +158,10 @@
   "mqmt": {
     "description": "Graphite's merge queue for my-tracks",
     "url": "https://app.graphite.com/merges?repo=my-tracks&org=the-hcma&tab=queue"
+  },
+  "mt": {
+    "description": "MyTracks",
+    "url": "https://mytracks.hcma.info"
   },
   "nm": {
     "description": "YouTube Music New Release Mix",
