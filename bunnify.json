@@ -1,7 +1,15 @@
 {
+  "bofa": {
+    "description": "Bank of America Login",
+    "url": "https://www.bankofamerica.com/online-banking/sign-in/"
+  },
   "cf": {
     "description": "Cloudflare hcma's DNS",
     "url": "https://dash.cloudflare.com/0c64ddce44e8d30fb31a52697ce2a737/hcma.info/dns/records"
+  },
+  "chase": {
+    "description": "Chase Login",
+    "url": "https://secure.chase.com/web/auth/dashboard"
   },
   "claude": {
     "description": "Claude",
@@ -59,6 +67,10 @@
     "description": "GitHub",
     "url": "https://github.com"
   },
+  "ghealth": {
+    "description": "GitHub Status",
+    "url": "https://www.githubstatus.com"
+  },
   "ghh": {
     "description": "the-hcma's GitHub repo",
     "url": "https://github.com/the-hcma/#{repo}/"
@@ -114,6 +126,10 @@
   "dl": {
     "description": "Downloads",
     "url": "https://downloads.hcma.info"
+  },
+  "fidelity": {
+    "description": "Fidelity Login",
+    "url": "https://digital.fidelity.com/prgw/digital/login/full-page"
   },
   "l": {
     "description": "LinkedIn",
