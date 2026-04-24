@@ -123,6 +123,16 @@ cd "$script_dir" || exit 1
 # Ensure common binary paths are in PATH (needed for nohup/background processes)
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+# Load .env into the environment so DATABASE_URL and other settings reach Django.
+# on-deploy writes DATABASE_URL to .env for feature worktrees; without this,
+# os.environ never sees it and Django falls back to BASE_DIR/db.sqlite3.
+if [[ -f "$script_dir/.env" ]]; then
+    set -o allexport
+    # shellcheck source=/dev/null
+    source "$script_dir/.env"
+    set +o allexport
+fi
+
 # Find uv command
 if command -v uv > /dev/null 2>&1; then
     uv_cmd="uv"

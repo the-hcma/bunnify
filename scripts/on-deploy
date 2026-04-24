@@ -20,6 +20,41 @@ if [[ -d "$HOME/.local/bin" ]]; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
+# Worktree database: when running from a linked worktree, point DATABASE_URL at
+# the primary worktree's db.sqlite3 so all worktrees share the same live database.
+# Without this, Django resolves db.sqlite3 relative to settings.py inside the
+# worktree directory, which won't have any data.
+primary_dir="$(git -C "$repo_dir" worktree list --porcelain | awk 'NR==1{print $2}')"
+env_file="$repo_dir/.env"
+primary_env="$primary_dir/.env"
+
+# Feature worktrees: copy the primary worktree's .env so all manually-configured
+# settings carry over without needing to be re-entered. DATABASE_URL will be
+# appended below to redirect to the primary db.
+if [[ "$repo_dir" != "$primary_dir" ]] && [[ -f "$primary_env" ]]; then
+    cp "$primary_env" "$env_file"
+    echo "  Copied .env from primary worktree (settings carry over)."
+fi
+
+if [[ "$repo_dir" != "$primary_dir" ]]; then
+    db_url="sqlite:///${primary_dir}/db.sqlite3"
+    if [[ ! -f "$env_file" ]]; then
+        echo "DATABASE_URL=${db_url}" > "$env_file"
+        echo "  Created .env with DATABASE_URL pointing to primary worktree db."
+    elif ! grep -q '^DATABASE_URL=' "$env_file"; then
+        echo "DATABASE_URL=${db_url}" >> "$env_file"
+        echo "  Added DATABASE_URL pointing to primary worktree db."
+    elif ! grep -qF "DATABASE_URL=${db_url}" "$env_file"; then
+        sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${db_url}|" "$env_file"
+        echo "  Updated DATABASE_URL to point to primary worktree db."
+    else
+        echo "  DATABASE_URL up to date — no change needed."
+    fi
+    echo "  Using database from main worktree: ${primary_dir}/db.sqlite3"
+else
+    echo "  Using local database: ${repo_dir}/db.sqlite3"
+fi
+
 # Record the deployed commit SHA so subsequent runs can skip unchanged builds.
 current_sha="$(git rev-parse HEAD 2>/dev/null || true)"
 sha_file="$HOME/scratch/bunnify/on-deploy-sha"
