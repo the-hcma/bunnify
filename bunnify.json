@@ -23,6 +23,10 @@
     "description": "Cursor usage dashboard",
     "url": "https://cursor.com/dashboard/usage"
   },
+  "db": {
+    "description": "Domestic-bot (home automation)",
+    "url": "https://db.hcma.info"
+  },
   "fpdf": {
     "description": "fpdf",
     "url": "https://fpdf.hcma.info"
