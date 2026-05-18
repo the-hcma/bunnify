@@ -10,6 +10,35 @@
 
 set -euo pipefail
 
+# True when uv.lock / pyproject.toml is newer than .venv (or .venv is missing).
+_deploy_python_env_stale() {
+    local repo="$1"
+    local lock="$repo/uv.lock"
+    local project="$repo/pyproject.toml"
+    local venv="$repo/.venv"
+    if [[ ! -d "$venv" ]]; then
+        return 0
+    fi
+    if [[ ! -f "$lock" ]]; then
+        return 1
+    fi
+    local newest_input="$lock"
+    local input_mtime venv_mtime lock_mtime
+    if [[ -f "$project" ]]; then
+        input_mtime="$(stat -c '%Y' "$project")"
+        lock_mtime="$(stat -c '%Y' "$lock")"
+        if (( input_mtime > lock_mtime )); then
+            newest_input="$project"
+        fi
+    fi
+    venv_mtime="$(stat -c '%Y' "$venv")"
+    input_mtime="$(stat -c '%Y' "$newest_input")"
+    if (( input_mtime > venv_mtime )); then
+        return 0
+    fi
+    return 1
+}
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "$script_dir/.." && pwd)"
 
@@ -59,14 +88,32 @@ fi
 current_sha="$(git rev-parse HEAD 2>/dev/null || true)"
 sha_file="$HOME/scratch/bunnify/on-deploy-sha"
 
-# Skip the expensive build steps if this commit was already deployed.
+# Ensure the Python environment exists for this worktree.
+if [[ ! -d "$repo_dir/.venv" ]]; then
+    echo "  Virtual environment missing — running 'uv sync'..."
+    uv sync
+elif [[ ! -x "$repo_dir/.venv/bin/python3" ]] && [[ ! -x "$repo_dir/.venv/bin/python" ]]; then
+    echo "  Virtual environment has no usable Python — removing and running 'uv sync'..."
+    rm -rf "$repo_dir/.venv"
+    uv sync
+fi
+
+# Skip the expensive build steps if this commit was already deployed and
+# the venv still matches the lockfiles.
 if [[ -n "$current_sha" ]] && [[ -f "$sha_file" ]] && [[ "$(cat "$sha_file")" == "$current_sha" ]]; then
-    echo " Already deployed at commit ${current_sha:0:7} — skipping build steps."
-    echo "on-deploy complete."
-    exit 1
+    if _deploy_python_env_stale "$repo_dir"; then
+        echo "  Python lockfiles newer than .venv — sync required."
+    else
+        echo " Already deployed at commit ${current_sha:0:7} — skipping build steps."
+        echo "on-deploy complete."
+        exit 1
+    fi
 fi
 
 echo "Running on-deploy build steps..."
+
+echo "  uv sync --frozen"
+uv sync --frozen
 
 # Apply any pending database migrations.
 echo " Applying database migrations..."
