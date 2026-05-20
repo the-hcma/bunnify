@@ -104,6 +104,8 @@ New dependency versions must be at least **10 days** old before this repo adopts
 - **dep-updater:** Python security fixes use the audit-driven security path (`pip-audit` / `py_security_update`); do not bypass review by pinning unreleased or same-day versions in `pyproject.toml` for CVE response—use audit fix versions and dedicated security PRs.
 - **CI:** `pip-audit` (or equivalent) remains the source of truth for known CVEs on runtime deps.
 
+**Day-to-day:** no grandfathering steps (this repo has no pnpm). Review Dependabot and dep-updater PRs as usual.
+
 ---
 
 ## CI Checks / Pre-PR (all must pass)
