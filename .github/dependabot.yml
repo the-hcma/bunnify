@@ -4,6 +4,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 10
     labels:
       - "dependencies"
     versioning-strategy: "increase"
@@ -12,5 +14,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 10
     labels:
       - "dependencies"

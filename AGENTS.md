@@ -89,6 +89,23 @@ This file defines the non-negotiable standards for all contributors (human or AI
 
 ---
 
+## Dependency release age (10 days)
+
+New dependency versions must be at least **10 days** old before this repo adopts them (aligned with [repository-helpers](https://github.com/the-hcma/repository-helpers) `AGENTS.md`). This repo has no npm/pnpm frontend; policy applies to **pip** and **GitHub Actions** only.
+
+| Layer | Mechanism |
+|-------|-----------|
+| **Dependabot** | `cooldown: default-days: 10` on version-update PRs in `.github/dependabot.yml` (pip and github-actions ecosystems). |
+| **dep-updater** | `scripts/dep-updater` from repository-helpers when bumping Python or Actions dependencies. |
+
+### CVE and security exceptions
+
+- **Dependabot security updates** are not subject to the version-update cooldown.
+- **dep-updater:** Python security fixes use the audit-driven security path (`pip-audit` / `py_security_update`); do not bypass review by pinning unreleased or same-day versions in `pyproject.toml` for CVE response—use audit fix versions and dedicated security PRs.
+- **CI:** `pip-audit` (or equivalent) remains the source of truth for known CVEs on runtime deps.
+
+---
+
 ## CI Checks / Pre-PR (all must pass)
 
 ```bash
