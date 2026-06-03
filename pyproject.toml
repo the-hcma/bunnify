@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "isort>=8.0.1",
-    "pyright>=1.1.409",
+    "pyright>=1.1.410",
     "black>=26.5.1",
 ]
 
