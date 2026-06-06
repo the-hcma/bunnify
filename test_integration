@@ -110,6 +110,9 @@ assert_redirect "/gh/" "https://github.com"
 # E.g. "g query" mapped via `search_redirect` view which catches /search/?q=g%20query
 assert_redirect "/search/?q=g%20hello" "https://www.google.com/search?q=hello"
 
+# Test Google search fallback for unmatched queries
+assert_redirect "/search/?q=random%20stuff" "https://www.google.com/search?q=random%20stuff"
+
 # Test direct URL passthrough
 assert_redirect "/search/?q=http%3A%2F%2Fexample.com" "http://example.com"
 
