@@ -80,6 +80,28 @@ class SmokeTests(TestCase):
         response = self.client.get("/search/", {"q": "nonexistent"})
         self.assertEqual(response.status_code, 404)
 
+    def test_search_printer_shortcut(self):
+        """Test printer shortcut redirect"""
+        Bookmark.objects.create(
+            key="printer",
+            description="House printer",
+            url="http://printer.house.hcma",
+        )
+        response = self.client.get("/search/", {"q": "printer"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "http://printer.house.hcma")
+
+    def test_search_sony_shortcut(self):
+        """Test sony shortcut redirect"""
+        Bookmark.objects.create(
+            key="sony",
+            description="Sony TV",
+            url="http://sony.house.hcma",
+        )
+        response = self.client.get("/search/", {"q": "sony"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "http://sony.house.hcma")
+
     def test_direct_bookmark_redirect(self):
         """Test direct URL redirect via /key/"""
         response = self.client.get("/gh/")
