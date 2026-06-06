@@ -56,6 +56,16 @@ def _substitute_placeholder_values(
     return substituted_url
 
 
+def _make_redirect_response(request: HttpRequest, url: str) -> HttpResponse:
+    """Return a redirect (or browser_url page for special protocols)."""
+    if url.startswith(("chrome://", "about://", "file://")):
+        return render(request, "bookmarks/browser_url.html", {"url": url})
+
+    response = HttpResponse(status=302)
+    response["Location"] = url
+    return response
+
+
 @require_http_methods(["GET"])
 def search_redirect(request: HttpRequest) -> HttpResponse:
     """
@@ -73,6 +83,10 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
     if not query:
         logger.warning("Empty search query received")
         return HttpResponseNotFound(content="No search query provided")
+
+    if query.lower().startswith("htt"):
+        logger.info(f"Direct URL redirect: url='{query}'")
+        return _make_redirect_response(request, query)
 
     # Split the query into parts
     parts = query.split(None, 1)  # Split into key and rest
@@ -167,16 +181,7 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
         # Replace all placeholders with their values
         url = _substitute_placeholder_values(url, param_mapping)
 
-    # Check if this is a special protocol (chrome://, about://, etc.)
-    # Browsers block navigation to these URLs from web pages for security
-    # So we display the URL with copy-paste instructions
-    if url.startswith(("chrome://", "about://", "file://")):
-        return render(request, "bookmarks/browser_url.html", {"url": url})
-
-    # For normal HTTP(S) URLs, use a standard 302 redirect
-    response = HttpResponse(status=302)
-    response["Location"] = url
-    return response
+    return _make_redirect_response(request, url)
 
 
 @require_http_methods(["GET"])
@@ -224,16 +229,7 @@ def redirect_bookmark(request: HttpRequest, key: str) -> HttpResponse:
         url = _substitute_placeholder_values(url, param_mapping)
 
     logger.info(f"Redirecting to: {url}")
-    # Check if this is a special protocol (chrome://, about://, etc.)
-    # Browsers block navigation to these URLs from web pages for security
-    # So we display the URL with copy-paste instructions
-    if url.startswith(("chrome://", "about://", "file://")):
-        return render(request, "bookmarks/browser_url.html", {"url": url})
-
-    # For normal HTTP(S) URLs, use a standard 302 redirect
-    response = HttpResponse(status=302)
-    response["Location"] = url
-    return response
+    return _make_redirect_response(request, url)
 
 
 @never_cache

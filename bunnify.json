@@ -179,6 +179,14 @@
     "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
     "url": "https://github.com/#{repo}/pull/#{pr_number}"
   },
+  "printer": {
+    "description": "House printer",
+    "url": "http://printer.house.hcma"
+  },
+  "sony": {
+    "description": "Sony TV",
+    "url": "http://sony.house.hcma"
+  },
   "vm": {
     "description": "Google Voice Messages",
     "url": "https://voice.google.com/u/0/messages"
