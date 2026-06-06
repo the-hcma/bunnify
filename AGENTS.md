@@ -62,6 +62,9 @@ This file defines the non-negotiable standards for all contributors (human or AI
 - All work is done in stacked branches via `gt create`, `gt modify`, and `gt submit`.
 - Never work directly on `main`. Always create a stack branch: `gt create -m "feat: description"`.
 - Submit stacks with `gt submit` — do not open PRs manually via the GitHub UI.
+- After submitting, mark PRs as ready for review: `gh pr ready <number>`. `gt submit --no-interactive` creates drafts by default.
+- To merge a PR, add the `merge-it` label: `gh pr edit <number> --add-label merge-it`. Never use `gh pr merge` directly.
+- **Always ask the user for confirmation before adding the `merge-it` label.** Adding it triggers the Graphite merge queue; it must not be applied without explicit user approval.
 - Follow **Conventional Commits**: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`.
 - Keep commits focused. One logical change per commit.
 - **Always run the full local pre-PR checklist (see below) before calling `gt submit`.** Do not rely on CI to catch issues that can be caught locally.
