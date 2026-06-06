@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 # Get logger for this module
 logger = logging.getLogger(__name__)
 PLACEHOLDER_PATTERN = re.compile(r"#\{(\w+)\}")
+GOOGLE_SEARCH_URL = "https://www.google.com/search?q=#{search_terms}"
 
 
 def _encode_placeholder_value(url_template: str, placeholder: str, value: str) -> str:
@@ -54,6 +55,11 @@ def _substitute_placeholder_values(
         substituted_url = substituted_url.replace(f"#{{{placeholder}}}", encoded_value)
 
     return substituted_url
+
+
+def _google_search_url(query: str) -> str:
+    """Build a Google search URL for the given query string."""
+    return _substitute_placeholder_values(GOOGLE_SEARCH_URL, {"search_terms": query})
 
 
 def _make_redirect_response(request: HttpRequest, url: str) -> HttpResponse:
@@ -114,8 +120,8 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
             f"Found bookmark: key='{key}', url='{bookmark.url}', params='{param_string}'"
         )
     except Bookmark.DoesNotExist:
-        logger.warning(f"Bookmark not found: key='{key}'")
-        return HttpResponseNotFound(content=f"Bookmark '{key}' not found")
+        logger.info(f"No bookmark for key='{key}', falling back to Google search")
+        return _make_redirect_response(request, _google_search_url(query))
 
     url = bookmark.url
 
