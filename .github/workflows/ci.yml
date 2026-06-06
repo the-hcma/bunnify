@@ -1,10 +1,11 @@
 name: Bunnify CI
 
 on:
-  push:
-    branches: [ main ]
+  # Omitting push: main — the merge queue already validates the integrated
+  # state before landing; a second run after merge duplicates work without
+  # adding signal.
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, ready_for_review]
     branches-ignore:
       - '**/graphite-base/**'
 
