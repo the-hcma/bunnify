@@ -76,9 +76,13 @@ class SmokeTests(TestCase):
         self.assertContains(response, "requires parameter(s):", status_code=400)
 
     def test_search_nonexistent_bookmark(self):
-        """Test that searching for nonexistent bookmark returns 404"""
-        response = self.client.get("/search/", {"q": "nonexistent"})
-        self.assertEqual(response.status_code, 404)
+        """Test that unmatched queries fall back to Google search"""
+        response = self.client.get("/search/", {"q": "nonexistent query"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            "https://www.google.com/search?q=nonexistent%20query",
+        )
 
     def test_search_printer_shortcut(self):
         """Test printer shortcut redirect"""

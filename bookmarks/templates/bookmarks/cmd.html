@@ -453,7 +453,10 @@
                 const bookmark = findBookmarkByKey(firstWord);
                 
                 if (!bookmark) {
-                    showError(`Bookmark '${firstWord}' not found. Type 'h' to see all available bookmarks.`);
+                    addToHistory(inputValue);
+                    window.open(`/search/?q=${encodeURIComponent(inputValue)}`, '_blank');
+                    input.value = '';
+                    historyIndex = -1;
                     return;
                 }
                 
@@ -490,8 +493,8 @@
                     addToHistory(inputValue);
                     window.open(`/search/?q=${encodeURIComponent(inputValue)}`, '_blank');
                 } else {
-                    // Show error instead of executing invalid command
-                    showError(`Bookmark '${firstWord}' not found. Type 'h' to see all available bookmarks.`);
+                    addToHistory(inputValue);
+                    window.open(`/search/?q=${encodeURIComponent(inputValue)}`, '_blank');
                 }
             }
             return;
@@ -538,7 +541,7 @@
             const bookmark = findBookmarkByKey(firstWord);
             
             if (!bookmark) {
-                showError(`Bookmark '${firstWord}' not found. Type 'h' to see all available bookmarks.`);
+                window.open(`/search/?q=${encodeURIComponent(query)}`, '_blank');
                 return;
             }
             
