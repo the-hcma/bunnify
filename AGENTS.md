@@ -99,15 +99,16 @@ New dependency versions are adopted on a staggered schedule so **dep-updater** (
 | Layer | Mechanism |
 |-------|-----------|
 | **dep-updater** | 9-day gate for Python/PyPI and GitHub Actions bumps (`scripts/dep-updater` from repository-helpers). |
-| **Dependabot** | `cooldown: default-days: 10` on version-update PRs in `.github/dependabot.yml` (pip and github-actions; one day after dep-updater). |
+| **Dependabot** | Weekly scan + `cooldown: default-days: 10` on version-update PRs in `.github/dependabot.yml` (pip and github-actions; one day after dep-updater). Do **not** set `open-pull-requests-limit: 0` — version updates stay enabled as a backup. |
 
-### CVE and security exceptions
+### Dependabot: version bumps vs security
 
-- **Dependabot security updates** are not subject to the version-update cooldown.
-- **dep-updater:** when **pip-audit** reports CVE IDs with an available fix, dep-updater skips the 9-day gate for that package; otherwise use the audit-driven security path (`py_security_update`).
+- **Version updates** — Dependabot checks on the weekly schedule; each proposed bump must pass the **10-day cooldown** (release age). dep-updater usually lands the same bump first (9-day gate); Dependabot version PRs after that are redundant and can be closed.
+- **Security updates** — **not** subject to the version-update cooldown. Dependabot may open a security PR as soon as GitHub has an alert and a fix; merge these promptly.
+- **dep-updater CVE bypass** — when **pip-audit** reports CVE IDs with an available fix, dep-updater skips the 9-day gate for that package; otherwise use the audit-driven security path (`py_security_update`).
 - **CI:** `pip-audit` (or equivalent) remains the source of truth for known CVEs on runtime deps.
 
-**Day-to-day:** no grandfathering steps (this repo has no pnpm). Review Dependabot and dep-updater PRs as usual.
+**Day-to-day:** merge dep-updater batch PRs for routine bumps; close duplicate Dependabot version PRs when dep-updater already has the change (no pnpm grandfathering in this repo).
 
 ---
 
