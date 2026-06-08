@@ -92,19 +92,19 @@ This file defines the non-negotiable standards for all contributors (human or AI
 
 ---
 
-## Dependency release age (10 days)
+## Dependency release age (dep-updater 9 days, Dependabot 10 days)
 
-New dependency versions must be at least **10 days** old before this repo adopts them (aligned with [repository-helpers](https://github.com/the-hcma/repository-helpers) `AGENTS.md`). This repo has no npm/pnpm frontend; policy applies to **pip** and **GitHub Actions** only.
+New dependency versions are adopted on a staggered schedule so **dep-updater** (repository-helpers) lands updates before Dependabot (aligned with [repository-helpers](https://github.com/the-hcma/repository-helpers) `AGENTS.md`). This repo has no npm/pnpm frontend; policy applies to **pip** and **GitHub Actions** only.
 
 | Layer | Mechanism |
 |-------|-----------|
-| **Dependabot** | `cooldown: default-days: 10` on version-update PRs in `.github/dependabot.yml` (pip and github-actions ecosystems). |
-| **dep-updater** | `scripts/dep-updater` from repository-helpers when bumping Python or Actions dependencies. |
+| **dep-updater** | 9-day gate for Python/PyPI and GitHub Actions bumps (`scripts/dep-updater` from repository-helpers). |
+| **Dependabot** | `cooldown: default-days: 10` on version-update PRs in `.github/dependabot.yml` (pip and github-actions; one day after dep-updater). |
 
 ### CVE and security exceptions
 
 - **Dependabot security updates** are not subject to the version-update cooldown.
-- **dep-updater:** Python security fixes use the audit-driven security path (`pip-audit` / `py_security_update`); do not bypass review by pinning unreleased or same-day versions in `pyproject.toml` for CVE response—use audit fix versions and dedicated security PRs.
+- **dep-updater:** when **pip-audit** reports CVE IDs with an available fix, dep-updater skips the 9-day gate for that package; otherwise use the audit-driven security path (`py_security_update`).
 - **CI:** `pip-audit` (or equivalent) remains the source of truth for known CVEs on runtime deps.
 
 **Day-to-day:** no grandfathering steps (this repo has no pnpm). Review Dependabot and dep-updater PRs as usual.
