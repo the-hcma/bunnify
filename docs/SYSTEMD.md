@@ -4,8 +4,12 @@ This guide covers how to install, manage, and troubleshoot Bunnify as a
 persistent background service using systemd's user session support.
 
 The service runs under your user account (no root required), starts on boot
-via lingering, and is managed using the `setup-service` script from
+via lingering on the designated **ConditionHost**, and is managed using
+`setup-service` from
 [repository-helpers](https://github.com/the-hcma/repository-helpers).
+
+Unit templates live in **repository-helpers**
+`share/systemd-unit-templates/`.
 
 ## Prerequisites
 
@@ -13,6 +17,8 @@ via lingering, and is managed using the `setup-service` script from
 - `~/work/ai/repository-helpers` cloned locally
 - Bunnify dependencies installed (`uv sync`)
 - `bunnify.json` bookmarks file present (copy from `bunnify.json.example` to get started)
+- `~/.config/user-services-host` set to your service host (or pass
+  `--condition-host` on first `setup-service` run)
 
 ## Install the Service
 
@@ -24,13 +30,13 @@ Run `setup-service` from the bunnify repo directory:
 
 This will:
 
-1. Read `etc/systemd/bunnify.service` from the repo, substitute `@@REPO_DIR@@`
-   with the actual repo path, and write the result to
+1. Read `share/systemd-unit-templates/bunnify.service` from repository-helpers,
+   substitute `@@REPO_DIR@@`, inject `ConditionHost=`, and write the result to
    `~/.config/systemd/user/bunnify.service`.
 2. Create the log directory at `~/scratch/bunnify/`.
-3. Enable systemd lingering so the service starts on boot without a login session.
+3. Enable systemd lingering on the ConditionHost machine.
 4. Run `scripts/on-deploy` — applies any pending database migrations.
-5. Enable and start (or restart) the service.
+5. Enable and start (or restart) the service on the ConditionHost only.
 
 ## Check Status
 
@@ -85,8 +91,8 @@ handles this automatically:
 
 ## Service Configuration
 
-The service template lives at
-[etc/systemd/bunnify.service](../etc/systemd/bunnify.service).
+The canonical template is
+[repository-helpers/share/systemd-unit-templates/bunnify.service](https://github.com/the-hcma/repository-helpers/blob/main/share/systemd-unit-templates/bunnify.service).
 
 Key settings:
 
@@ -99,8 +105,8 @@ Key settings:
 | `StandardOutput`| `append:~/scratch/bunnify/bunnify.log`                                  |
 | `WantedBy`      | `default.target` (user session)                                         |
 
-To change startup flags (e.g. a different port), edit
-`etc/systemd/bunnify.service` and re-run `setup-service`.
+To change startup flags (e.g. a different port), edit the template in
+repository-helpers and re-run `setup-service`.
 
 ## Uninstall
 
