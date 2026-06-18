@@ -4,7 +4,8 @@ This guide covers how to install, manage, and troubleshoot Bunnify as a
 persistent background service using systemd's user session support.
 
 The service runs under your user account (no root required), starts on boot
-via lingering on the designated **ConditionHost**, and is managed using
+via lingering on the designated **service host** (matched by `ConditionMachineId`),
+and is managed using
 `setup-service` from
 [repository-helpers](https://github.com/the-hcma/repository-helpers).
 
@@ -19,8 +20,10 @@ The unit **template** (with `@@REPO_DIR@@`) lives in this repo at
 - `~/work/ai/repository-helpers` cloned locally
 - Bunnify dependencies installed (`uv sync`)
 - `bunnify.json` bookmarks file present (copy from `bunnify.json.example` to get started)
-- `~/.config/user-services-host` set to your service host (or pass
-  `--condition-host` on first `setup-service` run)
+- `~/.config/user-services-host` — readable label for the service host (or pass
+  `--condition-host` on first `setup-service` run). On that host, setup also
+  captures `/etc/machine-id` into `~/.config/user-services-machine-id` and injects
+  `ConditionMachineId=` into units.
 
 ## Install the Service
 
@@ -33,12 +36,12 @@ Run `setup-service` from the bunnify repo directory:
 This will:
 
 1. Read `etc/systemd/bunnify.service`, substitute `@@REPO_DIR@@`, inject
-   `ConditionHost=`, and install under `~/.config/systemd/user/`.
+   `ConditionMachineId=`, and install under `~/.config/systemd/user/`.
 2. Mirror the expanded unit to `~/.config/share/systemd-units/bunnify.service`.
 3. Create the log directory at `~/scratch/bunnify/`.
-4. Enable systemd lingering on the ConditionHost machine.
+4. Enable systemd lingering on the service host (when machine-id matches).
 5. Run `scripts/on-deploy` — applies any pending database migrations.
-6. Enable and start (or restart) the service on the ConditionHost only.
+6. Enable and start (or restart) the service on the service host only.
 
 ## Check Status
 
