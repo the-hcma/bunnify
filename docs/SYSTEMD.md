@@ -8,8 +8,10 @@ via lingering on the designated **ConditionHost**, and is managed using
 `setup-service` from
 [repository-helpers](https://github.com/the-hcma/repository-helpers).
 
-Unit templates live in **repository-helpers**
-`share/systemd-unit-templates/`.
+The unit **template** (with `@@REPO_DIR@@`) lives in this repo at
+`etc/systemd/bunnify.service`. `setup-service` expands it into
+`~/.config/systemd/user/` and mirrors the expanded unit under
+`~/.config/share/systemd-units/`.
 
 ## Prerequisites
 
@@ -30,13 +32,13 @@ Run `setup-service` from the bunnify repo directory:
 
 This will:
 
-1. Read `share/systemd-unit-templates/bunnify.service` from repository-helpers,
-   substitute `@@REPO_DIR@@`, inject `ConditionHost=`, and write the result to
-   `~/.config/systemd/user/bunnify.service`.
-2. Create the log directory at `~/scratch/bunnify/`.
-3. Enable systemd lingering on the ConditionHost machine.
-4. Run `scripts/on-deploy` — applies any pending database migrations.
-5. Enable and start (or restart) the service on the ConditionHost only.
+1. Read `etc/systemd/bunnify.service`, substitute `@@REPO_DIR@@`, inject
+   `ConditionHost=`, and install under `~/.config/systemd/user/`.
+2. Mirror the expanded unit to `~/.config/share/systemd-units/bunnify.service`.
+3. Create the log directory at `~/scratch/bunnify/`.
+4. Enable systemd lingering on the ConditionHost machine.
+5. Run `scripts/on-deploy` — applies any pending database migrations.
+6. Enable and start (or restart) the service on the ConditionHost only.
 
 ## Check Status
 
@@ -55,13 +57,7 @@ systemctl --user status bunnify
 Logs are written to `~/scratch/bunnify/bunnify.log`:
 
 ```bash
-# Follow live
 tail -f ~/scratch/bunnify/bunnify.log
-
-# Last 100 lines via journal
-journalctl --user -u bunnify -n 100
-
-# Follow live via journal
 journalctl --user -u bunnify -f
 ```
 
@@ -75,38 +71,13 @@ systemctl --user restart bunnify
 
 ## Update After Code Changes
 
-Run `setup-service` again — it re-runs `on-deploy` (which applies pending
-migrations) and restarts the service only if the git SHA changed:
-
 ```bash
 ~/work/ai/repository-helpers/scripts/setup-service
 ```
 
-At the start of each development session, `start-development --refresh`
-handles this automatically:
-
-```bash
-~/work/ai/repository-helpers/scripts/dev/start-development --refresh
-```
-
 ## Service Configuration
 
-The canonical template is
-[repository-helpers/share/systemd-unit-templates/bunnify.service](https://github.com/the-hcma/repository-helpers/blob/main/share/systemd-unit-templates/bunnify.service).
-
-Key settings:
-
-| Setting         | Value                                                                   |
-|-----------------|-------------------------------------------------------------------------|
-| `ExecStart`     | `bunnify-server --foreground --listen-all --port 8001 --bookmarks bunnify.json` |
-| `ExecStartPost` | polls `http://127.0.0.1:8001/health` (12 × 1 s) to confirm startup     |
-| `Restart`       | `always`                                                                |
-| `RestartSec`    | `5s`                                                                    |
-| `StandardOutput`| `append:~/scratch/bunnify/bunnify.log`                                  |
-| `WantedBy`      | `default.target` (user session)                                         |
-
-To change startup flags (e.g. a different port), edit the template in
-repository-helpers and re-run `setup-service`.
+Edit `etc/systemd/bunnify.service` in this repo and re-run `setup-service`.
 
 ## Uninstall
 
@@ -114,5 +85,6 @@ repository-helpers and re-run `setup-service`.
 systemctl --user stop    bunnify
 systemctl --user disable bunnify
 rm ~/.config/systemd/user/bunnify.service
+rm -f ~/.config/share/systemd-units/bunnify.service
 systemctl --user daemon-reload
 ```
