@@ -179,6 +179,10 @@
     "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
     "url": "https://github.com/#{repo}/pull/#{pr_number}"
   },
+  "prh": {
+    "description": "the-hcma GitHub Pull Requests (Usage: prh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/pulls"
+  },
   "printer": {
     "description": "House printer",
     "url": "http://printer.house.hcma"
