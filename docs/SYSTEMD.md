@@ -4,8 +4,8 @@ This guide covers how to install, manage, and troubleshoot Bunnify as a
 persistent background service using systemd's user session support.
 
 The service runs under your user account (no root required), starts on boot
-via lingering on the designated **service host** (matched by `ConditionMachineId`),
-and is managed using
+via lingering on the designated **service host** (guarded by `ConditionHost=|`
+short name, FQDN, and machine-id — see repository-helpers `docs/SYSTEMD.md`), and is managed using
 `setup-service` from
 [repository-helpers](https://github.com/the-hcma/repository-helpers).
 
@@ -20,10 +20,13 @@ The unit **template** (with `@@REPO_DIR@@`) lives in this repo at
 - `~/work/ai/repository-helpers` cloned locally
 - Bunnify dependencies installed (`uv sync`)
 - `bunnify.json` bookmarks file present (copy from `bunnify.json.example` to get started)
-- `~/.config/user-services-host` — readable label for the service host (or pass
-  `--condition-host` on first `setup-service` run). On that host, setup also
-  captures `/etc/machine-id` into `~/.config/user-services-machine-id` and injects
-  `ConditionMachineId=` into units.
+- `~/.config/user-services-host` — short hostname label for the service host (or pass
+  `--condition-host` on first `setup-service` run)
+- `~/.config/user-services-host-fqdn` — FQDN captured on the service host (or
+  `--condition-host-fqdn`)
+- `~/.config/user-services-machine-id` — machine-id from `/etc/machine-id` on the
+  service host; `setup-service` injects `ConditionHost=|<machine-id>` guards (see
+  repository-helpers `docs/SYSTEMD.md`)
 
 ## Install the Service
 
@@ -36,7 +39,7 @@ Run `setup-service` from the bunnify repo directory:
 This will:
 
 1. Read `etc/systemd/bunnify.service`, substitute `@@REPO_DIR@@`, inject
-   `ConditionMachineId=`, and install under `~/.config/systemd/user/`.
+   `ConditionHost=|` guards, and install under `~/.config/systemd/user/`.
 2. Mirror the expanded unit to `~/.config/share/systemd-units/bunnify.service`.
 3. Create the log directory at `~/scratch/bunnify/`.
 4. Enable systemd lingering on the service host (when machine-id matches).
