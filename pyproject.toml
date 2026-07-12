@@ -15,6 +15,7 @@ dependencies = [
     "platformdirs==4.10.0",
     "pyright==1.1.411",
     "rpds-py>=2026.6.3",
+    "typing-extensions==4.16.0",
 ]
 
 [build-system]
