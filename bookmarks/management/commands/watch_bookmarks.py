@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import time
 from pathlib import Path
@@ -68,7 +67,10 @@ class Command(BaseCommand):
 
                 if current_hash and current_hash != last_hash:
                     logger.info(
-                        f"File change detected in {json_file_path}, hash changed from {last_hash} to {current_hash}"
+                        "File change detected in %s, hash changed from %s to %s",
+                        json_file_path,
+                        last_hash,
+                        current_hash,
                     )
                     self.stdout.write(
                         self.style.WARNING(f"\n🔄 Change detected in {json_file_path}")

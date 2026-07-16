@@ -43,8 +43,8 @@ The **primary clone** (repo root — first entry in `git worktree list`, usually
 
 ## Formatting & Linting
 
-- **Imports**: We use `isort` configured with the "black" profile. Run `uv run isort .` to organize imports.
-- **Type Checking**: We use **pyright** in basic mode for static analysis, configured in `pyproject.toml`.
+- **Lint + format**: We use **Ruff** (`[tool.ruff]` in `pyproject.toml`). Run `uv run ruff check .` and `uv run ruff format .` (or `--check` in CI). Ruff replaces black/isort — it does **not** replace type checking.
+- **Type checking**: We use **pyright** in basic mode for static analysis, configured in `pyproject.toml`.
   - The web framework has dynamic attributes, so certain pyright rules (e.g., `reportAttributeAccessIssue`, `reportOptionalMemberAccess`) are disabled to avoid false positives.
   - Run `uv run pyright` and ensure there are zero errors before submitting a PR.
 - Keep the codebase clean and descriptive.
@@ -131,8 +131,9 @@ New dependency versions are adopted on a staggered schedule so **dep-updater** (
 ## CI Checks / Pre-PR (all must pass)
 
 ```bash
-uv run isort --check .
-uv run pyright
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright --warnings
 ./test_bunnify
 ```
 
@@ -141,10 +142,10 @@ No PR may be merged if the above commands fail.
 ### Pre-PR Local Checklist (recommended)
 
 - **Run the unified preflight script:** Prefer using `scripts/checks` which runs formatting, linters, unit tests and (optionally) integration tests with sensible timeouts.
-- **Formatting & linting:** `uv run isort --check-only --diff .` and `uv run black --check .` and `uv run pyright --warnings` must pass locally before creating a PR.
+- **Formatting & linting:** `uv run ruff check .`, `uv run ruff format --check .`, and `uv run pyright --warnings` must pass locally before creating a PR.
 - **Shell linting:** Run `shellcheck bunnify-server test_integration scripts/*` and ensure there are no new errors or warnings.
 - **Unit tests:** Run `./test_bunnify` and ensure all tests pass.
 - **Integration tests (required pre-PR):** Run `./test_integration` — this script uses OS-chosen ephemeral ports when passed `--port 0` and includes explicit timeouts; run it locally to validate end-to-end behavior.
-- **Parallelization guidance:** When possible, run formatting and static checks in parallel to reduce feedback time (our CI runs `isort`, `black`, and `pyright` in a separate job from shellcheck and tests). Locally, `scripts/checks` can be used as a single-entrypoint; CI runs jobs in parallel automatically.
+- **Parallelization guidance:** When possible, run formatting and static checks in parallel to reduce feedback time (our CI runs `ruff check`, `ruff format --check`, and `pyright` in a separate job from shellcheck and tests). Locally, `scripts/checks` can be used as a single-entrypoint; CI runs jobs in parallel automatically.
 
 If any of the above fail locally, fix the issues before opening a PR. The CI will re-run these checks in parallel and block merges on failures.
