@@ -40,10 +40,10 @@ class Command(BaseCommand):
             self.stdout.write("✓ Database connection OK")
             if verbose:
                 self.stdout.write(
-                    f'  Engine: {connection.settings_dict.get("ENGINE", "unknown")}'
+                    f"  Engine: {connection.settings_dict.get('ENGINE', 'unknown')}"
                 )
                 self.stdout.write(
-                    f'  Name: {connection.settings_dict.get("NAME", "unknown")}'
+                    f"  Name: {connection.settings_dict.get('NAME', 'unknown')}"
                 )
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"✗ Database connection failed: {e}"))

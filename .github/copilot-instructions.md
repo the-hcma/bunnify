@@ -42,13 +42,13 @@ After creating a PR:
 Before committing, always run these checks locally:
 
 ```bash
-# Check import sorting (must pass with no changes needed)
-uv run isort --check-only --diff .
+# Lint (must pass with no findings)
+uv run ruff check .
 
-# Fix import sorting if needed
-uv run isort .
+# Format check (fix with: uv run ruff format .)
+uv run ruff format --check .
 
-# Type checking (must be 0 errors, 0 warnings)
+# Type checking (must be 0 errors, 0 warnings) — complementary to Ruff
 uv run pyright --warnings
 
 # Shell script linting (must pass with no errors or warnings)
@@ -56,7 +56,7 @@ shellcheck bunnify-server test_integration
 find scripts -type f | xargs shellcheck
 ```
 
-All checks (`isort`, `pyright`, and `shellcheck`) must pass with zero issues before committing. The CI workflow enforces this - PRs with any issues will fail.
+All checks (`ruff check`, `ruff format --check`, `pyright`, and `shellcheck`) must pass with zero issues before committing. The CI workflow enforces this - PRs with any issues will fail.
 
 ## Shell Script Guidelines
 

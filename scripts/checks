@@ -28,8 +28,8 @@ run() {
 echo "🔎 Running preflight checks"
 
 # Python formatting and linting
-run "$uv_cmd run isort --check-only --diff ."
-run "$uv_cmd run black --check ."
+run "$uv_cmd run ruff check ."
+run "$uv_cmd run ruff format --check ."
 run "$uv_cmd run pyright --warnings"
 
 # Shell linting (only when shellcheck is available)

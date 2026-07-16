@@ -5,15 +5,12 @@ description = "Smart bookmark manager and URL shortcut system"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "black>=26.5.1",
     "click>=8.4.2",
     "django>=6.0.7",
-    "isort>=8.0.1",
     "jsonschema>=4.26.0",
     "packaging==26.2",
     "pathspec==1.1.1",
     "platformdirs==4.10.0",
-    "pyright==1.1.411",
     "rpds-py>=2026.6.3",
     "typing-extensions==4.16.0",
 ]
@@ -24,15 +21,9 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "isort>=8.0.1",
     "pyright>=1.1.410",
-    "black>=26.5.1",
+    "ruff>=0.15.17",
 ]
-
-[tool.isort]
-profile = "black"
-line_length = 88
-skip = [".venv", "venv", "migrations"]
 
 [tool.pyright]
 pythonVersion = "3.14"
@@ -44,3 +35,22 @@ reportIndexIssue = "none"
 reportCallIssue = "none"
 reportOptionalMemberAccess = "none"
 reportArgumentType = "none"  # Django HttpResponse accepts str, pyright thinks bytes
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+extend-exclude = ["**/migrations"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+# Replaces black/isort-adjacent flake8 E/F and isort (I). Pyright remains for types.
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bookmarks", "bunnify"]
+
+[tool.ruff.lint.per-file-ignores]
+# Django settings: late imports + long AUTH_PASSWORD_VALIDATORS / LOGGING strings.
+"bunnify/settings.py" = ["E402", "E501"]

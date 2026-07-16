@@ -56,7 +56,7 @@ class Command(BaseCommand):
             logger.info("Starting JSON schema validation")
             validate(instance=data, schema=schema)
             logger.info("JSON schema validation passed")
-            self.stdout.write(self.style.SUCCESS(f"✓ JSON schema validation passed"))
+            self.stdout.write(self.style.SUCCESS("✓ JSON schema validation passed"))
 
             # Check for reserved keywords
             reserved_keywords = ["h", "help"]
@@ -67,8 +67,9 @@ class Command(BaseCommand):
                     )
                     self.stdout.write(
                         self.style.ERROR(
-                            f'Error: Bookmark key "{key}" is reserved and cannot be used.\n'
-                            f'Reserved keywords: {", ".join(reserved_keywords)}'
+                            f'Error: Bookmark key "{key}" is reserved and '
+                            f"cannot be used.\n"
+                            f"Reserved keywords: {', '.join(reserved_keywords)}"
                         )
                     )
                     return

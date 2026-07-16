@@ -104,11 +104,11 @@ jobs:
     - name: Install dependencies (including dev)
       run: uv sync --all-groups
 
-    - name: Check import sorting (isort)
-      run: uv run isort --check-only --diff .
+    - name: Lint with Ruff
+      run: uv run ruff check .
 
-    - name: Check formatting (black)
-      run: uv run black --check .
+    - name: Check formatting with Ruff
+      run: uv run ruff format --check .
 
     - name: Type check (pyright)
       run: uv run pyright --warnings

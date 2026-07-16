@@ -7,12 +7,10 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
-from django.core.cache import cache
 from django.db import models
 from django.http import (
     HttpResponse,
     HttpResponseNotFound,
-    HttpResponseRedirect,
     JsonResponse,
 )
 from django.shortcuts import redirect, render
@@ -117,7 +115,10 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
     try:
         bookmark = Bookmark.objects.get(key=key)
         logger.info(
-            f"Found bookmark: key='{key}', url='{bookmark.url}', params='{param_string}'"
+            "Found bookmark: key=%r, url=%r, params=%r",
+            key,
+            bookmark.url,
+            param_string,
         )
     except Bookmark.DoesNotExist:
         logger.info(f"No bookmark for key='{key}', falling back to Google search")
@@ -142,7 +143,7 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
                 )
             else:
                 return HttpResponse(
-                    f"Bookmark '{key}' requires a parameter.\n" f"Usage: {key} <value>",
+                    f"Bookmark '{key}' requires a parameter.\nUsage: {key} <value>",
                     status=400,
                 )
         else:
@@ -175,12 +176,14 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
                     optional_params = [
                         p for p in placeholders if p in (bookmark.defaults or {})
                     ]
+                    required = ", ".join(required_params)
+                    usage_args = " ".join(f"<{p}>" for p in required_params)
+                    optional_suffix = (
+                        f" [{' '.join(optional_params)}]" if optional_params else ""
+                    )
                     return HttpResponse(
-                        f"Bookmark '{key}' requires parameter(s): {', '.join(required_params)}\n"
-                        f"Usage: {key} {' '.join(f'<{p}>' for p in required_params)}"
-                        + (
-                            f" [{' '.join(optional_params)}]" if optional_params else ""
-                        ),
+                        f"Bookmark '{key}' requires parameter(s): {required}\n"
+                        f"Usage: {key} {usage_args}{optional_suffix}",
                         status=400,
                     )
 
@@ -335,8 +338,10 @@ def bookmark_status(request: HttpRequest) -> JsonResponse:
 @require_http_methods(["GET"])
 def search_suggestions(request: HttpRequest) -> JsonResponse:
     """
-    OpenSearch suggestions API - provides autocomplete suggestions for bookmarks
-    Returns suggestions in OpenSearch format: [query, [suggestions], [descriptions], [urls]]
+    OpenSearch suggestions API - provides autocomplete suggestions for bookmarks.
+
+    Returns suggestions in OpenSearch format:
+    [query, [suggestions], [descriptions], [urls]]
     """
     query_param = request.GET.get("q", "")
     query = str(query_param).strip().lower() if query_param else ""
@@ -352,9 +357,7 @@ def search_suggestions(request: HttpRequest) -> JsonResponse:
     bookmarks = Bookmark.objects.filter(
         models.Q(key__istartswith=search_key)
         | models.Q(description__icontains=search_key)
-    )[
-        :10
-    ]  # Limit to 10 suggestions
+    )[:10]  # Limit to 10 suggestions
 
     # Also include special commands
     special_commands = []
