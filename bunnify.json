@@ -167,6 +167,10 @@
     "description": "Graphite's merge queue for my-tracks",
     "url": "https://app.graphite.com/merges?repo=my-tracks&org=the-hcma&tab=queue"
   },
+  "mqh": {
+    "description": "the-hcma GitHub Merge Queue (Usage: mqh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/queue/main"
+  },
   "mt": {
     "description": "MyTracks",
     "url": "https://mytracks.hcma.info"
