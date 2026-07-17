@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# One sync for ruff + pyright (shared venv). Prefer this in CI over inline steps.
+bash .github/ci/setup-python
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright --warnings
