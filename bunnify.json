@@ -27,6 +27,10 @@
     "description": "Domestic-bot (home automation)",
     "url": "https://db.hcma.info"
   },
+  "ep1": {
+    "description": "Everything Presence One USB-based configuration",
+    "url": "https://docs.everythingsmart.io/flash/everything-presence-one.html"
+  },
   "fpdf": {
     "description": "fpdf",
     "url": "https://fpdf.hcma.info"
