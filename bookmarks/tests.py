@@ -106,7 +106,7 @@ class SmokeTests(TestCase):
         self.assertEqual(response["Location"], "http://sony.house.hcma")
 
     def test_search_direct_url_http(self):
-        """Test that queries starting with htt redirect to the typed URL"""
+        """Test that http(s) URLs are passed through directly"""
         response = self.client.get("/search/", {"q": "http://example.com/path"})
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "http://example.com/path")

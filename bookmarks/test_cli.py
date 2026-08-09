@@ -45,6 +45,23 @@ class ResolveApiTests(TestCase):
         self.assertFalse(data["ok"])
         self.assertIn("Unknown shortcut", data["error"])
 
+    def test_resolve_strict_rejects_htt_prefix_without_scheme(self) -> None:
+        response = self.client.get("/api/resolve/", {"q": "htt", "strict": "1"})
+        self.assertEqual(response.status_code, 404)
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertIn("Unknown shortcut", data["error"])
+
+    def test_resolve_direct_https_url(self) -> None:
+        response = self.client.get(
+            "/api/resolve/", {"q": "https://example.com/x", "strict": "1"}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["url"], "https://example.com/x")
+        self.assertEqual(data["kind"], "direct_url")
+
     def test_resolve_special_absolute(self) -> None:
         response = self.client.get("/api/resolve/", {"q": "h", "strict": "1"})
         self.assertEqual(response.status_code, 200)

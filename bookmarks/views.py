@@ -40,7 +40,8 @@ def _absolute_resolve_url(request: HttpRequest, url: str) -> str:
     if url.startswith(("http://", "https://", "chrome://", "about://", "file://")):
         return url
     script_prefix = request.path.removesuffix(request.path_info).rstrip("/")
-    return request.build_absolute_uri(f"{script_prefix}/{url.lstrip('/')}")
+    absolute_url = request.build_absolute_uri(f"{script_prefix}/{url.lstrip('/')}")
+    return absolute_url if absolute_url is not None else url
 
 
 @require_http_methods(["GET"])

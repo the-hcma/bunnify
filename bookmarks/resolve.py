@@ -11,6 +11,7 @@ from .models import Bookmark
 
 PLACEHOLDER_PATTERN = re.compile(r"#\{(\w+)\}")
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q=#{search_terms}"
+_DIRECT_URL_PREFIXES = ("http://", "https://", "chrome://", "about://", "file://")
 
 ResolveKind = Literal["bookmark", "special", "direct_url", "google_fallback"]
 
@@ -87,7 +88,7 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
     if not query:
         return ResolveResult(ok=False, error="No search query provided")
 
-    if query.lower().startswith("htt"):
+    if query.lower().startswith(_DIRECT_URL_PREFIXES):
         return ResolveResult(ok=True, url=query, kind="direct_url")
 
     parts = query.split(None, 1)
