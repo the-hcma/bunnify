@@ -16,6 +16,9 @@ dependencies = [
     "typing-extensions==4.16.0",
 ]
 
+[project.scripts]
+bunnify = "bunnify.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

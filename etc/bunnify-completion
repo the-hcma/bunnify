@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Bash completion for the bunnify CLI (fzf-backed when available).
+#
+# Install (bash):
+#   source /path/to/bunnify/etc/bunnify-completion
+#
+# Requires a running Bunnify server so `bunnify --list-keys` can enumerate shortcuts.
+# Prefers fzf for interactive selection on Tab; falls back to COMPREPLY.
+
+_bunnify_completion() {
+    local cur
+    local pending_option
+    local expecting_option_value
+    local first_positional_seen
+    local i
+    local reply
+    local word
+    local -a list_keys_cmd
+    local -a options
+    local keys
+    local selected
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    pending_option=""
+    expecting_option_value=false
+    first_positional_seen=false
+    list_keys_cmd=(bunnify --list-keys)
+
+    if [[ "${cur}" == -* ]]; then
+        options=(--base-url --list-keys --fzf --query --print-url --dry-run --help)
+        COMPREPLY=()
+        while IFS= read -r reply; do
+            COMPREPLY+=("${reply}")
+        done < <(compgen -W "${options[*]}" -- "${cur}")
+        return 0
+    fi
+
+    for ((i = 1; i < COMP_CWORD; i++)); do
+        word="${COMP_WORDS[i]}"
+        if [[ "${expecting_option_value}" == true ]]; then
+            if [[ "${pending_option}" == "--base-url" ]]; then
+                list_keys_cmd+=(--base-url "${word}")
+            fi
+            pending_option=""
+            expecting_option_value=false
+            continue
+        fi
+        case "${word}" in
+            --base-url|--query)
+                pending_option="${word}"
+                expecting_option_value=true
+                ;;
+            --base-url=*)
+                list_keys_cmd+=("${word}")
+                ;;
+            --query=*)
+                ;;
+            -*)
+                pending_option=""
+                ;;
+            *)
+                first_positional_seen=true
+                ;;
+        esac
+        if [[ "${first_positional_seen}" == true ]]; then
+            return 0
+        fi
+    done
+
+    if [[ "${expecting_option_value}" == true ]]; then
+        return 0
+    fi
+
+    if ! keys="$("${list_keys_cmd[@]}" 2>/dev/null)"; then
+        return 0
+    fi
+
+    if command -v fzf >/dev/null 2>&1; then
+        # Prefer fzf for interactive selection on Tab.
+        selected="$(printf '%s\n' "${keys}" | fzf --query="${cur}" --select-1 --exit-0 --height=40% --layout=reverse --prompt='bunnify> ')"
+        if [[ -n "${selected}" ]]; then
+            COMPREPLY=( "${selected}" )
+        fi
+        return 0
+    fi
+
+    COMPREPLY=()
+    while IFS= read -r reply; do
+        COMPREPLY+=("${reply}")
+    done < <(compgen -W "${keys}" -- "${cur}")
+}
+
+complete -F _bunnify_completion bunnify
