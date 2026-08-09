@@ -94,6 +94,7 @@ class CliUnitTests(TestCase):
                     base_url="http://127.0.0.1:8000",
                     list_keys=False,
                     use_fzf=False,
+                    fzf_query="",
                     print_url=False,
                     open_browser=True,
                     opener=opener,
@@ -128,6 +129,7 @@ class CliUnitTests(TestCase):
                     base_url="http://127.0.0.1:8000",
                     list_keys=False,
                     use_fzf=False,
+                    fzf_query="",
                     print_url=False,
                     open_browser=True,
                     opener=opener,
@@ -165,6 +167,7 @@ class CliUnitTests(TestCase):
                     base_url="http://127.0.0.1:8000",
                     list_keys=False,
                     use_fzf=False,
+                    fzf_query="",
                     print_url=False,
                     open_browser=True,
                     opener=opener,
@@ -200,6 +203,7 @@ class CliUnitTests(TestCase):
                     base_url="http://127.0.0.1:8000",
                     list_keys=False,
                     use_fzf=False,
+                    fzf_query="",
                     print_url=False,
                     open_browser=True,
                     opener=opener,
@@ -221,10 +225,81 @@ class CliUnitTests(TestCase):
                 base_url="http://127.0.0.1:8000",
                 list_keys=True,
                 use_fzf=False,
+                fzf_query="",
                 print_url=False,
                 open_browser=False,
             )
         self.assertEqual(stdout.getvalue().splitlines(), ["h", "gh"])
+
+    @patch("bunnify.cli.resolve_shortcut")
+    @patch("bunnify.cli.fetch_keys")
+    def test_fzf_mode_preserves_params(
+        self,
+        mock_fetch_keys,
+        mock_resolve,
+    ) -> None:
+        mock_fetch_keys.return_value = ["gh", "pr"]
+        mock_resolve.return_value = ResolvedShortcut(
+            url="https://github.com/org/repo/pull/12345",
+            kind="bookmark",
+            key="pr",
+        )
+
+        def fake_fzf(keys: list[str], query: str = "") -> str | None:
+            self.assertEqual(keys, ["gh", "pr"])
+            self.assertEqual(query, "")
+            return "pr"
+
+        with patch("sys.stdout", new_callable=StringIO):
+            with patch("sys.stderr", new_callable=StringIO):
+                _run(
+                    shortcut_args=("12345",),
+                    base_url="http://127.0.0.1:8000",
+                    list_keys=False,
+                    use_fzf=True,
+                    fzf_query="",
+                    print_url=True,
+                    open_browser=False,
+                    fzf_picker=fake_fzf,
+                )
+
+        mock_resolve.assert_called_once_with(
+            "pr 12345", base_url="http://127.0.0.1:8000", strict=True
+        )
+
+    @patch("bunnify.cli.resolve_shortcut")
+    @patch("bunnify.cli.fetch_keys")
+    def test_fzf_mode_uses_explicit_query_seed(
+        self,
+        mock_fetch_keys,
+        mock_resolve,
+    ) -> None:
+        mock_fetch_keys.return_value = ["gh", "pr"]
+        mock_resolve.return_value = ResolvedShortcut(
+            url="https://github.com", kind="bookmark", key="gh"
+        )
+
+        def fake_fzf(keys: list[str], query: str = "") -> str | None:
+            self.assertEqual(keys, ["gh", "pr"])
+            self.assertEqual(query, "g")
+            return "gh"
+
+        with patch("sys.stdout", new_callable=StringIO):
+            with patch("sys.stderr", new_callable=StringIO):
+                _run(
+                    shortcut_args=(),
+                    base_url="http://127.0.0.1:8000",
+                    list_keys=False,
+                    use_fzf=True,
+                    fzf_query="g",
+                    print_url=True,
+                    open_browser=False,
+                    fzf_picker=fake_fzf,
+                )
+
+        mock_resolve.assert_called_once_with(
+            "gh", base_url="http://127.0.0.1:8000", strict=True
+        )
 
     @patch("bunnify.cli.fetch_keys")
     def test_cancel_interactive(self, mock_fetch_keys) -> None:
@@ -235,6 +310,7 @@ class CliUnitTests(TestCase):
                 base_url="http://127.0.0.1:8000",
                 list_keys=False,
                 use_fzf=False,
+                fzf_query="",
                 print_url=False,
                 open_browser=True,
                 input_fn=lambda _prompt: "",

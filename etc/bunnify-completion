@@ -9,24 +9,59 @@
 
 _bunnify_completion() {
     local cur
+    local expecting_option_value
+    local first_positional_seen
+    local i
+    local word
+    local -a list_keys_cmd
     local -a options
     local keys
     local selected
     cur="${COMP_WORDS[COMP_CWORD]}"
+    expecting_option_value=false
+    first_positional_seen=false
+    list_keys_cmd=(bunnify --list-keys)
 
-    # Only complete the first positional argument (the shortcut key).
-    if [[ "${COMP_CWORD}" -ne 1 ]]; then
-        return 0
-    fi
-
-    # Skip completing option flags.
     if [[ "${cur}" == -* ]]; then
-        options=(--base-url --list-keys --fzf --print-url --dry-run --help)
+        options=(--base-url --list-keys --fzf --query --print-url --dry-run --help)
         mapfile -t COMPREPLY < <(compgen -W "${options[*]}" -- "${cur}")
         return 0
     fi
 
-    if ! keys="$(bunnify --list-keys 2>/dev/null)"; then
+    for ((i = 1; i < COMP_CWORD; i++)); do
+        word="${COMP_WORDS[i]}"
+        if [[ "${expecting_option_value}" == true ]]; then
+            if [[ "${COMP_WORDS[i-1]}" == "--base-url" ]]; then
+                list_keys_cmd+=(--base-url "${word}")
+            fi
+            expecting_option_value=false
+            continue
+        fi
+        case "${word}" in
+            --base-url|--query)
+                expecting_option_value=true
+                ;;
+            --base-url=*)
+                list_keys_cmd+=("${word}")
+                ;;
+            --query=*)
+                ;;
+            -*)
+                ;;
+            *)
+                first_positional_seen=true
+                ;;
+        esac
+        if [[ "${first_positional_seen}" == true ]]; then
+            return 0
+        fi
+    done
+
+    if [[ "${expecting_option_value}" == true ]]; then
+        return 0
+    fi
+
+    if ! keys="$("${list_keys_cmd[@]}" 2>/dev/null)"; then
         return 0
     fi
 

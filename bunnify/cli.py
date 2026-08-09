@@ -98,6 +98,12 @@ def build_query_from_args(args: tuple[str, ...]) -> str:
     help="Fuzzy-pick a shortcut with fzf, then open it (optional params follow).",
 )
 @click.option(
+    "--query",
+    "fzf_query",
+    default="",
+    help="Seed the fzf picker in --fzf mode without consuming shortcut params.",
+)
+@click.option(
     "--print-url",
     is_flag=True,
     help="Print the resolved URL instead of opening a browser.",
@@ -112,6 +118,7 @@ def main(
     base_url: str,
     list_keys: bool,
     use_fzf: bool,
+    fzf_query: str,
     print_url: bool,
     dry_run: bool,
 ) -> None:
@@ -138,6 +145,7 @@ def main(
             base_url=base_url,
             list_keys=list_keys,
             use_fzf=use_fzf,
+            fzf_query=fzf_query,
             print_url=print_url or dry_run,
             open_browser=not (print_url or dry_run),
         )
@@ -152,6 +160,7 @@ def _run(
     base_url: str,
     list_keys: bool,
     use_fzf: bool,
+    fzf_query: str,
     print_url: bool,
     open_browser: bool,
     opener: Callable[[str], bool] | None = None,
@@ -168,9 +177,8 @@ def _run(
 
     if use_fzf:
         keys = fetch_keys(base_url=base_url)
-        seed = shortcut_args[0] if shortcut_args else ""
-        params = " ".join(shortcut_args[1:]).strip() if len(shortcut_args) > 1 else ""
-        selected = picker(keys, query=seed)
+        params = build_query_from_args(shortcut_args)
+        selected = picker(keys, query=fzf_query)
         if selected is None:
             raise ClientError("No shortcut selected")
         query = f"{selected} {params}".strip()
