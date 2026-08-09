@@ -43,7 +43,7 @@ def _request_json(
         try:
             payload = json.loads(exc.read().decode("utf-8"))
             detail = str(payload.get("error") or payload)
-        except json.JSONDecodeError, UnicodeDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             detail = exc.reason or str(exc)
         raise ClientError(detail or f"HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
