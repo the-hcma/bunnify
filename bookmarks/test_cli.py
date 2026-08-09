@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from io import StringIO
 from unittest.mock import patch
 
 from django.test import Client, TestCase
 
+from bunnify import interactive
 from bunnify.cli import _run, matching_keys
 from bunnify.client import ClientError, ResolvedShortcut
 
@@ -236,3 +239,42 @@ class CliUnitTests(TestCase):
                 open_browser=True,
                 input_fn=lambda _prompt: "",
             )
+
+    def test_read_shortcut_query_falls_back_without_readline(self) -> None:
+        with patch("bunnify.interactive.readline_module", None):
+            with patch("builtins.input", return_value="gh"):
+                self.assertEqual(
+                    interactive.read_shortcut_query(keys=["gh"]),
+                    "gh",
+                )
+
+    def test_cli_imports_without_readline(self) -> None:
+        original_import = __import__
+
+        def fake_import(
+            name: str,
+            globals=None,
+            locals=None,
+            fromlist=(),
+            level: int = 0,
+        ):
+            if name == "readline":
+                raise ModuleNotFoundError(name)
+            return original_import(name, globals, locals, fromlist, level)
+
+        original_modules = {
+            name: sys.modules.get(name)
+            for name in ("bunnify.cli", "bunnify.interactive")
+        }
+        try:
+            for name in original_modules:
+                sys.modules.pop(name, None)
+            with patch("builtins.__import__", side_effect=fake_import):
+                cli_module = importlib.import_module("bunnify.cli")
+            self.assertTrue(hasattr(cli_module, "_run"))
+        finally:
+            for name in ("bunnify.cli", "bunnify.interactive"):
+                sys.modules.pop(name, None)
+            for name, module in original_modules.items():
+                if module is not None:
+                    sys.modules[name] = module

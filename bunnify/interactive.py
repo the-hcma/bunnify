@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-import readline
 from collections.abc import Callable
+
+try:
+    import readline as readline_module
+except ModuleNotFoundError:
+    readline_module = None
 
 
 class ShortcutCompleter:
@@ -14,9 +18,11 @@ class ShortcutCompleter:
         self._matches: list[str] = []
 
     def complete(self, text: str, state: int) -> str | None:
+        if readline_module is None:
+            return None
         if state == 0:
-            begidx = readline.get_begidx()
-            buffer = readline.get_line_buffer()
+            begidx = readline_module.get_begidx()
+            buffer = readline_module.get_line_buffer()
             # Only complete the shortcut key (first token).
             if " " in buffer[:begidx]:
                 self._matches = []
@@ -49,10 +55,18 @@ def read_shortcut_query(
             return None
         return value.strip() or None
 
+    if readline_module is None:
+        try:
+            value = input(prompt)
+        except EOFError, KeyboardInterrupt:
+            print()
+            return None
+        return value.strip() or None
+
     completer = ShortcutCompleter(keys)
-    previous_completer = readline.get_completer()
-    readline.set_completer(completer.complete)
-    readline.parse_and_bind("tab: complete")
+    previous_completer = readline_module.get_completer()
+    readline_module.set_completer(completer.complete)
+    readline_module.parse_and_bind("tab: complete")
     try:
         try:
             value = input(prompt)
@@ -63,7 +77,7 @@ def read_shortcut_query(
             print()
             return None
     finally:
-        readline.set_completer(previous_completer)
+        readline_module.set_completer(previous_completer)
 
     stripped = value.strip()
     return stripped or None
