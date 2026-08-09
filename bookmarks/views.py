@@ -37,7 +37,7 @@ def _make_redirect_response(request: HttpRequest, url: str) -> HttpResponse:
 
 def _absolute_resolve_url(request: HttpRequest, url: str) -> str:
     """Turn site-relative resolve URLs into absolute ones for the CLI/API."""
-    if url.startswith(("http://", "https://", "chrome://", "about://", "file://")):
+    if not url.startswith("/"):
         return url
     script_prefix = request.path.removesuffix(request.path_info).rstrip("/")
     absolute_url = request.build_absolute_uri(f"{script_prefix}/{url.lstrip('/')}")

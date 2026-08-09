@@ -62,6 +62,20 @@ class ResolveApiTests(TestCase):
         self.assertEqual(data["url"], "https://example.com/x")
         self.assertEqual(data["kind"], "direct_url")
 
+    def test_resolve_bookmark_preserves_absolute_non_http_scheme(self) -> None:
+        Bookmark.objects.create(
+            key="ftp",
+            description="FTP example",
+            url="ftp://example.com/file.txt",
+        )
+        response = self.client.get("/api/resolve/", {"q": "ftp", "strict": "1"})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["url"], "ftp://example.com/file.txt")
+        self.assertEqual(data["kind"], "bookmark")
+        self.assertEqual(data["key"], "ftp")
+
     def test_resolve_special_absolute(self) -> None:
         response = self.client.get("/api/resolve/", {"q": "h", "strict": "1"})
         self.assertEqual(response.status_code, 200)
