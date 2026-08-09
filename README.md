@@ -171,7 +171,8 @@ bunnify --print-url gh
 
 The CLI talks to the local server (`http://127.0.0.1:8000` by default; override with
 `--base-url` or `BUNNIFY_BASE_URL`). Unknown shortcuts exit non-zero (no Google
-fallback). Ambiguous prefixes in direct mode invoke `fzf` when multiple keys match.
+fallback). Exact keys short-circuit (e.g. `pr` opens `pr` even if `printer`
+exists); only non-exact prefixes invoke `fzf` when multiple keys match.
 In `--fzf` mode, positional arguments are passed through as shortcut parameters; use
 `--query` to pre-seed the fzf picker.
 

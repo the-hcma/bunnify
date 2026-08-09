@@ -58,7 +58,10 @@ def read_shortcut_query(
     if readline_module is None:
         try:
             value = input(prompt)
-        except EOFError, KeyboardInterrupt:
+        except EOFError:
+            print()
+            return None
+        except KeyboardInterrupt:
             print()
             return None
         return value.strip() or None
