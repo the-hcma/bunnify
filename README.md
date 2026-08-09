@@ -179,7 +179,8 @@ In `--fzf` mode, positional arguments are passed through as shortcut parameters;
 
 ```bash
 source /path/to/bunnify/etc/bunnify-completion
-# then: bunnify --print-url <Tab>  → fzf over keys (falls back to COMPREPLY without fzf)
+# then: bunnify <Tab> or bunnify --print-url <Tab>  → fzf over keys
+# (falls back to COMPREPLY without fzf)
 ```
 
 ### Command Palette (Recommended)

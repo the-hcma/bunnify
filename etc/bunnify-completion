@@ -9,6 +9,7 @@
 
 _bunnify_completion() {
     local cur
+    local pending_option
     local expecting_option_value
     local first_positional_seen
     local i
@@ -18,6 +19,7 @@ _bunnify_completion() {
     local keys
     local selected
     cur="${COMP_WORDS[COMP_CWORD]}"
+    pending_option=""
     expecting_option_value=false
     first_positional_seen=false
     list_keys_cmd=(bunnify --list-keys)
@@ -31,14 +33,16 @@ _bunnify_completion() {
     for ((i = 1; i < COMP_CWORD; i++)); do
         word="${COMP_WORDS[i]}"
         if [[ "${expecting_option_value}" == true ]]; then
-            if [[ "${COMP_WORDS[i-1]}" == "--base-url" ]]; then
+            if [[ "${pending_option}" == "--base-url" ]]; then
                 list_keys_cmd+=(--base-url "${word}")
             fi
+            pending_option=""
             expecting_option_value=false
             continue
         fi
         case "${word}" in
             --base-url|--query)
+                pending_option="${word}"
                 expecting_option_value=true
                 ;;
             --base-url=*)
@@ -47,6 +51,7 @@ _bunnify_completion() {
             --query=*)
                 ;;
             -*)
+                pending_option=""
                 ;;
             *)
                 first_positional_seen=true
