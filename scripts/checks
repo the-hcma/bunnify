@@ -39,6 +39,9 @@ if command -v shellcheck >/dev/null 2>&1; then
     if [ -d scripts ]; then
         run "find scripts -type f | xargs shellcheck"
     fi
+    if [ -f etc/bunnify-completion ]; then
+        run "shellcheck etc/bunnify-completion"
+    fi
 else
     echo "⚠️  shellcheck not installed — skipping shell lint"
 fi

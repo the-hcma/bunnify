@@ -3,9 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 from typing import TYPE_CHECKING
-from urllib.parse import quote
+from urllib.parse import urljoin
 
 from django.db import models
 from django.http import (
@@ -18,46 +17,13 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
 from .models import Bookmark
+from .resolve import PLACEHOLDER_PATTERN, resolve_query, substitute_placeholder_values
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
-PLACEHOLDER_PATTERN = re.compile(r"#\{(\w+)\}")
-GOOGLE_SEARCH_URL = "https://www.google.com/search?q=#{search_terms}"
-
-
-def _encode_placeholder_value(url_template: str, placeholder: str, value: str) -> str:
-    """Encode placeholder values while preserving path separators when needed."""
-    token = f"#{{{placeholder}}}"
-    placeholder_start = url_template.index(token)
-    query_start = url_template.rfind("?", 0, placeholder_start)
-    last_ampersand = url_template.rfind("&", 0, placeholder_start)
-    last_equals = url_template.rfind("=", 0, placeholder_start)
-
-    if last_equals > max(query_start, last_ampersand):
-        return quote(value, safe="")
-
-    return quote(value, safe="/:@-._~")
-
-
-def _substitute_placeholder_values(
-    url_template: str, param_mapping: dict[str, str]
-) -> str:
-    """Replace URL placeholders with encoded values."""
-    substituted_url = url_template
-
-    for placeholder, value in param_mapping.items():
-        encoded_value = _encode_placeholder_value(url_template, placeholder, value)
-        substituted_url = substituted_url.replace(f"#{{{placeholder}}}", encoded_value)
-
-    return substituted_url
-
-
-def _google_search_url(query: str) -> str:
-    """Build a Google search URL for the given query string."""
-    return _substitute_placeholder_values(GOOGLE_SEARCH_URL, {"search_terms": query})
 
 
 def _make_redirect_response(request: HttpRequest, url: str) -> HttpResponse:
@@ -68,6 +34,13 @@ def _make_redirect_response(request: HttpRequest, url: str) -> HttpResponse:
     response = HttpResponse(status=302)
     response["Location"] = url
     return response
+
+
+def _absolute_resolve_url(request: HttpRequest, url: str) -> str:
+    """Turn site-relative resolve URLs into absolute ones for the CLI/API."""
+    if url.startswith(("http://", "https://", "chrome://", "about://", "file://")):
+        return url
+    return urljoin(request.build_absolute_uri("/"), url.lstrip("/"))
 
 
 @require_http_methods(["GET"])
@@ -84,113 +57,26 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
     query = str(query_param).strip() if query_param else ""
     logger.info(f"Search redirect request: query='{query}'")
 
-    if not query:
-        logger.warning("Empty search query received")
-        return HttpResponseNotFound(content="No search query provided")
+    result = resolve_query(query)
+    if not result.ok:
+        if result.error and result.error.startswith("No search query"):
+            logger.warning("Empty search query received")
+            return HttpResponseNotFound(content=result.error)
+        if result.error == "Empty search query":
+            return HttpResponseNotFound(content=result.error)
+        return HttpResponse(result.error or "Resolve failed", status=400)
 
-    if query.lower().startswith("htt"):
+    assert result.url is not None
+    if result.kind == "special":
+        logger.info("Redirecting to special page for key=%r", result.key)
+        return redirect(result.url)
+    if result.kind == "direct_url":
         logger.info(f"Direct URL redirect: url='{query}'")
-        return _make_redirect_response(request, query)
-
-    # Split the query into parts
-    parts = query.split(None, 1)  # Split into key and rest
-
-    if not parts:
-        return HttpResponseNotFound(content="Empty search query")
-
-    key = parts[0]
-
-    # Special case: "h", "help", "cmd" - internal commands
-    if key in ("h", "help"):
-        logger.info(f"Redirecting to help/list page for key='{key}'")
-        return redirect("/list/")
-
-    if key == "cmd":
-        logger.info(f"Redirecting to command palette for key='{key}'")
-        return redirect("/cmd/")
-
-    param_string = parts[1] if len(parts) > 1 else ""
-
-    # Try to find the bookmark
-    try:
-        bookmark = Bookmark.objects.get(key=key)
-        logger.info(
-            "Found bookmark: key=%r, url=%r, params=%r",
-            key,
-            bookmark.url,
-            param_string,
-        )
-    except Bookmark.DoesNotExist:
-        logger.info(f"No bookmark for key='{key}', falling back to Google search")
-        return _make_redirect_response(request, _google_search_url(query))
-
-    url = bookmark.url
-
-    # Find all placeholders in the URL (e.g., #{pr_id}, #{repo})
-    placeholders = PLACEHOLDER_PATTERN.findall(url)
-
-    if placeholders:
-        # Build parameter mapping
-        param_mapping = {}
-
-        if len(placeholders) == 1:
-            # Single parameter - use entire param_string
-            if param_string or (
-                bookmark.defaults and placeholders[0] in bookmark.defaults
-            ):
-                param_mapping[placeholders[0]] = (
-                    param_string if param_string else bookmark.defaults[placeholders[0]]
-                )
-            else:
-                return HttpResponse(
-                    f"Bookmark '{key}' requires a parameter.\nUsage: {key} <value>",
-                    status=400,
-                )
-        else:
-            # Multiple parameters - split by whitespace
-            param_values = param_string.split() if param_string else []
-
-            if len(param_values) > len(placeholders):
-                return HttpResponse(
-                    f"Too many parameters for bookmark '{key}'.",
-                    status=400,
-                )
-
-            # Assign args to placeholders from the end (right-to-left in template
-            # order). This lets optional leading params use their defaults when
-            # the user provides fewer args than there are placeholders.
-            # Example: placeholders=[repo, pr_number], defaults={repo: "org/repo"}
-            #   "pr 194"               -> repo=default, pr_number=194
-            #   "pr the-hcma/fpdf 194" -> repo=the-hcma/fpdf, pr_number=194
-            arg_offset = len(placeholders) - len(param_values)
-            for i, placeholder in enumerate(placeholders):
-                arg_idx = i - arg_offset
-                if arg_idx >= 0:
-                    param_mapping[placeholder] = param_values[arg_idx]
-                elif placeholder in (bookmark.defaults or {}):
-                    param_mapping[placeholder] = bookmark.defaults[placeholder]
-                else:
-                    required_params = [
-                        p for p in placeholders if p not in (bookmark.defaults or {})
-                    ]
-                    optional_params = [
-                        p for p in placeholders if p in (bookmark.defaults or {})
-                    ]
-                    required = ", ".join(required_params)
-                    usage_args = " ".join(f"<{p}>" for p in required_params)
-                    optional_suffix = (
-                        f" [{' '.join(optional_params)}]" if optional_params else ""
-                    )
-                    return HttpResponse(
-                        f"Bookmark '{key}' requires parameter(s): {required}\n"
-                        f"Usage: {key} {usage_args}{optional_suffix}",
-                        status=400,
-                    )
-
-        # Replace all placeholders with their values
-        url = _substitute_placeholder_values(url, param_mapping)
-
-    return _make_redirect_response(request, url)
+    elif result.kind == "google_fallback":
+        logger.info("No bookmark for key=%r, falling back to Google search", result.key)
+    else:
+        logger.info("Found bookmark: key=%r, url=%r", result.key, result.url)
+    return _make_redirect_response(request, result.url)
 
 
 @require_http_methods(["GET"])
@@ -235,7 +121,7 @@ def redirect_bookmark(request: HttpRequest, key: str) -> HttpResponse:
                 )
             param_mapping[placeholder] = param_value
 
-        url = _substitute_placeholder_values(url, param_mapping)
+        url = substitute_placeholder_values(url, param_mapping)
 
     logger.info(f"Redirecting to: {url}")
     return _make_redirect_response(request, url)
@@ -385,6 +271,54 @@ def search_suggestions(request: HttpRequest) -> JsonResponse:
 
     # OpenSearch format: [query, [completions], [descriptions], [urls]]
     return JsonResponse([query, suggestions, descriptions, urls], safe=False)
+
+
+@never_cache
+@require_http_methods(["GET"])
+def api_resolve(request: HttpRequest) -> JsonResponse:
+    """
+    JSON resolve API for the CLI.
+
+    Query params:
+      q: shortcut query (required)
+      strict: if truthy, unknown keys are errors (no Google fallback)
+    """
+    query_param = request.GET.get("q", "")
+    query = str(query_param).strip() if query_param else ""
+    strict_raw = str(request.GET.get("strict", "")).strip().lower()
+    strict = strict_raw in {"1", "true", "yes", "on"}
+
+    result = resolve_query(query, strict=strict)
+    if not result.ok:
+        status = 404 if result.error and result.error.startswith("Unknown") else 400
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": result.error,
+                "key": result.key,
+            },
+            status=status,
+        )
+
+    assert result.url is not None
+    return JsonResponse(
+        {
+            "ok": True,
+            "url": _absolute_resolve_url(request, result.url),
+            "kind": result.kind,
+            "key": result.key,
+        }
+    )
+
+
+@never_cache
+@require_http_methods(["GET"])
+def api_keys(request: HttpRequest) -> JsonResponse:
+    """Return all bookmark keys (plus special commands) for CLI completion / fzf."""
+    keys = list(Bookmark.objects.order_by("key").values_list("key", flat=True))
+    # Special commands first for discoverability
+    special = ["h", "cmd"]
+    return JsonResponse({"keys": [*special, *keys]})
 
 
 @never_cache

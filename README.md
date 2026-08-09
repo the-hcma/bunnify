@@ -15,6 +15,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ## Features
 
 ### Core Functionality
+- **CLI**: Terminal client (`bunnify`) with interactive Tab completion and fzf-backed argv completion
 - **Smart Search**: Type "pr 12345" or "g search terms" directly in your browser
 - **Dynamic URL Redirects**: Navigate to `/<key>/` to be redirected to the bookmark's URL
 - **Parameter Substitution**: Supports URLs with placeholders (e.g., `#{pr_number}`, `#{search_terms}`)
@@ -144,6 +145,38 @@ journalctl --user -u bunnify.service -f
 ```
 
 ## Usage
+
+### CLI (terminal)
+
+With the server running and the package installed (`uv sync`), the `bunnify` console
+script opens shortcuts in your default browser:
+
+```bash
+# Interactive prompt with in-CLI Tab completion of shortcut keys
+bunnify
+
+# Direct open
+bunnify vault
+bunnify pr 12345
+
+# Fuzzy pick via fzf
+bunnify --fzf
+bunnify --list-keys | fzf
+
+# Print URL without opening a browser
+bunnify --print-url gh
+```
+
+The CLI talks to the local server (`http://127.0.0.1:8000` by default; override with
+`--base-url` or `BUNNIFY_BASE_URL`). Unknown shortcuts exit non-zero (no Google
+fallback). Ambiguous prefixes in direct mode invoke `fzf` when multiple keys match.
+
+**Shell completion (bash, fzf-backed):**
+
+```bash
+source /path/to/bunnify/etc/bunnify-completion
+# then: bunnify <Tab>  → fzf over keys (falls back to COMPREPLY without fzf)
+```
 
 ### Command Palette (Recommended)
 

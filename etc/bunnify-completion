@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Bash completion for the bunnify CLI (fzf-backed when available).
+#
+# Install (bash):
+#   source /path/to/bunnify/etc/bunnify-completion
+#
+# Requires a running Bunnify server so `bunnify --list-keys` can enumerate shortcuts.
+# Prefers fzf for interactive selection on Tab; falls back to COMPREPLY.
+
+_bunnify_completion() {
+    local cur
+    local -a options
+    local keys
+    local selected
+    cur="${COMP_WORDS[COMP_CWORD]}"
+
+    # Only complete the first positional argument (the shortcut key).
+    if [[ "${COMP_CWORD}" -ne 1 ]]; then
+        return 0
+    fi
+
+    # Skip completing option flags.
+    if [[ "${cur}" == -* ]]; then
+        options=(--base-url --list-keys --fzf --print-url --dry-run --help)
+        mapfile -t COMPREPLY < <(compgen -W "${options[*]}" -- "${cur}")
+        return 0
+    fi
+
+    if ! keys="$(bunnify --list-keys 2>/dev/null)"; then
+        return 0
+    fi
+
+    if command -v fzf >/dev/null 2>&1; then
+        # Prefer fzf for interactive selection on Tab.
+        selected="$(printf '%s\n' "${keys}" | fzf --query="${cur}" --select-1 --exit-0 --height=40% --layout=reverse --prompt='bunnify> ')"
+        if [[ -n "${selected}" ]]; then
+            COMPREPLY=( "${selected}" )
+        fi
+        return 0
+    fi
+
+    mapfile -t COMPREPLY < <(compgen -W "${keys}" -- "${cur}")
+}
+
+complete -F _bunnify_completion bunnify
