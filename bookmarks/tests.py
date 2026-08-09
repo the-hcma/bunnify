@@ -194,3 +194,17 @@ class SmokeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content.decode(), "ok")
         self.assertEqual(response["Content-Type"], "text/plain")
+
+    def test_same_placeholder_path_and_query_encoding(self):
+        """Same placeholder in path vs query uses per-occurrence encoding."""
+        Bookmark.objects.create(
+            key="dual",
+            description="Path and query reuse",
+            url="https://example.com/#{id}?q=#{id}",
+        )
+        response = self.client.get("/search/", {"q": "dual a/b c"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            "https://example.com/a/b%20c?q=a%2Fb%20c",
+        )

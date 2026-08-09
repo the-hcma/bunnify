@@ -26,10 +26,10 @@ class ResolveResult:
     key: str | None = None
 
 
-def encode_placeholder_value(url_template: str, placeholder: str, value: str) -> str:
-    """Encode placeholder values while preserving path separators when needed."""
-    token = f"#{{{placeholder}}}"
-    placeholder_start = url_template.index(token)
+def encode_placeholder_value_at(
+    url_template: str, placeholder_start: int, value: str
+) -> str:
+    """Encode a value using the context at ``placeholder_start`` in the template."""
     query_start = url_template.rfind("?", 0, placeholder_start)
     last_ampersand = url_template.rfind("&", 0, placeholder_start)
     last_equals = url_template.rfind("=", 0, placeholder_start)
@@ -40,17 +40,34 @@ def encode_placeholder_value(url_template: str, placeholder: str, value: str) ->
     return quote(value, safe="/:@-._~")
 
 
+def encode_placeholder_value(url_template: str, placeholder: str, value: str) -> str:
+    """Encode using the first occurrence of ``#{placeholder}`` (compat helper)."""
+    token = f"#{{{placeholder}}}"
+    return encode_placeholder_value_at(url_template, url_template.index(token), value)
+
+
 def substitute_placeholder_values(
     url_template: str, param_mapping: dict[str, str]
 ) -> str:
-    """Replace URL placeholders with encoded values."""
-    substituted_url = url_template
+    """Replace URL placeholders with values encoded per occurrence context."""
+    result = url_template
 
     for placeholder, value in param_mapping.items():
-        encoded_value = encode_placeholder_value(url_template, placeholder, value)
-        substituted_url = substituted_url.replace(f"#{{{placeholder}}}", encoded_value)
+        token = f"#{{{placeholder}}}"
+        while True:
+            placeholder_start = result.find(token)
+            if placeholder_start < 0:
+                break
+            encoded_value = encode_placeholder_value_at(
+                result, placeholder_start, value
+            )
+            result = (
+                result[:placeholder_start]
+                + encoded_value
+                + result[placeholder_start + len(token) :]
+            )
 
-    return substituted_url
+    return result
 
 
 def google_search_url(query: str) -> str:
@@ -74,9 +91,6 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
         return ResolveResult(ok=True, url=query, kind="direct_url")
 
     parts = query.split(None, 1)
-    if not parts:
-        return ResolveResult(ok=False, error="Empty search query")
-
     key = parts[0]
     param_string = parts[1] if len(parts) > 1 else ""
 
@@ -103,7 +117,7 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
         )
 
     url = bookmark.url
-    placeholders = PLACEHOLDER_PATTERN.findall(url)
+    placeholders = list(dict.fromkeys(PLACEHOLDER_PATTERN.findall(url)))
 
     if not placeholders:
         return ResolveResult(ok=True, url=url, kind="bookmark", key=key)

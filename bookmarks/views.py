@@ -62,8 +62,6 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
         if result.error and result.error.startswith("No search query"):
             logger.warning("Empty search query received")
             return HttpResponseNotFound(content=result.error)
-        if result.error == "Empty search query":
-            return HttpResponseNotFound(content=result.error)
         return HttpResponse(result.error or "Resolve failed", status=400)
 
     assert result.url is not None
