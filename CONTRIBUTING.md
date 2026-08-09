@@ -34,7 +34,7 @@ cp bunnify.json.example ~/work/bunnify/bunnify.json
 uv run python manage.py load_bookmarks
 
 # Start development server
-./bunnify-server --console --log-level DEBUG
+./scripts/bunnify-server --console --log-level DEBUG
 ```
 
 > **Note:** Requires [uv](https://docs.astral.sh/uv/). Install with: `curl -LsSf https://astral.sh/uv/install.sh | sh`

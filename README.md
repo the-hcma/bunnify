@@ -76,7 +76,7 @@ uv run python manage.py load_bookmarks
 
 **Always use the bunnify-server script** to ensure proper setup:
 ```bash
-./bunnify-server
+./scripts/bunnify-server
 ```
 
 This will:
@@ -87,9 +87,9 @@ This will:
 
 **Logging options:**
 ```bash
-./bunnify-server --console          # Log to console instead of file
-./bunnify-server --log-level DEBUG  # Change log level
-./bunnify-server --help            # Show all options
+./scripts/bunnify-server --console          # Log to console instead of file
+./scripts/bunnify-server --log-level DEBUG  # Change log level
+./scripts/bunnify-server --help            # Show all options
 ```
 
 **Note:** The bunnify-server script uses dual-stack binding (`[::]:8000`), making the server accessible via IPv4, IPv6, and localhost.
@@ -148,33 +148,37 @@ journalctl --user -u bunnify.service -f
 
 ### CLI (terminal)
 
-With the server running and the package installed (`uv sync`), the `bunnify` console
-script opens shortcuts in your default browser:
+With the server running (`./scripts/bunnify-server`) and dependencies synced (`uv sync`),
+run the CLI via the repo wrapper (no manual `uv run` needed):
 
 ```bash
-# Interactive prompt with in-CLI Tab completion of shortcut keys
-bunnify
+# Interactive REPL with Tab completion (loops until quit/exit)
+./scripts/bunnify
 
 # Direct open
-bunnify vault
-bunnify pr 12345
+./scripts/bunnify vault
+./scripts/bunnify pr 12345
 
 # Fuzzy pick via fzf
-bunnify --fzf
-bunnify --fzf 12345
-bunnify --fzf --query pr 12345
-bunnify --list-keys | fzf
+./scripts/bunnify --fzf
+./scripts/bunnify --fzf 12345
+./scripts/bunnify --fzf --query pr 12345
+./scripts/bunnify --list-keys | fzf
 
 # Print URL without opening a browser
-bunnify --print-url gh
+./scripts/bunnify --print-url gh
 ```
 
-The CLI talks to the local server (`http://127.0.0.1:8000` by default; override with
-`--base-url` or `BUNNIFY_BASE_URL`). Unknown shortcuts exit non-zero (no Google
-fallback). Exact keys short-circuit (e.g. `pr` opens `pr` even if `printer`
-exists); only non-exact prefixes invoke `fzf` when multiple keys match.
-In `--fzf` mode, positional arguments are passed through as shortcut parameters; use
-`--query` to pre-seed the fzf picker.
+Base URL resolution (first match wins): `--base-url` → `BUNNIFY_BASE_URL` →
+gitignored `bunnify.env` → interactive prompt (persisted to `bunnify.env`).
+Copy `bunnify.env.example` to get started. The REPL defaults to **Vim** keys
+(`--edit-mode emacs` or `BUNNIFY_EDIT_MODE=emacs`; switch mid-session with
+`edit-mode`). Tab uses fuzzy completion with colored meta vs shortcut matches,
+persistent history, and history auto-suggest. Unknown shortcuts exit non-zero in
+direct mode (no Google fallback). Exact keys short-circuit (e.g. `pr` opens `pr`
+even if `printer` exists); only non-exact prefixes invoke `fzf` when multiple
+keys match. In `--fzf` mode, positional arguments are passed through as shortcut
+parameters; use `--query` to pre-seed the fzf picker.
 
 **Shell completion (bash, fzf-backed):**
 
@@ -275,25 +279,24 @@ Usage:
 
 ```
 bunnify/
-├── bookmarks/
-│   ├── management/
-│   │   └── commands/
-│   │       └── load_bookmarks.py    # Command to load JSON data
-│   ├── templates/
-│   │   └── bookmarks/
-│   │       ├── base.html            # Base template
-│   │       ├── index.html           # Home page
-│   │       ├── list.html            # Bookmark list
-│   │       └── opensearch.xml       # OpenSearch descriptor
-│   ├── models.py                    # Bookmark model
-│   ├── views.py                     # View logic (includes search_redirect)
-│   └── urls.py                      # URL routing
-├── bunnify/
+├── app/                             # Django project + terminal CLI (Python)
+│   ├── cli.py                       # Click CLI / REPL
+│   ├── client.py                    # HTTP client for /api/*
 │   ├── settings.py                  # Application settings
 │   └── urls.py                      # Main URL config
-├── .venv/                           # Virtual environment (managed by uv)
-├── manage.py                        # Management script
-└── pyproject.toml                   # Project dependencies
+├── bookmarks/                       # Django app
+│   ├── management/commands/
+│   ├── models.py
+│   ├── views.py
+│   └── urls.py
+├── scripts/
+│   ├── bunnify                      # Directly executable CLI wrapper
+│   ├── bunnify-server               # Server startup + watcher
+│   ├── checks
+│   └── on-deploy
+├── bunnify.env.example              # Example CLI base URL (copy → bunnify.env)
+├── manage.py
+└── pyproject.toml
 ```
 
 ## Schema Validation
@@ -386,31 +389,24 @@ This will clear existing bookmarks and load fresh data.
 
 ```
 bunnify/
-├── bookmarks/              # Core application logic
-│   ├── management/
-│   │   └── commands/      # Management commands
-│   │       ├── load_bookmarks.py    # Load bookmarks from JSON
-│   │       └── watch_bookmarks.py   # Auto-reload on file changes
-│   ├── templates/         # HTML templates
-│   │   └── bookmarks/
-│   │       ├── cmd.html              # Command palette
-│   │       ├── list.html             # Browse bookmarks
-│   │       ├── opensearch.xml        # Chrome integration
-│   │       └── copilot_review.html   # Copilot review UI
-│   ├── models.py          # Bookmark model
-│   ├── views.py           # View functions
-│   └── urls.py            # URL routing
-├── bunnify/               # Main configuration directory
-│   ├── settings.py        # Configuration with logging
-│   └── urls.py            # Root URL configuration
-├── scripts/               # Helper scripts
-│   ├── checks             # Local preflight checks (format/lint/tests)
-│   ├── setup-service      # Systemd user service setup/status helper
-│   └── dev/start-development  # Session bootstrap for worktree/dev setup
-├── manage.py              # Management script
-├── bunnify-server         # Server startup + watcher script
-├── requirements.txt       # Python dependencies
-└── bunnify.json.example   # Example bookmark configuration
+├── app/                             # Django project + terminal CLI (Python)
+│   ├── cli.py                       # Click CLI / REPL
+│   ├── client.py                    # HTTP client for /api/*
+│   ├── settings.py                  # Application settings
+│   └── urls.py                      # Main URL config
+├── bookmarks/                       # Django app
+│   ├── management/commands/
+│   ├── models.py
+│   ├── views.py
+│   └── urls.py
+├── scripts/
+│   ├── bunnify                      # Directly executable CLI wrapper
+│   ├── bunnify-server               # Server startup + watcher
+│   ├── checks
+│   └── on-deploy
+├── bunnify.env.example              # Example CLI base URL (copy → bunnify.env)
+├── manage.py
+└── pyproject.toml
 ```
 
 ## Contributing
@@ -483,7 +479,7 @@ loginctl enable-linger $(whoami)
 cd ~/work/ai/bunnify
 
 # Use the bunnify-server script
-./bunnify-server
+./scripts/bunnify-server
 ```
 
 ### Bookmarks not loading

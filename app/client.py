@@ -41,7 +41,11 @@ def _request_json(
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
-            payload = json.loads(exc.read().decode("utf-8"))
+            raw = exc.read()
+        except OSError:
+            raw = b""
+        try:
+            payload = json.loads(raw.decode("utf-8"))
             detail = str(payload.get("error") or payload)
         except json.JSONDecodeError:
             detail = exc.reason or str(exc)
@@ -51,7 +55,7 @@ def _request_json(
     except urllib.error.URLError as exc:
         raise ClientError(
             f"Cannot reach Bunnify server at {url!r}: {exc.reason}. "
-            "Is `./bunnify-server` running?"
+            "Is `./scripts/bunnify-server` running?"
         ) from exc
     except TimeoutError as exc:
         raise ClientError(f"Timed out contacting Bunnify server at {url!r}") from exc

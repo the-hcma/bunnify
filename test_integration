@@ -6,7 +6,7 @@ set -eo pipefail
 # shellcheck disable=SC2317  # called indirectly via trap
 cleanup() {
     echo "🧹 Cleaning up..."
-    timeout 30 ./bunnify-server --stop --pid-dir "$pid_dir" 2>/dev/null || true
+    timeout 30 ./scripts/bunnify-server --stop --pid-dir "$pid_dir" 2>/dev/null || true
     # Belt-and-suspenders: kill Django/watcher directly from PID files if --stop failed
     if [ -f "${pid_dir:-}/.bunnify.pid" ]; then
         kill "$(cat "$pid_dir/.bunnify.pid")" 2>/dev/null || true
@@ -36,7 +36,7 @@ log_file=$(mktemp)
 echo "📝 Routing logs to isolated file: $log_file"
 
 # Start the server with an OS-chosen ephemeral port, debug logging, and isolated log file
-timeout 60 ./bunnify-server \
+timeout 60 ./scripts/bunnify-server \
     --bookmarks /tmp/test_bookmarks.json \
     --port 0 \
     --pid-dir "$pid_dir" \

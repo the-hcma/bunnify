@@ -114,7 +114,7 @@ jobs:
 
     - name: Lint bash scripts with shellcheck
       run: |
-        shellcheck bunnify-server
+        shellcheck scripts/bunnify-server
         shellcheck test_integration
         if [ -d scripts ]; then find scripts -type f | xargs shellcheck; fi
 
@@ -149,7 +149,7 @@ jobs:
         uv run python manage.py load_bookmarks --file /tmp/test_bookmarks.json
 
     - name: Validate bunnify-server script
-      run: ./bunnify-server --help
+      run: ./scripts/bunnify-server --help
 
     - name: Run unit tests
       run: ./test_bunnify

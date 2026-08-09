@@ -143,7 +143,7 @@ No PR may be merged if the above commands fail.
 
 - **Run the unified preflight script:** Prefer using `scripts/checks` which runs formatting, linters, unit tests and (optionally) integration tests with sensible timeouts.
 - **Formatting & linting:** `uv run ruff check .`, `uv run ruff format --check .`, and `uv run pyright --warnings` must pass locally before creating a PR.
-- **Shell linting:** Run `shellcheck bunnify-server test_integration scripts/*` and ensure there are no new errors or warnings.
+- **Shell linting:** Run `shellcheck scripts/bunnify-server test_integration scripts/*` and ensure there are no new errors or warnings.
 - **Unit tests:** Run `./test_bunnify` and ensure all tests pass.
 - **Integration tests (required pre-PR):** Run `./test_integration` — this script uses OS-chosen ephemeral ports when passed `--port 0` and includes explicit timeouts; run it locally to validate end-to-end behavior.
 - **Parallelization guidance:** When possible, run formatting and static checks in parallel to reduce feedback time (our CI runs `ruff check`, `ruff format --check`, and `pyright` in a separate job from shellcheck and tests). Locally, `scripts/checks` can be used as a single-entrypoint; CI runs jobs in parallel automatically.

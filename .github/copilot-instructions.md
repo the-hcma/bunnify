@@ -52,7 +52,7 @@ uv run ruff format --check .
 uv run pyright --warnings
 
 # Shell script linting (must pass with no errors or warnings)
-shellcheck bunnify-server test_integration
+shellcheck scripts/bunnify-server test_integration
 find scripts -type f | xargs shellcheck
 ```
 
