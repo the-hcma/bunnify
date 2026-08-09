@@ -56,7 +56,7 @@ def read_shortcut_query(
     try:
         try:
             value = input(prompt)
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return None
     finally:
