@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def _make_redirect_response(request: HttpRequest, url: str) -> HttpResponse:
     """Return a redirect (or browser_url page for special protocols)."""
-    if url.startswith(("chrome://", "about://", "file://")):
+    if url.lower().startswith(("chrome://", "about://", "file://")):
         return render(request, "bookmarks/browser_url.html", {"url": url})
 
     response = HttpResponse(status=302)

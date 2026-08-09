@@ -16,6 +16,15 @@ _DIRECT_URL_PREFIXES = ("http://", "https://", "chrome://", "about://", "file://
 ResolveKind = Literal["bookmark", "special", "direct_url", "google_fallback"]
 
 
+def normalize_direct_url(query: str) -> str:
+    """Lowercase the URL scheme while preserving the rest of the original string."""
+    lower = query.lower()
+    for prefix in _DIRECT_URL_PREFIXES:
+        if lower.startswith(prefix):
+            return f"{prefix}{query[len(prefix) :]}"
+    return query
+
+
 @dataclass(frozen=True)
 class ResolveResult:
     """Outcome of resolving a shortcut query string."""
@@ -89,7 +98,9 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
         return ResolveResult(ok=False, error="No search query provided")
 
     if query.lower().startswith(_DIRECT_URL_PREFIXES):
-        return ResolveResult(ok=True, url=query, kind="direct_url")
+        return ResolveResult(
+            ok=True, url=normalize_direct_url(query), kind="direct_url"
+        )
 
     parts = query.split(None, 1)
     key = parts[0]

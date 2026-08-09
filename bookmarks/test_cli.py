@@ -62,6 +62,16 @@ class ResolveApiTests(TestCase):
         self.assertEqual(data["url"], "https://example.com/x")
         self.assertEqual(data["kind"], "direct_url")
 
+    def test_resolve_direct_url_normalizes_uppercase_scheme(self) -> None:
+        response = self.client.get(
+            "/api/resolve/", {"q": "HTTP://Example.COM/Path", "strict": "1"}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["url"], "http://Example.COM/Path")
+        self.assertEqual(data["kind"], "direct_url")
+
     def test_resolve_bookmark_preserves_absolute_non_http_scheme(self) -> None:
         Bookmark.objects.create(
             key="ftp",
