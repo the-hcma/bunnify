@@ -7,7 +7,7 @@ import sys
 from io import StringIO
 from unittest.mock import patch
 
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 
 from bunnify import interactive
 from bunnify.cli import _run, matching_keys
@@ -52,6 +52,17 @@ class ResolveApiTests(TestCase):
         self.assertTrue(data["ok"])
         self.assertTrue(data["url"].endswith("/list/"))
         self.assertEqual(data["kind"], "special")
+
+    @override_settings(FORCE_SCRIPT_NAME="/bunnify")
+    def test_resolve_special_preserves_script_prefix(self) -> None:
+        response = self.client.get(
+            "/api/resolve/",
+            {"q": "h", "strict": "1"},
+            SCRIPT_NAME="/bunnify",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["url"], "http://testserver/bunnify/list/")
 
     def test_keys_endpoint(self) -> None:
         response = self.client.get("/api/keys/")

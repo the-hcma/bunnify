@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
 
 from django.db import models
 from django.http import (
@@ -40,7 +39,8 @@ def _absolute_resolve_url(request: HttpRequest, url: str) -> str:
     """Turn site-relative resolve URLs into absolute ones for the CLI/API."""
     if url.startswith(("http://", "https://", "chrome://", "about://", "file://")):
         return url
-    return urljoin(request.build_absolute_uri("/"), url.lstrip("/"))
+    script_prefix = request.path.removesuffix(request.path_info).rstrip("/")
+    return request.build_absolute_uri(f"{script_prefix}/{url.lstrip('/')}")
 
 
 @require_http_methods(["GET"])
