@@ -24,7 +24,7 @@ from prompt_toolkit.history import FileHistory, InMemoryHistory
 from app.client import ClientError, KeyEntry
 from app.github_complete import suggest_param_values
 from app.theme import Theme
-from app.usage import format_params
+from app.usage import format_completion_meta
 
 try:
     import readline as readline_module
@@ -201,14 +201,14 @@ class ShortcutCompleter(Completer):
         for key in self._keys:
             if key.lower().startswith(needle):
                 entry = self._entries_by_key.get(key)
-                meta = "shortcut"
                 if entry is not None:
-                    if entry.params:
-                        meta = format_params(
-                            entry.params, optional_params=entry.optional_params
-                        )
-                    elif entry.description:
-                        meta = entry.description[:40]
+                    meta = format_completion_meta(
+                        params=entry.params,
+                        optional_params=entry.optional_params,
+                        description=entry.description,
+                    )
+                else:
+                    meta = "shortcut"
                 yield Completion(
                     key,
                     start_position=-len(partial),
@@ -223,13 +223,14 @@ class ShortcutCompleter(Completer):
         for key in self._keys:
             if key.lower().startswith(needle) and key.lower() != needle:
                 entry = self._entries_by_key.get(key)
-                meta = "shortcut"
-                if entry is not None and entry.params:
-                    meta = format_params(
-                        entry.params, optional_params=entry.optional_params
+                if entry is not None:
+                    meta = format_completion_meta(
+                        params=entry.params,
+                        optional_params=entry.optional_params,
+                        description=entry.description,
                     )
-                elif entry is not None and entry.description:
-                    meta = entry.description[:40]
+                else:
+                    meta = "shortcut"
                 yield Completion(
                     key,
                     start_position=-len(text),
@@ -289,6 +290,11 @@ class ShortcutCompleter(Completer):
             )
             values = []
         seen: set[str] = set()
+        # Value rows keep the command blurb so Tab still shows what the shortcut does.
+        value_meta = format_completion_meta(
+            description=entry.description,
+            fallback=param_name,
+        )
         for value in values:
             if value in seen:
                 continue
@@ -299,14 +305,14 @@ class ShortcutCompleter(Completer):
                     start_position=-len(text),
                     display=value,
                     style=style,
-                    display_meta=param_name,
+                    display_meta=value_meta,
                 )
             else:
                 yield Completion(
                     value,
                     start_position=-len(prefix),
                     style=style,
-                    display_meta=param_name,
+                    display_meta=value_meta,
                 )
 
     def _suggestion_completions(self, text: str):
