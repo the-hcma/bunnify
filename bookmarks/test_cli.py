@@ -714,6 +714,42 @@ class ConfigUnitTests(TestCase):
         self.assertIn("yellow", help_c.style)
         self.assertIn("cyan", gh_c.style)
 
+    def test_completer_meta_includes_args_and_description(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+        from app.usage import format_completion_meta
+
+        self.assertEqual(
+            format_completion_meta(
+                params=("repo",),
+                description="Open org pull requests",
+            ),
+            "<repo> — Open org pull requests",
+        )
+        self.assertEqual(
+            format_completion_meta(description="Just help"),
+            "Just help",
+        )
+
+        entry = KeyEntry(
+            key="prh",
+            description="Open org pull requests",
+            url="https://github.com/the-hcma/#{repo}/pulls",
+            params=("repo",),
+        )
+        completer = ShortcutCompleter(
+            ["prh"],
+            theme=Theme(enabled=False),
+            entries=[entry],
+        )
+        metas = [
+            c.display_meta_text
+            for c in completer.get_completions(Document("pr"), complete_event=None)  # type: ignore[arg-type]
+        ]
+        self.assertEqual(metas, ["<repo> — Open org pull requests"])
+
     @patch("app.cli.fetch_key_entries")
     def test_interactive_refresh_updates_keys(self, mock_fetch_entries) -> None:
         mock_fetch_entries.side_effect = [
