@@ -118,6 +118,8 @@ class ResolveApiTests(TestCase):
         self.assertEqual(entries["gh"]["url"], "https://github.com")
         self.assertEqual(entries["gh"]["params"], [])
         self.assertEqual(entries["pr"]["params"], ["repo", "pr_number"])
+        self.assertEqual(entries["pr"]["optional_params"], ["repo"])
+        self.assertNotIn("defaults", entries["pr"])
         self.assertEqual(entries["h"]["url"], "/list/")
         self.assertEqual(entries["cmd"]["description"], "Command palette")
 
@@ -765,13 +767,14 @@ class KeyUsageAndCompletionTests(TestCase):
                     description="Pull Request",
                     url="https://github.com/#{repo}/pull/#{pr_number}",
                     params=("repo", "pr_number"),
+                    optional_params=frozenset({"repo"}),
                 ),
                 KeyEntry(key="gh", description="GitHub", url="https://github.com"),
             ]
         )
         self.assertEqual(len(lines), 2)
         self.assertIn("pr", lines[0])
-        self.assertIn("repo pr_number", lines[0])
+        self.assertIn("[repo] <pr_number>", lines[0])
         self.assertIn("Pull Request", lines[0])
         self.assertIn("https://github.com/#{repo}/pull/#{pr_number}", lines[0])
         self.assertIn("gh", lines[1])
@@ -829,7 +832,7 @@ class KeyUsageAndCompletionTests(TestCase):
                 )
         text = stdout.getvalue()
         self.assertIn("pr", text)
-        self.assertIn("repo pr_number", text)
+        self.assertIn("<repo> <pr_number>", text)
         self.assertIn("1 keys", text)
 
     def test_completion_token_state(self) -> None:
@@ -909,6 +912,144 @@ class KeyUsageAndCompletionTests(TestCase):
             )  # type: ignore[arg-type]
         ]
         self.assertEqual(prs, ["242", "245"])
+
+    def test_exact_key_tab_completes_first_param(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        entry = KeyEntry(
+            key="prh",
+            description="PRs",
+            url="https://github.com/the-hcma/#{repo}/pulls",
+            params=("repo",),
+        )
+
+        def fake_suggest(*, param_name, url_template, filled_args, prefix):
+            del url_template, filled_args
+            self.assertEqual(param_name, "repo")
+            self.assertEqual(prefix, "")
+            return ["bunnify", "fpdf"]
+
+        completer = ShortcutCompleter(
+            ["prh", "prhh"],
+            theme=Theme(enabled=False),
+            entries=[
+                entry,
+                KeyEntry(
+                    key="prhh",
+                    description="other",
+                    url="https://github.com/x/#{repo}/pulls",
+                    params=("repo",),
+                ),
+            ],
+            param_suggest_fn=fake_suggest,
+            suggestions_fn=lambda _q: ["should-not-appear"],
+        )
+        texts = [
+            c.text
+            for c in completer.get_completions(Document("prh"), complete_event=None)  # type: ignore[arg-type]
+        ]
+        self.assertIn("prh bunnify", texts)
+        self.assertIn("prh fpdf", texts)
+        self.assertIn("prhh", texts)
+        self.assertNotIn("should-not-appear", texts)
+
+    def test_param_slot_does_not_fallback_to_key_suggestions(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        entry = KeyEntry(
+            key="prh",
+            description="PRs",
+            url="https://github.com/the-hcma/#{repo}/pulls",
+            params=("repo",),
+        )
+        completer = ShortcutCompleter(
+            ["prh", "gh"],
+            theme=Theme(enabled=False),
+            entries=[entry, KeyEntry(key="gh")],
+            param_suggest_fn=lambda **_kwargs: [],
+            suggestions_fn=lambda _q: ["gh", "prh"],
+        )
+        texts = [
+            c.text
+            for c in completer.get_completions(Document("prh "), complete_event=None)  # type: ignore[arg-type]
+        ]
+        self.assertEqual(texts, [])
+
+    def test_edit_mode_subarg_completion(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        completer = ShortcutCompleter(
+            ["gh"],
+            theme=Theme(enabled=False),
+            entries=[KeyEntry(key="gh")],
+        )
+        texts = [
+            c.text
+            for c in completer.get_completions(
+                Document("edit-mode e"), complete_event=None
+            )  # type: ignore[arg-type]
+        ]
+        self.assertEqual(texts, ["emacs"])
+
+    def test_suggestions_fallback_outside_param_slot(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        completer = ShortcutCompleter(
+            ["gh"],
+            theme=Theme(enabled=False),
+            entries=[KeyEntry(key="gh")],
+            suggestions_fn=lambda _q: ["foobar"],
+        )
+        texts = [
+            c.text
+            for c in completer.get_completions(Document("ggg foo"), complete_event=None)  # type: ignore[arg-type]
+        ]
+        self.assertEqual(texts, ["foobar"])
+
+    def test_param_suggest_exceptions_are_logged(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        entry = KeyEntry(
+            key="prh",
+            url="https://github.com/the-hcma/#{repo}/pulls",
+            params=("repo",),
+        )
+
+        def boom(**_kwargs):
+            raise OSError("network down")
+
+        completer = ShortcutCompleter(
+            ["prh"],
+            theme=Theme(enabled=False),
+            entries=[entry],
+            param_suggest_fn=boom,
+        )
+        with self.assertLogs("app.interactive", level="DEBUG") as captured:
+            texts = [
+                c.text
+                for c in completer.get_completions(
+                    Document("prh "), complete_event=None
+                )  # type: ignore[arg-type]
+            ]
+        self.assertEqual(texts, [])
+        self.assertTrue(
+            any("param suggestion failed" in line for line in captured.output)
+        )
 
     def test_list_github_repos_uses_rest_api(self) -> None:
         from app.github_complete import clear_github_completion_cache, list_github_repos
