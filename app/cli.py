@@ -23,8 +23,8 @@ from app.client import (
 )
 from app.config import ENV_VAR, env_file_path, resolve_base_url
 from app.github_complete import (
+    bootstrap_github_completion_cache,
     ensure_github_authenticated,
-    warm_github_completion_cache,
 )
 from app.interactive import (
     REPL_META_COMMANDS,
@@ -238,16 +238,22 @@ def _run_repl(
     interactive_auth = sys.stdin.isatty() and sys.stdout.isatty()
     github_token = ensure_github_authenticated(interactive=interactive_auth)
     if github_token:
-        warmed = warm_github_completion_cache(
+        bootstrapped = bootstrap_github_completion_cache(
             url_templates=[entry.url for entry in entries],
             token=github_token,
         )
-        click.echo(
-            theme.dim(
-                f"GitHub completion · {warmed['orgs']} orgs · "
-                f"{warmed['repos']} repos cached"
-            )
+        status = (
+            f"GitHub completion · {bootstrapped['orgs']} orgs · "
+            f"{bootstrapped['repos']} repos"
         )
+        if bootstrapped.get("entries"):
+            status += " (loaded from disk"
+            if bootstrapped.get("refreshing"):
+                status += ", refreshing…"
+            status += ")"
+        elif bootstrapped.get("refreshing"):
+            status += " (warming in background…)"
+        click.echo(theme.dim(status))
     else:
         click.echo(
             theme.meta(

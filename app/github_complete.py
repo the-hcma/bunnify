@@ -7,11 +7,13 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable, Sequence
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,7 @@ _CACHE_TTL_SECONDS = 300.0
 _DEFAULT_TIMEOUT_SECONDS = 8.0
 _GH_TOKEN_TIMEOUT_SECONDS = 8.0
 _GH_LOGIN_TIMEOUT_SECONDS = 600.0
+_PERSIST_VERSION = 1
 _REPO_PARAM_NAMES = frozenset({"repo", "repository", "org_repo"})
 _PR_PARAM_NAMES = frozenset(
     {"pr_number", "pr_id", "pr", "pull", "pull_number", "number"}
@@ -28,7 +31,9 @@ _API_ROOT = "https://api.github.com"
 _UNSET = object()
 
 _cache: dict[str, tuple[float, list[str]]] = {}
+_cache_lock = threading.RLock()
 _token_cache: Any = _UNSET
+_refresh_thread: threading.Thread | None = None
 
 _GITHUB_ORG_REPO = re.compile(
     r"(?:github\.com|graphite\.com/github/pr)/([^/#{}]+)/#\{repo\}",
@@ -36,6 +41,11 @@ _GITHUB_ORG_REPO = re.compile(
 )
 
 GhRunner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def default_github_completion_cache_path() -> Path:
+    """``~/scratch/bunnify/github-completions.json`` (create parents on save)."""
+    return Path.home() / "scratch" / "bunnify" / "github-completions.json"
 
 
 def infer_fixed_github_org(url_template: str) -> str | None:
@@ -47,25 +57,116 @@ def infer_fixed_github_org(url_template: str) -> str | None:
 
 
 def _cache_get(key: str) -> list[str] | None:
-    hit = _cache.get(key)
-    if hit is None:
-        return None
-    expires_at, values = hit
-    if time.monotonic() >= expires_at:
-        _cache.pop(key, None)
-        return None
-    return list(values)
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is None:
+            return None
+        expires_at, values = hit
+        if time.monotonic() >= expires_at:
+            _cache.pop(key, None)
+            return None
+        return list(values)
 
 
 def _cache_set(key: str, values: list[str]) -> None:
-    _cache[key] = (time.monotonic() + _CACHE_TTL_SECONDS, list(values))
+    with _cache_lock:
+        _cache[key] = (time.monotonic() + _CACHE_TTL_SECONDS, list(values))
+
+
+def _cache_snapshot() -> dict[str, list[str]]:
+    with _cache_lock:
+        return {key: list(values) for key, (_expires, values) in _cache.items()}
+
+
+def _cache_counts() -> dict[str, int]:
+    snapshot = _cache_snapshot()
+    org_keys = [key for key in snapshot if key.startswith("orgs:")]
+    repo_keys = [key for key in snapshot if key.startswith("repos:")]
+    # Prefer the largest list when multiple limit/org variants exist. Summing
+    # would double-count: ``repos:*`` (full_name) overlaps org short-name lists.
+    orgs = max((len(snapshot[key]) for key in org_keys), default=0)
+    repos = max((len(snapshot[key]) for key in repo_keys), default=0)
+    return {"orgs": orgs, "repos": repos, "entries": len(snapshot)}
 
 
 def clear_github_completion_cache() -> None:
     """Test helper: drop in-process completion + token caches."""
     global _token_cache
-    _cache.clear()
+    with _cache_lock:
+        _cache.clear()
     _token_cache = _UNSET
+
+
+def load_github_completion_cache(
+    path: Path | None = None,
+) -> dict[str, int]:
+    """
+    Load a previously persisted completion snapshot into memory.
+
+    Entries are treated as immediately usable (fresh in-process TTL) even if
+    the on-disk file is older — a background refresh updates them later.
+    """
+    cache_path = path if path is not None else default_github_completion_cache_path()
+    try:
+        raw = cache_path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except FileNotFoundError:
+        return {"orgs": 0, "repos": 0, "entries": 0}
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.debug("failed to load completion cache %s: %s", cache_path, exc)
+        return {"orgs": 0, "repos": 0, "entries": 0}
+
+    if not isinstance(payload, dict) or payload.get("version") != _PERSIST_VERSION:
+        logger.debug("ignoring incompatible completion cache at %s", cache_path)
+        return {"orgs": 0, "repos": 0, "entries": 0}
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        return {"orgs": 0, "repos": 0, "entries": 0}
+
+    loaded = 0
+    with _cache_lock:
+        for key, values in entries.items():
+            if not isinstance(key, str) or not isinstance(values, list):
+                continue
+            # PR lists are session-volatile; never restore them from disk.
+            if key.startswith("prs:"):
+                continue
+            names = [item for item in values if isinstance(item, str)]
+            _cache[key] = (time.monotonic() + _CACHE_TTL_SECONDS, names)
+            loaded += 1
+    logger.debug("loaded %s completion cache entries from %s", loaded, cache_path)
+    return _cache_counts()
+
+
+def save_github_completion_cache(
+    path: Path | None = None,
+) -> Path | None:
+    """Persist org/repo completion snapshot under ``~/scratch/bunnify/``."""
+    cache_path = path if path is not None else default_github_completion_cache_path()
+    # Only orgs/repos belong on disk; PR numbers go stale across sessions.
+    snapshot = {
+        key: values
+        for key, values in _cache_snapshot().items()
+        if key.startswith(("orgs:", "repos:"))
+    }
+    payload = {
+        "version": _PERSIST_VERSION,
+        "updated_at": time.time(),
+        "entries": snapshot,
+    }
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_suffix(f"{cache_path.suffix}.tmp")
+        tmp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(cache_path)
+    except OSError as exc:
+        logger.debug("failed to save completion cache %s: %s", cache_path, exc)
+        return None
+    return cache_path
 
 
 def github_token_from_environ(
@@ -240,10 +341,11 @@ def list_github_orgs(
     token: str | None = None,
     opener: Any | None = None,
     runner: GhRunner | None = None,
+    force_refresh: bool = False,
 ) -> list[str]:
     """List organization logins visible to the authenticated user."""
     cache_key = f"orgs:{limit}"
-    cached = _cache_get(cache_key)
+    cached = None if force_refresh else _cache_get(cache_key)
     if cached is None:
         per_page = min(max(limit, 1), 100)
         payload = _github_get_json(
@@ -275,10 +377,11 @@ def list_github_repos(
     token: str | None = None,
     opener: Any | None = None,
     runner: GhRunner | None = None,
+    force_refresh: bool = False,
 ) -> list[str]:
     """List repo names (short when ``org`` set, else ``owner/name``)."""
     cache_key = f"repos:{org or '*'}:{limit}"
-    cached = _cache_get(cache_key)
+    cached = None if force_refresh else _cache_get(cache_key)
     if cached is None:
         per_page = min(max(limit, 1), 100)
         if org:
@@ -410,6 +513,8 @@ def warm_github_completion_cache(
     token: str | None = None,
     opener: Any | None = None,
     runner: GhRunner | None = None,
+    persist_path: Path | None = None,
+    persist: bool = True,
 ) -> dict[str, int]:
     """
     Prefetch orgs/repos the authenticated user can see.
@@ -418,12 +523,17 @@ def warm_github_completion_cache(
     - ``/user/orgs``
     - ``/user/repos``
     - ``/orgs/{org}/repos`` for bookmark-fixed orgs and visible memberships
+
+    When ``persist`` is true, writes the snapshot to
+    ``~/scratch/bunnify/github-completions.json`` (creating parents as needed).
     """
     auth = token if token is not None else resolve_github_token(runner=runner)
     if not auth:
-        return {"orgs": 0, "repos": 0}
+        return {"orgs": 0, "repos": 0, "entries": 0}
 
-    orgs = list_github_orgs(token=auth, opener=opener, runner=runner)
+    orgs = list_github_orgs(
+        token=auth, opener=opener, runner=runner, force_refresh=True
+    )
     fixed = orgs_from_url_templates(url_templates or ())
     targets: list[str] = []
     seen: set[str] = set()
@@ -437,13 +547,128 @@ def warm_github_completion_cache(
     repo_count = 0
     # Always warm the cross-org user repo list (owner/name form).
     repo_count += len(
-        list_github_repos(org=None, token=auth, opener=opener, runner=runner)
+        list_github_repos(
+            org=None,
+            token=auth,
+            opener=opener,
+            runner=runner,
+            force_refresh=True,
+        )
     )
     for org in targets:
         repo_count += len(
-            list_github_repos(org=org, token=auth, opener=opener, runner=runner)
+            list_github_repos(
+                org=org,
+                token=auth,
+                opener=opener,
+                runner=runner,
+                force_refresh=True,
+            )
         )
-    return {"orgs": len(orgs), "repos": repo_count}
+    counts = {"orgs": len(orgs), "repos": repo_count, "entries": len(_cache_snapshot())}
+    if persist:
+        save_github_completion_cache(path=persist_path)
+    return counts
+
+
+def bootstrap_github_completion_cache(
+    *,
+    url_templates: Iterable[str] | None = None,
+    token: str | None = None,
+    opener: Any | None = None,
+    runner: GhRunner | None = None,
+    persist_path: Path | None = None,
+    refresh: bool = True,
+    join_refresh: bool = False,
+) -> dict[str, Any]:
+    """
+    Load a prior-session disk snapshot for immediate Tab use, then refresh
+    in the background (eventual consistency).
+
+    Startup does not wait on GitHub: callers get whatever was persisted under
+    ``~/scratch/bunnify/`` from the last invocation, while a daemon thread
+    re-queries and rewrites the file.
+    """
+    global _refresh_thread
+    path = (
+        persist_path
+        if persist_path is not None
+        else default_github_completion_cache_path()
+    )
+    loaded = load_github_completion_cache(path=path)
+    templates = list(url_templates or ())
+
+    def _refresh() -> None:
+        global _refresh_thread
+        try:
+            warm_github_completion_cache(
+                url_templates=templates,
+                token=token,
+                opener=opener,
+                runner=runner,
+                persist_path=path,
+                persist=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — background fail-soft
+            logger.debug(
+                "async completion cache refresh failed: %s", exc, exc_info=True
+            )
+        finally:
+            with _cache_lock:
+                if _refresh_thread is threading.current_thread():
+                    _refresh_thread = None
+
+    refreshing = False
+    if refresh and token:
+        # A daemon thread (not asyncio): the REPL uses a sync PromptSession, so
+        # there is no running event loop to schedule a background coroutine on.
+        with _cache_lock:
+            existing = _refresh_thread
+        if existing is not None and existing.is_alive():
+            if join_refresh:
+                # Finish the prior warm, then start one with *this* call's args.
+                existing.join()
+                with _cache_lock:
+                    if _refresh_thread is existing:
+                        _refresh_thread = None
+            else:
+                # Prior refresh still running; do not claim this call's params.
+                return {
+                    **loaded,
+                    "refreshing": True,
+                    "path": str(path),
+                }
+        thread = threading.Thread(
+            target=_refresh,
+            name="bunnify-github-completion-refresh",
+            daemon=True,
+        )
+        with _cache_lock:
+            _refresh_thread = thread
+            thread.start()
+            refreshing = True
+        if join_refresh:
+            thread.join()
+            with _cache_lock:
+                if _refresh_thread is thread:
+                    _refresh_thread = None
+            loaded = _cache_counts()
+
+    return {
+        **loaded,
+        "refreshing": refreshing,
+        "path": str(path),
+    }
+
+
+def wait_for_github_completion_refresh(*, timeout: float = 5.0) -> bool:
+    """Block until the background refresh thread finishes (test helper)."""
+    with _cache_lock:
+        thread = _refresh_thread
+    if thread is None:
+        return True
+    thread.join(timeout=timeout)
+    return not thread.is_alive()
 
 
 def suggest_param_values(
