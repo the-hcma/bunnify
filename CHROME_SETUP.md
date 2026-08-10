@@ -8,7 +8,7 @@ This method automatically handles all your bookmarks - simple ones and parameter
 
 ### Step 1: Start the Server
 ```bash
-./bunnify-server --bookmarks bunnify.json --console
+./scripts/bunnify-server --bookmarks bunnify.json --console
 ```
 
 ### Step 2: Add to Chrome
@@ -41,7 +41,7 @@ Now you can use it from Chrome's address bar:
 
 If you prefer, Chrome can auto-detect Bunnify:
 
-1. Make sure the server is running: `./bunnify-server`
+1. Make sure the server is running: `./scripts/bunnify-server`
 2. Open Chrome and visit: `http://127.0.0.1:8000/`
 3. Chrome will automatically detect the OpenSearch descriptor
 
@@ -84,7 +84,7 @@ This is the same setup as the recommended method above.
 ## Troubleshooting
 
 ### Search engine not appearing
-- Make sure server is running: `./bunnify-server --bookmarks bunnify.json --console`
+- Make sure server is running: `./scripts/bunnify-server --bookmarks bunnify.json --console`
 - Check the server is responding: Visit `http://127.0.0.1:8000/` in your browser
 - Manual setup (above) always works if auto-detection fails
 

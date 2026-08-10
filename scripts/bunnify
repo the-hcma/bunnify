@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#
+# Launch the Bunnify terminal CLI (open shortcuts in the default browser).
+#
+# Usage:
+#   ./scripts/bunnify [OPTIONS] [SHORTCUT_ARGS]...
+#
+# See ``app/cli.py`` for the full flag list. Base URL resolution (including
+# gitignored ``bunnify.env``) is handled in Python — this wrapper does not
+# source env files, so ``--env-file`` is honored.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root" || exit 1
+
+cli_module="app.cli"
+cli_path="${repo_root}/app/cli.py"
+if [[ ! -f "$cli_path" ]]; then
+  echo "bunnify: missing ${cli_path#"${repo_root}/"} in ${repo_root}" >&2
+  exit 1
+fi
+
+if command -v uv >/dev/null 2>&1; then
+  exec uv run python -m "$cli_module" "$@"
+fi
+
+venv_python="${repo_root}/.venv/bin/python"
+if [[ -x "$venv_python" ]]; then
+  exec "$venv_python" -m "$cli_module" "$@"
+fi
+
+echo "bunnify: install uv (https://docs.astral.sh/uv/) or run 'uv sync' in ${repo_root}" >&2
+exit 1

@@ -17,6 +17,8 @@ _bunnify_completion() {
     local word
     local -a list_keys_cmd
     local -a options
+    local -a color_values
+    local -a edit_mode_values
     local keys
     local selected
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -24,9 +26,11 @@ _bunnify_completion() {
     expecting_option_value=false
     first_positional_seen=false
     list_keys_cmd=(bunnify --list-keys)
+    color_values=(auto always never)
+    edit_mode_values=(emacs vim)
 
     if [[ "${cur}" == -* ]]; then
-        options=(--base-url --list-keys --fzf --query --print-url --dry-run --help)
+        options=(--base-url --list-keys --fzf --query --print-url --dry-run --color --edit-mode --env-file --help)
         COMPREPLY=()
         while IFS= read -r reply; do
             COMPREPLY+=("${reply}")
@@ -39,20 +43,25 @@ _bunnify_completion() {
         if [[ "${expecting_option_value}" == true ]]; then
             if [[ "${pending_option}" == "--base-url" ]]; then
                 list_keys_cmd+=(--base-url "${word}")
+            elif [[ "${pending_option}" == "--env-file" ]]; then
+                list_keys_cmd+=(--env-file "${word}")
             fi
             pending_option=""
             expecting_option_value=false
             continue
         fi
         case "${word}" in
-            --base-url|--query)
+            --base-url|--query|--color|--env-file|--edit-mode)
                 pending_option="${word}"
                 expecting_option_value=true
                 ;;
             --base-url=*)
                 list_keys_cmd+=("${word}")
                 ;;
-            --query=*)
+            --env-file=*)
+                list_keys_cmd+=("${word}")
+                ;;
+            --query=*|--color=*|--edit-mode=*)
                 ;;
             -*)
                 pending_option=""
@@ -67,10 +76,38 @@ _bunnify_completion() {
     done
 
     if [[ "${expecting_option_value}" == true ]]; then
-        return 0
+        case "${pending_option}" in
+            --color)
+                COMPREPLY=()
+                while IFS= read -r reply; do
+                    COMPREPLY+=("${reply}")
+                done < <(compgen -W "${color_values[*]}" -- "${cur}")
+                return 0
+                ;;
+            --edit-mode)
+                COMPREPLY=()
+                while IFS= read -r reply; do
+                    COMPREPLY+=("${reply}")
+                done < <(compgen -W "${edit_mode_values[*]}" -- "${cur}")
+                return 0
+                ;;
+            --env-file)
+                COMPREPLY=()
+                while IFS= read -r reply; do
+                    COMPREPLY+=("${reply}")
+                done < <(compgen -f -- "${cur}")
+                return 0
+                ;;
+            *)
+                return 0
+                ;;
+        esac
     fi
 
-    if ! keys="$("${list_keys_cmd[@]}" 2>/dev/null)"; then
+    # Detach stdin so resolve_base_url does not prompt (and persist) during Tab
+    # completion when bunnify.env / BUNNIFY_BASE_URL are unset — stdin would
+    # otherwise still be a TTY in the interactive shell.
+    if ! keys="$("${list_keys_cmd[@]}" </dev/null 2>/dev/null)"; then
         return 0
     fi
 

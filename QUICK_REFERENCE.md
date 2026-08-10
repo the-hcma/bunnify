@@ -63,7 +63,7 @@ Create these additional search engines:
 
 **Start server:**
 ```bash
-./bunnify-server
+./scripts/bunnify-server
 ```
 
 **Reload bookmarks:**

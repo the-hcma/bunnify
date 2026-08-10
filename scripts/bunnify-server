@@ -8,7 +8,7 @@ show_help() {
 🐰 Bunnify - Smart Bookmark Manager
 
 USAGE:
-    ./bunnify-server [OPTIONS]
+    ./scripts/bunnify-server [OPTIONS]
 
 DESCRIPTION:
     Starts the Bunnify Django development server with file watching for
@@ -72,26 +72,26 @@ OPTIONS:
 
 EXAMPLES:
     # Start with default settings (WARNING level, file logging only)
-    ./bunnify-server
+    ./scripts/bunnify-server
 
     # Start with custom bookmarks file
-    ./bunnify-server -f /path/to/my-bookmarks.json
-    ./bunnify-server --bookmarks ~/custom/bookmarks.json
+    ./scripts/bunnify-server -f /path/to/my-bookmarks.json
+    ./scripts/bunnify-server --bookmarks ~/custom/bookmarks.json
 
     # Start with console output enabled
-    ./bunnify-server --console
+    ./scripts/bunnify-server --console
 
     # Start with DEBUG level logging
-    ./bunnify-server --log-level DEBUG
+    ./scripts/bunnify-server --log-level DEBUG
 
     # Combine options
-    ./bunnify-server -f ~/my-bookmarks.json --console --log-level INFO
+    ./scripts/bunnify-server -f ~/my-bookmarks.json --console --log-level INFO
 
     # Run in foreground (for debugging)
-    ./bunnify-server --foreground
+    ./scripts/bunnify-server --foreground
 
     # Stop the server
-    ./bunnify-server --stop
+    ./scripts/bunnify-server --stop
 
 LOGGING:
     Log file location: /tmp/bunnify.log
@@ -105,7 +105,7 @@ CONFIGURATION:
 
 STOPPING THE SERVER:
     To stop the server, use one of these methods:
-        1. ./bunnify-server --stop  (recommended)
+        1. ./scripts/bunnify-server --stop  (recommended)
         2. Ctrl+C (if running in foreground mode)
         3. kill <server_pid>  (PID shown at startup)
         4. pkill -f "manage.py runserver"
@@ -114,11 +114,12 @@ EOF
     exit 0
 }
 
-# Get the directory where this script is located
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Repo root (this script lives in scripts/)
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_dir="$repo_root"
 
-# Change to the script directory
-cd "$script_dir" || exit 1
+# Change to the repo root
+cd "$repo_root" || exit 1
 
 # Ensure common binary paths are in PATH (needed for nohup/background processes)
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -126,10 +127,10 @@ export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:
 # Load .env into the environment so DATABASE_URL and other settings reach Django.
 # on-deploy writes DATABASE_URL to .env for feature worktrees; without this,
 # os.environ never sees it and Django falls back to BASE_DIR/db.sqlite3.
-if [[ -f "$script_dir/.env" ]]; then
+if [[ -f "$repo_root/.env" ]]; then
     set -o allexport
     # shellcheck source=/dev/null
-    source "$script_dir/.env"
+    source "$repo_root/.env"
     set +o allexport
 fi
 
@@ -143,7 +144,7 @@ else
 fi
 
 # PID/port file directory (overridable via --pid-dir for isolated test runs)
-pid_dir="$script_dir"
+pid_dir="$repo_root"
 pid_file="$pid_dir/.bunnify.pid"
 watcher_pid_file="$pid_dir/.bunnify_watcher.pid"
 port_file="$pid_dir/.bunnify.port"
@@ -223,7 +224,7 @@ while [[ $# -gt 0 ]]; do
         --pid-dir)
             if [ -z "$2" ]; then
                 echo "Error: --pid-dir requires a directory path"
-                echo "Run './bunnify-server --help' for more information"
+                echo "Run './scripts/bunnify-server --help' for more information"
                 exit 1
             fi
             pid_dir_override="$2"
@@ -232,7 +233,7 @@ while [[ $# -gt 0 ]]; do
         --port)
             if [ -z "$2" ]; then
                 echo "Error: --port requires a value"
-                echo "Run './bunnify-server --help' for more information"
+                echo "Run './scripts/bunnify-server --help' for more information"
                 exit 1
             fi
             server_port="$2"
@@ -248,7 +249,7 @@ while [[ $# -gt 0 ]]; do
         -f|--bookmarks)
             if [ -z "$2" ]; then
                 echo "Error: --bookmarks requires a file path"
-                echo "Run './bunnify-server --help' for more information"
+                echo "Run './scripts/bunnify-server --help' for more information"
                 exit 1
             fi
             bookmarks_file="$2"
@@ -267,7 +268,7 @@ while [[ $# -gt 0 ]]; do
             if [ -z "$2" ]; then
                 echo "Error: --log-level requires a value"
                 echo "Valid levels: DEBUG, INFO, WARNING, ERROR, CRITICAL"
-                echo "Run './bunnify-server --help' for more information"
+                echo "Run './scripts/bunnify-server --help' for more information"
                 exit 1
             fi
             export BUNNIFY_LOG_LEVEL="$2"
@@ -276,7 +277,7 @@ while [[ $# -gt 0 ]]; do
         --log-file)
             if [ -z "$2" ]; then
                 echo "Error: --log-file requires a file path"
-                echo "Run './bunnify-server --help' for more information"
+                echo "Run './scripts/bunnify-server --help' for more information"
                 exit 1
             fi
             export BUNNIFY_LOG_FILE="$2"
@@ -284,7 +285,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Error: Unknown option: $1"
-            echo "Run './bunnify-server --help' for usage information"
+            echo "Run './scripts/bunnify-server --help' for usage information"
             exit 1
             ;;
     esac
@@ -333,7 +334,7 @@ is_bunnify_process() {
     ps -p "$pid" -o command= 2>/dev/null | grep -q "manage.py"
 }
 
-# Function to stop the server (used by ./bunnify-server stop)
+# Function to stop the server (used by ./scripts/bunnify-server stop)
 do_stop() {
     local found_process=false
     local server_pid
@@ -578,7 +579,7 @@ if [ ! -f "$bookmarks_file" ]; then
     echo ""
     echo "The bookmarks file is required to start the server."
     echo "Please provide a valid bookmarks file using:"
-    echo "  ./bunnify-server --bookmarks /path/to/bunnify.json"
+    echo "  ./scripts/bunnify-server --bookmarks /path/to/bunnify.json"
     echo ""
     exit 1
 fi
@@ -801,5 +802,5 @@ else
     echo "   Log file: /tmp/bunnify.log"
     echo "   Log level: $BUNNIFY_LOG_LEVEL"
     echo ""
-    echo "To stop the server, run: ./bunnify-server --stop"
+    echo "To stop the server, run: ./scripts/bunnify-server --stop"
 fi

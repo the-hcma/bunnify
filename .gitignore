@@ -46,6 +46,7 @@ local_settings.py
 # Environment variables
 .env
 .env.local
+bunnify.env
 
 # Logs
 /tmp/bunnify.log*
