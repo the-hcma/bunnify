@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from app.client import KeyEntry
 from app.theme import Theme
 
 
-def format_params(params: tuple[str, ...] | list[str]) -> str:
-    return " ".join(params)
+def format_param_token(name: str, *, optional: bool) -> str:
+    """Render one arg as ``<name>`` (required) or ``[name]`` (optional)."""
+    if optional:
+        return f"[{name}]"
+    return f"<{name}>"
+
+
+def format_params(
+    params: tuple[str, ...] | list[str],
+    *,
+    optional_params: Iterable[str] | None = None,
+) -> str:
+    optional = frozenset(optional_params or ())
+    return " ".join(
+        format_param_token(name, optional=name in optional) for name in params
+    )
 
 
 def format_key_usage_lines(
@@ -20,11 +36,12 @@ def format_key_usage_lines(
     if not entries:
         return []
 
+    rendered = [
+        format_params(entry.params, optional_params=entry.optional_params)
+        for entry in entries
+    ]
     key_width = max(len(entry.key) for entry in entries)
-    params_width = max(
-        (len(format_params(entry.params)) for entry in entries),
-        default=0,
-    )
+    params_width = max((len(text) for text in rendered), default=0)
     # Cap description column so long blurbs do not dominate the terminal.
     desc_width = min(
         40,
@@ -32,8 +49,7 @@ def format_key_usage_lines(
     )
 
     lines: list[str] = []
-    for entry in entries:
-        params = format_params(entry.params)
+    for entry, params in zip(entries, rendered, strict=True):
         description = entry.description
         if len(description) > desc_width > 0:
             description = (description[: desc_width - 1] + "…")[:desc_width]

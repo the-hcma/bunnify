@@ -32,6 +32,7 @@ class KeyEntry:
     description: str = ""
     url: str = ""
     params: tuple[str, ...] = ()
+    optional_params: frozenset[str] = frozenset()
 
 
 def _request_json(
@@ -117,7 +118,21 @@ def parse_key_entry(raw: Any) -> KeyEntry | None:
     params: tuple[str, ...] = ()
     if isinstance(params_raw, list):
         params = tuple(str(item) for item in params_raw)
-    return KeyEntry(key=key, description=description, url=url, params=params)
+    optional: frozenset[str] = frozenset()
+    optional_raw = raw.get("optional_params")
+    defaults_raw = raw.get("defaults", {})
+    if isinstance(optional_raw, list):
+        optional = frozenset(str(name) for name in optional_raw)
+    elif isinstance(defaults_raw, dict):
+        # Backward compatible with older /api/keys/ payloads.
+        optional = frozenset(str(name) for name in defaults_raw)
+    return KeyEntry(
+        key=key,
+        description=description,
+        url=url,
+        params=params,
+        optional_params=optional,
+    )
 
 
 def parse_keys_payload(payload: Any) -> list[KeyEntry]:

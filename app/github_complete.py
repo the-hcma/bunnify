@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -10,6 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _CACHE_TTL_SECONDS = 60.0
 _DEFAULT_TIMEOUT_SECONDS = 8.0
@@ -98,15 +101,14 @@ def _github_get_json(
         with open_url(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")
             return json.loads(body)
-    except urllib.error.HTTPError:
-        return None
-    except urllib.error.URLError:
-        return None
-    except TimeoutError:
-        return None
-    except json.JSONDecodeError:
-        return None
-    except OSError:
+    except (
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        OSError,
+    ) as exc:
+        logger.debug("GitHub REST GET %s failed: %s", path, exc, exc_info=True)
         return None
 
 

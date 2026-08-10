@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -23,11 +24,14 @@ from prompt_toolkit.history import FileHistory, InMemoryHistory
 from app.client import ClientError, KeyEntry
 from app.github_complete import suggest_param_values
 from app.theme import Theme
+from app.usage import format_params
 
 try:
     import readline as readline_module
 except ModuleNotFoundError:
     readline_module = None
+
+logger = logging.getLogger(__name__)
 
 REPL_META_COMMANDS: tuple[tuple[str, str], ...] = (
     ("edit-mode", "Switch Emacs vs Vim keys: edit-mode emacs | vim"),
@@ -95,8 +99,9 @@ class ShortcutCompleter(Completer):
     """
     Tab-complete the first token against meta-commands + shortcut keys.
 
-    After a space, prefers GitHub-aware parameter completions from key
-    metadata, then falls back to optional OpenSearch ``suggestions_fn``.
+    After a finished key (exact match with params, or a trailing space),
+    prefers GitHub-aware parameter completions from key metadata. Does not
+    fall back to OpenSearch key suggestions while completing params.
     """
 
     def __init__(
@@ -126,6 +131,34 @@ class ShortcutCompleter(Completer):
         self._entries_by_key = mapping
         self._keys = sorted(mapping.keys()) if mapping else self._keys
 
+    def _lookup_entry(self, key: str) -> KeyEntry | None:
+        entry = self._entries_by_key.get(key)
+        if entry is not None:
+            return entry
+        lowered = key.lower()
+        for candidate_key, candidate in self._entries_by_key.items():
+            if candidate_key.lower() == lowered:
+                return candidate
+        return None
+
+    def wants_param_completion(self, text: str) -> bool:
+        """True when Tab should complete shortcut/meta parameters, not keys."""
+        stripped = text.strip()
+        if not stripped:
+            return False
+        key = stripped.split(None, 1)[0]
+        key_set = {candidate.lower() for candidate in self._keys}
+        if key.lower() == "edit-mode" and "edit-mode" not in key_set:
+            return True
+        if any(ch.isspace() for ch in text):
+            entry = self._lookup_entry(key)
+            return entry is not None and bool(entry.params)
+        entry = self._lookup_entry(stripped)
+        return entry is not None and bool(entry.params)
+
+    def _has_separator(self, text: str) -> bool:
+        return any(ch.isspace() for ch in text)
+
     def get_completions(
         self,
         document: Document,
@@ -133,8 +166,18 @@ class ShortcutCompleter(Completer):
     ):
         del complete_event
         text = document.text_before_cursor
-        if " " in text:
+        if self.wants_param_completion(text):
             yield from self._param_completions(text)
+            # Still offer longer key names when the token is an exact key that
+            # is also a prefix of other keys (e.g. pr → prh).
+            if not self._has_separator(text):
+                yield from self._longer_key_completions(text)
+            return
+
+        if self._has_separator(text):
+            # Multi-token input that is not a known param slot (unknown key,
+            # or a no-arg shortcut with extra text): OpenSearch suggestions.
+            yield from self._suggestion_completions(text)
             return
 
         partial = text
@@ -161,7 +204,9 @@ class ShortcutCompleter(Completer):
                 meta = "shortcut"
                 if entry is not None:
                     if entry.params:
-                        meta = " ".join(entry.params)
+                        meta = format_params(
+                            entry.params, optional_params=entry.optional_params
+                        )
                     elif entry.description:
                         meta = entry.description[:40]
                 yield Completion(
@@ -171,8 +216,32 @@ class ShortcutCompleter(Completer):
                     display_meta=meta,
                 )
 
+    def _longer_key_completions(self, text: str):
+        needle = text.lower()
+        key_style = self._theme.completion_key_style()
+
+        for key in self._keys:
+            if key.lower().startswith(needle) and key.lower() != needle:
+                entry = self._entries_by_key.get(key)
+                meta = "shortcut"
+                if entry is not None and entry.params:
+                    meta = format_params(
+                        entry.params, optional_params=entry.optional_params
+                    )
+                elif entry is not None and entry.description:
+                    meta = entry.description[:40]
+                yield Completion(
+                    key,
+                    start_position=-len(text),
+                    style=key_style,
+                    display_meta=meta,
+                )
+
     def _param_completions(self, text: str):
-        key, filled_args, prefix, arg_index = completion_token_state(text)
+        # Exact finished key with no trailing whitespace → complete first arg.
+        insert_key_prefix = not self._has_separator(text)
+        effective = f"{text.rstrip()} " if insert_key_prefix else text
+        key, filled_args, prefix, arg_index = completion_token_state(effective)
         style = self._theme.completion_param_style()
 
         key_set = {candidate.lower() for candidate in self._keys}
@@ -180,45 +249,59 @@ class ShortcutCompleter(Completer):
             needle = prefix.lower()
             for alias in _EDIT_MODE_SUBARGS:
                 if alias.startswith(needle):
-                    yield Completion(
-                        alias,
-                        start_position=-len(prefix),
-                        style=style,
-                        display_meta="edit-mode",
-                    )
+                    if insert_key_prefix:
+                        yield Completion(
+                            f"{key} {alias}",
+                            start_position=-len(text),
+                            display=alias,
+                            style=style,
+                            display_meta="edit-mode",
+                        )
+                    else:
+                        yield Completion(
+                            alias,
+                            start_position=-len(prefix),
+                            style=style,
+                            display_meta="edit-mode",
+                        )
             return
 
-        entry = self._entries_by_key.get(key)
-        if entry is None:
-            # Case-insensitive key lookup.
-            lowered = key.lower()
-            for candidate_key, candidate in self._entries_by_key.items():
-                if candidate_key.lower() == lowered:
-                    entry = candidate
-                    break
-
-        yielded = False
-        if entry is not None and entry.params and arg_index < len(entry.params):
-            param_name = entry.params[arg_index]
-            try:
-                values = self._param_suggest_fn(
-                    param_name=param_name,
-                    url_template=entry.url,
-                    filled_args=filled_args,
-                    prefix=prefix,
+        entry = self._lookup_entry(key)
+        if entry is None or not entry.params:
+            return
+        if arg_index >= len(entry.params):
+            return
+        param_name = entry.params[arg_index]
+        try:
+            values = self._param_suggest_fn(
+                param_name=param_name,
+                url_template=entry.url,
+                filled_args=filled_args,
+                prefix=prefix,
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            logger.debug(
+                "param suggestion failed for %r on key %r: %s",
+                param_name,
+                entry.key,
+                exc,
+                exc_info=True,
+            )
+            values = []
+        seen: set[str] = set()
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            if insert_key_prefix:
+                yield Completion(
+                    f"{entry.key} {value}",
+                    start_position=-len(text),
+                    display=value,
+                    style=style,
+                    display_meta=param_name,
                 )
-            except OSError:
-                values = []
-            except ValueError:
-                values = []
-            except TypeError:
-                values = []
-            seen: set[str] = set()
-            for value in values:
-                if value in seen:
-                    continue
-                seen.add(value)
-                yielded = True
+            else:
                 yield Completion(
                     value,
                     start_position=-len(prefix),
@@ -226,16 +309,19 @@ class ShortcutCompleter(Completer):
                     display_meta=param_name,
                 )
 
-        if yielded or self._suggestions_fn is None:
+    def _suggestion_completions(self, text: str):
+        if self._suggestions_fn is None:
             return
-
+        style = self._theme.completion_param_style()
         try:
             suggestions = self._suggestions_fn(text)
-        except ClientError:
-            return
-        except OSError:
-            return
-        except ValueError:
+        except (ClientError, OSError, ValueError) as exc:
+            logger.debug(
+                "OpenSearch suggestion failed for %r: %s",
+                text,
+                exc,
+                exc_info=True,
+            )
             return
         seen_suggestions: set[str] = set()
         for item in suggestions:
@@ -258,6 +344,25 @@ class ShortcutCompleter(Completer):
                         style=style,
                         display_meta="suggestion",
                     )
+
+
+class FirstTokenFuzzyCompleter(Completer):
+    """Apply fuzzy matching only while completing the first token (key/meta)."""
+
+    def __init__(self, inner: ShortcutCompleter) -> None:
+        self._inner = inner
+        self._fuzzy = FuzzyCompleter(inner, enable_fuzzy=True)
+
+    def get_completions(
+        self,
+        document: Document,
+        complete_event: CompleteEvent,
+    ):
+        text = document.text_before_cursor
+        if self._inner.wants_param_completion(text) or any(ch.isspace() for ch in text):
+            yield from self._inner.get_completions(document, complete_event)
+            return
+        yield from self._fuzzy.get_completions(document, complete_event)
 
 
 class ReadlineShortcutCompleter:
@@ -317,8 +422,8 @@ def create_repl_session(
         suggestions_fn=suggestions_fn,
         entries=entries,
     )
-    # FuzzyCompleter makes Tab forgiving (domesti-bot uses prefix-only; we go further).
-    completer: Completer = FuzzyCompleter(inner, enable_fuzzy=True)
+    # Fuzzy only on the first token so param values (repos / PRs) are not filtered.
+    completer: Completer = FirstTokenFuzzyCompleter(inner)
 
     path = history_path if history_path is not None else history_file_path()
     try:

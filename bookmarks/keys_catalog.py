@@ -26,16 +26,20 @@ def build_key_catalog() -> list[dict[str, Any]]:
             "description": description,
             "url": url,
             "params": [],
+            "optional_params": [],
         }
         for key, description, url in SPECIAL_ENTRIES
     ]
     for bookmark in Bookmark.objects.order_by("key"):
+        defaults = bookmark.defaults if isinstance(bookmark.defaults, dict) else {}
+        params = placeholders_for_url(bookmark.url)
         entries.append(
             {
                 "key": bookmark.key,
                 "description": bookmark.description or "",
                 "url": bookmark.url,
-                "params": placeholders_for_url(bookmark.url),
+                "params": params,
+                "optional_params": [name for name in params if name in defaults],
             }
         )
     return entries
