@@ -1257,12 +1257,233 @@ class KeyUsageAndCompletionTests(TestCase):
             url_templates=["https://github.com/the-hcma/#{repo}/pulls"],
             token="test-token",
             opener=opener,
+            persist=False,
         )
         self.assertEqual(warmed["orgs"], 1)
         self.assertGreaterEqual(warmed["repos"], 3)
         self.assertTrue(any("/user/orgs" in url for url in seen))
         self.assertTrue(any("/user/repos" in url for url in seen))
         self.assertTrue(any("/orgs/the-hcma/repos" in url for url in seen))
+
+    def test_completion_cache_persists_under_scratch_bunnify(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            default_github_completion_cache_path,
+            list_github_repos,
+            load_github_completion_cache,
+            save_github_completion_cache,
+        )
+
+        clear_github_completion_cache()
+        self.assertEqual(
+            default_github_completion_cache_path(),
+            Path.home() / "scratch" / "bunnify" / "github-completions.json",
+        )
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"name":"bunnify"},{"name":"fpdf"}]'
+
+        def opener(_request, timeout=0):  # noqa: ARG001
+            return FakeResponse()
+
+        names = list_github_repos(org="the-hcma", token="t", opener=opener)
+        self.assertEqual(names, ["bunnify", "fpdf"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "scratch" / "bunnify"
+            path = root / "github-completions.json"
+            self.assertFalse(root.exists())
+            saved = save_github_completion_cache(path=path)
+            self.assertEqual(saved, path)
+            self.assertTrue(path.is_file())
+
+            clear_github_completion_cache()
+
+            import urllib.error
+
+            def empty_opener(_request, timeout=0):  # noqa: ARG001
+                raise urllib.error.URLError("offline — cache should be empty")
+
+            self.assertEqual(
+                list_github_repos(org="the-hcma", token="t", opener=empty_opener),
+                [],
+            )
+
+            loaded = load_github_completion_cache(path=path)
+            self.assertGreaterEqual(loaded["repos"], 2)
+            self.assertEqual(
+                list_github_repos(org="the-hcma", prefix="bun", token="t"),
+                ["bunnify"],
+            )
+
+    def test_completion_cache_does_not_persist_pr_keys(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            list_open_pull_requests,
+            load_github_completion_cache,
+            save_github_completion_cache,
+        )
+
+        clear_github_completion_cache()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"number":42}]'
+
+        list_open_pull_requests(
+            "the-hcma/bunnify", token="t", opener=lambda *_a, **_k: FakeResponse()
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scratch" / "bunnify" / "github-completions.json"
+            save_github_completion_cache(path=path)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(
+                all(not key.startswith("prs:") for key in payload["entries"])
+            )
+            clear_github_completion_cache()
+            # Even a legacy file with prs: keys must not restore them.
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "entries": {"prs:the-hcma/bunnify:50": ["99"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            load_github_completion_cache(path=path)
+            self.assertEqual(
+                list_open_pull_requests(
+                    "the-hcma/bunnify",
+                    token="t",
+                    opener=lambda *_a, **_k: FakeResponse(),
+                ),
+                ["42"],
+            )
+
+    def test_bootstrap_loads_disk_across_invocations_without_blocking(self) -> None:
+        """Disk snapshot survives restart; refresh is off the start path."""
+        import tempfile
+        import time
+        from pathlib import Path
+
+        from app.github_complete import (
+            bootstrap_github_completion_cache,
+            clear_github_completion_cache,
+            list_github_repos,
+            save_github_completion_cache,
+        )
+
+        clear_github_completion_cache()
+
+        class SeedResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"name":"old-repo"}]'
+
+        # Invocation 1: populate + persist (simulates a prior REPL session).
+        list_github_repos(
+            org="the-hcma", token="t", opener=lambda *_a, **_k: SeedResponse()
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scratch" / "bunnify" / "github-completions.json"
+            save_github_completion_cache(path=path)
+
+            # Simulate a new process: memory empty, disk still has the snapshot.
+            clear_github_completion_cache()
+            network_calls = {"n": 0}
+
+            class Resp:
+                def __init__(self, body: bytes) -> None:
+                    self._body = body
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+                def read(self) -> bytes:
+                    return self._body
+
+            def opener(request, timeout=0):  # noqa: ARG001
+                network_calls["n"] += 1
+                # Slow refresh so the bootstrap return path cannot have waited on it.
+                time.sleep(0.2)
+                url = request.full_url
+                if "/user/orgs" in url:
+                    return Resp(b'[{"login":"the-hcma"}]')
+                if "/user/repos" in url:
+                    return Resp(b"[]")
+                if "/orgs/the-hcma/repos" in url:
+                    return Resp(b'[{"name":"bunnify"}]')
+                raise AssertionError(url)
+
+            # Invocation 2: load disk immediately; kick refresh but do not join.
+            started = time.monotonic()
+            boot = bootstrap_github_completion_cache(
+                url_templates=["https://github.com/the-hcma/#{repo}/pulls"],
+                token="t",
+                opener=opener,
+                persist_path=path,
+                refresh=True,
+                join_refresh=False,
+            )
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 0.15)
+            self.assertTrue(boot["refreshing"])
+            self.assertGreaterEqual(boot["repos"], 1)
+            # Still the prior-session data — startup did not wait on GitHub.
+            self.assertEqual(
+                list_github_repos(org="the-hcma", token="t"),
+                ["old-repo"],
+            )
+
+            # Background refresh eventually updates memory + disk.
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    if "bunnify" in path.read_text(encoding="utf-8"):
+                        break
+                except OSError:
+                    pass
+                time.sleep(0.05)
+            self.assertIn("bunnify", path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                list_github_repos(org="the-hcma", token="t"),
+                ["bunnify"],
+            )
+            self.assertGreater(network_calls["n"], 0)
+            # Join before TemporaryDirectory teardown so the daemon cannot
+            # recreate paths under the deleted tmp root.
+            from app.github_complete import wait_for_github_completion_refresh
+
+            self.assertTrue(wait_for_github_completion_refresh(timeout=5.0))
 
     def test_desc_truncation_respects_width(self) -> None:
         from app.usage import format_key_usage_lines
