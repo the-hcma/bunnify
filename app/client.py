@@ -24,6 +24,16 @@ class ResolvedShortcut:
     key: str | None
 
 
+@dataclass(frozen=True)
+class KeyEntry:
+    """Shortcut metadata from ``/api/keys/`` (short usage / completion)."""
+
+    key: str
+    description: str = ""
+    url: str = ""
+    params: tuple[str, ...] = ()
+
+
 def _request_json(
     url: str,
     *,
@@ -90,22 +100,73 @@ def resolve_shortcut(
     )
 
 
+def parse_key_entry(raw: Any) -> KeyEntry | None:
+    """Parse one structured keys API entry; ignore malformed objects."""
+    if not isinstance(raw, dict):
+        return None
+    key = raw.get("key")
+    if not isinstance(key, str) or not key:
+        return None
+    description = raw.get("description", "")
+    url = raw.get("url", "")
+    params_raw = raw.get("params", [])
+    if not isinstance(description, str):
+        description = "" if description is None else str(description)
+    if not isinstance(url, str):
+        url = "" if url is None else str(url)
+    params: tuple[str, ...] = ()
+    if isinstance(params_raw, list):
+        params = tuple(str(item) for item in params_raw)
+    return KeyEntry(key=key, description=description, url=url, params=params)
+
+
+def parse_keys_payload(payload: Any) -> list[KeyEntry]:
+    """Normalize ``/api/keys/`` JSON into ``KeyEntry`` rows."""
+    if not isinstance(payload, dict):
+        raise ClientError("Keys response was not a JSON object")
+
+    entries_raw = payload.get("entries")
+    if isinstance(entries_raw, list) and entries_raw:
+        parsed = [entry for item in entries_raw if (entry := parse_key_entry(item))]
+        if parsed:
+            return parsed
+
+    keys = payload.get("keys")
+    if not isinstance(keys, list):
+        raise ClientError("Keys response missing keys list")
+    result: list[KeyEntry] = []
+    for item in keys:
+        if isinstance(item, str) and item:
+            result.append(KeyEntry(key=item))
+        else:
+            entry = parse_key_entry(item)
+            if entry is not None:
+                result.append(entry)
+    return result
+
+
+def fetch_key_entries(
+    *,
+    base_url: str = DEFAULT_BASE_URL,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> list[KeyEntry]:
+    """Fetch structured shortcut entries from ``/api/keys/``."""
+    payload = _request_json(
+        f"{base_url.rstrip('/')}/api/keys/",
+        timeout=timeout,
+    )
+    return parse_keys_payload(payload)
+
+
 def fetch_keys(
     *,
     base_url: str = DEFAULT_BASE_URL,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> list[str]:
     """Fetch bookmark keys (plus specials) from ``/api/keys/``."""
-    payload = _request_json(
-        f"{base_url.rstrip('/')}/api/keys/",
-        timeout=timeout,
-    )
-    if not isinstance(payload, dict):
-        raise ClientError("Keys response was not a JSON object")
-    keys = payload.get("keys")
-    if not isinstance(keys, list):
-        raise ClientError("Keys response missing keys list")
-    return [str(key) for key in keys]
+    return [
+        entry.key for entry in fetch_key_entries(base_url=base_url, timeout=timeout)
+    ]
 
 
 def fetch_suggestions(

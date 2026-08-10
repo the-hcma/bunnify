@@ -15,6 +15,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
+from .keys_catalog import catalog_payload
 from .models import Bookmark
 from .resolve import PLACEHOLDER_PATTERN, resolve_query, substitute_placeholder_values
 
@@ -313,11 +314,14 @@ def api_resolve(request: HttpRequest) -> JsonResponse:
 @never_cache
 @require_http_methods(["GET"])
 def api_keys(request: HttpRequest) -> JsonResponse:
-    """Return all bookmark keys (plus special commands) for CLI completion / fzf."""
-    keys = list(Bookmark.objects.order_by("key").values_list("key", flat=True))
-    # Special commands first for discoverability
-    special = ["h", "cmd"]
-    return JsonResponse({"keys": [*special, *keys]})
+    """Return shortcut keys plus structured usage entries for the CLI.
+
+    Payload always includes:
+      keys: list[str] — backward-compatible flat list for bash completion / fzf
+      entries: list[{key, description, url, params}] — short-usage metadata
+    """
+    del request
+    return JsonResponse(catalog_payload())
 
 
 @never_cache
