@@ -13,8 +13,10 @@ on:
 
   push:
     branches-ignore:
+      - 'gh-readonly-queue/**'
       - main
       - '**/graphite-base/**'
+  merge_group:
 # Cancel in-progress reruns for the same trigger only. push and pull_request must
 # not share a group: cancel-in-progress would leave CANCELLED required checks on
 # the PR commit and block merge even when pull_request CI passed. pull_request
