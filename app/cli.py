@@ -22,6 +22,10 @@ from app.client import (
     resolve_shortcut,
 )
 from app.config import ENV_VAR, env_file_path, resolve_base_url
+from app.github_complete import (
+    ensure_github_authenticated,
+    warm_github_completion_cache,
+)
 from app.interactive import (
     REPL_META_COMMANDS,
     REPL_META_NAMES,
@@ -230,6 +234,27 @@ def _run_repl(
             ):
                 break
         return
+
+    interactive_auth = sys.stdin.isatty() and sys.stdout.isatty()
+    github_token = ensure_github_authenticated(interactive=interactive_auth)
+    if github_token:
+        warmed = warm_github_completion_cache(
+            url_templates=[entry.url for entry in entries],
+            token=github_token,
+        )
+        click.echo(
+            theme.dim(
+                f"GitHub completion · {warmed['orgs']} orgs · "
+                f"{warmed['repos']} repos cached"
+            )
+        )
+    else:
+        click.echo(
+            theme.meta(
+                "GitHub not authenticated — set GITHUB_TOKEN / GH_TOKEN "
+                "or run `gh auth login` for repo Tab completion"
+            )
+        )
 
     def suggestions_fn(query: str) -> list[str]:
         return fetch_suggestions(query, base_url=base_url)

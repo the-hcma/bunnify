@@ -1148,6 +1148,122 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertEqual(names, ["bunnify"])
         self.assertEqual(calls["n"], 2)
 
+    def test_resolve_github_token_prefers_env_over_gh(self) -> None:
+        import subprocess
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            resolve_github_token,
+        )
+
+        clear_github_completion_cache()
+
+        def boom_runner(**_kwargs):
+            raise AssertionError("gh should not be called when env token is set")
+
+        token = resolve_github_token(
+            environ={"GITHUB_TOKEN": "env-token", "PATH": "/usr/bin"},
+            runner=boom_runner,
+        )
+        self.assertEqual(token, "env-token")
+
+        clear_github_completion_cache()
+
+        def gh_runner(*, args, **_kwargs):
+            self.assertEqual(args[:3], ["gh", "auth", "token"])
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=0, stdout="gh-token\n", stderr=""
+            )
+
+        token = resolve_github_token(
+            environ={"PATH": "/usr/bin"},
+            runner=gh_runner,
+        )
+        self.assertEqual(token, "gh-token")
+
+    def test_ensure_github_authenticated_runs_login_when_needed(self) -> None:
+        import subprocess
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            ensure_github_authenticated,
+        )
+
+        clear_github_completion_cache()
+        calls: list[list[str]] = []
+
+        def runner(*, args, **_kwargs):
+            calls.append(list(args))
+            if args[1:3] == ["auth", "token"]:
+                # First probe: logged out. After login: token available.
+                if any(c[1:3] == ["auth", "login"] for c in calls):
+                    return subprocess.CompletedProcess(
+                        args=list(args),
+                        returncode=0,
+                        stdout="fresh-token\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=1, stdout="", stderr="not logged in"
+                )
+            if args[1:3] == ["auth", "login"]:
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=0, stdout="", stderr=""
+                )
+            raise AssertionError(args)
+
+        token = ensure_github_authenticated(
+            interactive=True,
+            environ={"PATH": "/usr/bin"},
+            runner=runner,
+        )
+        self.assertEqual(token, "fresh-token")
+        self.assertTrue(any(c[1:3] == ["auth", "login"] for c in calls))
+
+    def test_warm_github_completion_cache_lists_orgs_and_repos(self) -> None:
+        from app.github_complete import (
+            clear_github_completion_cache,
+            warm_github_completion_cache,
+        )
+
+        clear_github_completion_cache()
+        seen: list[str] = []
+
+        class FakeResponse:
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return self._body
+
+        def opener(request, timeout=0):  # noqa: ARG001
+            url = request.full_url
+            seen.append(url)
+            if "/user/orgs" in url:
+                return FakeResponse(b'[{"login":"the-hcma"}]')
+            if "/user/repos" in url:
+                return FakeResponse(b'[{"full_name":"me/dotfiles"}]')
+            if "/orgs/the-hcma/repos" in url:
+                return FakeResponse(b'[{"name":"bunnify"},{"name":"fpdf"}]')
+            raise AssertionError(url)
+
+        warmed = warm_github_completion_cache(
+            url_templates=["https://github.com/the-hcma/#{repo}/pulls"],
+            token="test-token",
+            opener=opener,
+        )
+        self.assertEqual(warmed["orgs"], 1)
+        self.assertGreaterEqual(warmed["repos"], 3)
+        self.assertTrue(any("/user/orgs" in url for url in seen))
+        self.assertTrue(any("/user/repos" in url for url in seen))
+        self.assertTrue(any("/orgs/the-hcma/repos" in url for url in seen))
+
     def test_desc_truncation_respects_width(self) -> None:
         from app.usage import format_key_usage_lines
 
