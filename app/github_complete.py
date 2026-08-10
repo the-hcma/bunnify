@@ -73,6 +73,45 @@ def _cache_set(key: str, values: list[str]) -> None:
         _cache[key] = (time.monotonic() + _CACHE_TTL_SECONDS, list(values))
 
 
+_NAME_SPLIT = re.compile(r"[/_\-.]+")
+
+
+def filter_completion_names(names: Iterable[str], prefix: str) -> list[str]:
+    """
+    Filter and rank names for Tab completion.
+
+    Matches are case-insensitive. Ranking (best first):
+    1. full-string prefix
+    2. path/segment prefix (``/``, ``_``, ``-``, ``.``)
+    3. full-string substring
+    4. segment substring
+
+    So ``domes`` matches ``domesti-bot`` and ``the-hcma/domesti-bot``.
+    """
+    needle = prefix.strip().lower()
+    if not needle:
+        return list(names)
+
+    ranked: list[tuple[int, int, str]] = []
+    for index, name in enumerate(names):
+        lowered = name.lower()
+        if lowered.startswith(needle):
+            rank = 0
+        else:
+            segments = [part for part in _NAME_SPLIT.split(lowered) if part]
+            if any(part.startswith(needle) for part in segments):
+                rank = 1
+            elif needle in lowered:
+                rank = 2
+            elif any(needle in part for part in segments):
+                rank = 3
+            else:
+                continue
+        ranked.append((rank, index, name))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [name for _rank, _index, name in ranked]
+
+
 def _cache_snapshot() -> dict[str, list[str]]:
     with _cache_lock:
         return {key: list(values) for key, (_expires, values) in _cache.items()}
@@ -366,7 +405,7 @@ def list_github_orgs(
         _cache_set(cache_key, cached)
 
     needle = prefix.lower()
-    return [name for name in cached if name.lower().startswith(needle)]
+    return filter_completion_names(cached, needle)
 
 
 def list_github_repos(
@@ -428,8 +467,7 @@ def list_github_repos(
             cached = names[:limit]
         _cache_set(cache_key, cached)
 
-    needle = prefix.lower()
-    return [name for name in cached if name.lower().startswith(needle)]
+    return filter_completion_names(cached, prefix)
 
 
 def list_open_pull_requests(

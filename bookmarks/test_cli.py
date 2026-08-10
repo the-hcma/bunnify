@@ -1080,6 +1080,31 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertEqual(names, ["bunnify"])
         self.assertTrue(any("/orgs/the-hcma/repos" in url for url in seen))
 
+    def test_filter_completion_names_substring_and_rank(self) -> None:
+        from app.github_complete import filter_completion_names
+
+        names = [
+            "other",
+            "domesti-bot",
+            "the-hcma/domesti-bot",
+            "domesday",
+            "my-domesti-tools",
+            "bunnify",
+        ]
+        matched = filter_completion_names(names, "domes")
+        self.assertEqual(
+            matched,
+            ["domesti-bot", "domesday", "the-hcma/domesti-bot", "my-domesti-tools"],
+        )
+        # Prefix on the full name beats segment / substring hits.
+        self.assertEqual(
+            filter_completion_names(
+                ["zzz-domesti", "domesti-bot", "x/domesti-bot"],
+                "domesti",
+            ),
+            ["domesti-bot", "zzz-domesti", "x/domesti-bot"],
+        )
+
     def test_suggest_pr_numbers_for_fixed_org(self) -> None:
         from app.github_complete import (
             clear_github_completion_cache,
