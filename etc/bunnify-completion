@@ -30,7 +30,7 @@ _bunnify_completion() {
     edit_mode_values=(emacs vim)
 
     if [[ "${cur}" == -* ]]; then
-        options=(--base-url --list-keys --fzf --query --print-url --dry-run --color --edit-mode --env-file --help)
+        options=(--base-url --list-keys --list-usage --fzf --query --print-url --dry-run --color --edit-mode --env-file --help)
         COMPREPLY=()
         while IFS= read -r reply; do
             COMPREPLY+=("${reply}")

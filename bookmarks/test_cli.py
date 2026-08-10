@@ -11,7 +11,7 @@ from django.test import Client, TestCase, override_settings
 
 from app import interactive
 from app.cli import _run, matching_keys
-from app.client import ClientError, ResolvedShortcut
+from app.client import ClientError, KeyEntry, ResolvedShortcut, parse_keys_payload
 
 from .models import Bookmark
 
@@ -113,6 +113,13 @@ class ResolveApiTests(TestCase):
         self.assertIn("cmd", data["keys"])
         self.assertIn("gh", data["keys"])
         self.assertIn("pr", data["keys"])
+        entries = {item["key"]: item for item in data["entries"]}
+        self.assertEqual(entries["gh"]["description"], "GitHub")
+        self.assertEqual(entries["gh"]["url"], "https://github.com")
+        self.assertEqual(entries["gh"]["params"], [])
+        self.assertEqual(entries["pr"]["params"], ["repo", "pr_number"])
+        self.assertEqual(entries["h"]["url"], "/list/")
+        self.assertEqual(entries["cmd"]["description"], "Command palette")
 
 
 class CliUnitTests(TestCase):
@@ -158,13 +165,13 @@ class CliUnitTests(TestCase):
         )
 
     @patch("app.cli.resolve_shortcut")
-    @patch("app.cli.fetch_keys")
+    @patch("app.cli.fetch_key_entries")
     def test_interactive_open(
         self,
-        mock_fetch_keys,
+        mock_fetch_entries,
         mock_resolve,
     ) -> None:
-        mock_fetch_keys.return_value = ["gh"]
+        mock_fetch_entries.return_value = [KeyEntry(key="gh")]
         mock_resolve.return_value = ResolvedShortcut(
             url="https://github.com", kind="bookmark", key="gh"
         )
@@ -195,13 +202,16 @@ class CliUnitTests(TestCase):
         )
 
     @patch("app.cli.resolve_shortcut")
-    @patch("app.cli.fetch_keys")
+    @patch("app.cli.fetch_key_entries")
     def test_interactive_loop_runs_multiple_commands(
         self,
-        mock_fetch_keys,
+        mock_fetch_entries,
         mock_resolve,
     ) -> None:
-        mock_fetch_keys.return_value = ["gh", "pr"]
+        mock_fetch_entries.return_value = [
+            KeyEntry(key="gh"),
+            KeyEntry(key="pr"),
+        ]
         mock_resolve.side_effect = [
             ResolvedShortcut(url="https://github.com", kind="bookmark", key="gh"),
             ResolvedShortcut(
@@ -238,13 +248,13 @@ class CliUnitTests(TestCase):
         self.assertEqual(mock_resolve.call_count, 2)
 
     @patch("app.cli.resolve_shortcut")
-    @patch("app.cli.fetch_keys")
+    @patch("app.cli.fetch_key_entries")
     def test_interactive_error_continues_loop(
         self,
-        mock_fetch_keys,
+        mock_fetch_entries,
         mock_resolve,
     ) -> None:
-        mock_fetch_keys.return_value = ["gh"]
+        mock_fetch_entries.return_value = [KeyEntry(key="gh")]
         mock_resolve.side_effect = [
             ClientError("Unknown shortcut"),
             ResolvedShortcut(url="https://github.com", kind="bookmark", key="gh"),
@@ -437,9 +447,9 @@ class CliUnitTests(TestCase):
             "gh", base_url="http://127.0.0.1:8000", strict=True
         )
 
-    @patch("app.cli.fetch_keys")
-    def test_cancel_interactive(self, mock_fetch_keys) -> None:
-        mock_fetch_keys.return_value = ["gh"]
+    @patch("app.cli.fetch_key_entries")
+    def test_cancel_interactive(self, mock_fetch_entries) -> None:
+        mock_fetch_entries.return_value = [KeyEntry(key="gh")]
 
         def eof(_prompt: str) -> str:
             raise EOFError
@@ -458,9 +468,9 @@ class CliUnitTests(TestCase):
                     input_fn=eof,
                 )
 
-    @patch("app.cli.fetch_keys")
-    def test_interactive_skips_empty_lines(self, mock_fetch_keys) -> None:
-        mock_fetch_keys.return_value = ["gh"]
+    @patch("app.cli.fetch_key_entries")
+    def test_interactive_skips_empty_lines(self, mock_fetch_entries) -> None:
+        mock_fetch_entries.return_value = [KeyEntry(key="gh")]
         responses = iter(["", "   ", "quit"])
 
         with patch("sys.stdout", new_callable=StringIO):
@@ -590,13 +600,13 @@ class ConfigUnitTests(TestCase):
             )
 
     @patch("app.cli.resolve_shortcut")
-    @patch("app.cli.fetch_keys")
+    @patch("app.cli.fetch_key_entries")
     def test_repl_quit_key_collision_opens_shortcut(
         self,
-        mock_fetch_keys,
+        mock_fetch_entries,
         mock_resolve,
     ) -> None:
-        mock_fetch_keys.return_value = ["quit"]
+        mock_fetch_entries.return_value = [KeyEntry(key="quit")]
         mock_resolve.return_value = ResolvedShortcut(
             url="https://example.com/quit", kind="bookmark", key="quit"
         )
@@ -702,11 +712,11 @@ class ConfigUnitTests(TestCase):
         self.assertIn("yellow", help_c.style)
         self.assertIn("cyan", gh_c.style)
 
-    @patch("app.cli.fetch_keys")
-    def test_interactive_refresh_updates_keys(self, mock_fetch_keys) -> None:
-        mock_fetch_keys.side_effect = [
-            ["gh"],
-            ["gh", "pr"],
+    @patch("app.cli.fetch_key_entries")
+    def test_interactive_refresh_updates_keys(self, mock_fetch_entries) -> None:
+        mock_fetch_entries.side_effect = [
+            [KeyEntry(key="gh")],
+            [KeyEntry(key="gh"), KeyEntry(key="pr")],
         ]
         responses = iter(["refresh", "quit"])
         stdout = StringIO()
@@ -723,4 +733,292 @@ class ConfigUnitTests(TestCase):
                     input_fn=lambda _prompt: next(responses),
                 )
         self.assertIn("refreshed", stdout.getvalue())
-        self.assertEqual(mock_fetch_keys.call_count, 2)
+        self.assertEqual(mock_fetch_entries.call_count, 2)
+
+
+class KeyUsageAndCompletionTests(TestCase):
+    def test_parse_keys_payload_prefers_entries(self) -> None:
+        entries = parse_keys_payload(
+            {
+                "keys": ["old"],
+                "entries": [
+                    {
+                        "key": "pr",
+                        "description": "Pull Request",
+                        "url": "https://github.com/#{repo}/pull/#{pr_number}",
+                        "params": ["repo", "pr_number"],
+                    }
+                ],
+            }
+        )
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].key, "pr")
+        self.assertEqual(entries[0].params, ("repo", "pr_number"))
+
+    def test_format_key_usage_lines(self) -> None:
+        from app.usage import format_key_usage_lines
+
+        lines = format_key_usage_lines(
+            [
+                KeyEntry(
+                    key="pr",
+                    description="Pull Request",
+                    url="https://github.com/#{repo}/pull/#{pr_number}",
+                    params=("repo", "pr_number"),
+                ),
+                KeyEntry(key="gh", description="GitHub", url="https://github.com"),
+            ]
+        )
+        self.assertEqual(len(lines), 2)
+        self.assertIn("pr", lines[0])
+        self.assertIn("repo pr_number", lines[0])
+        self.assertIn("Pull Request", lines[0])
+        self.assertIn("https://github.com/#{repo}/pull/#{pr_number}", lines[0])
+        self.assertIn("gh", lines[1])
+
+    @patch("app.cli.fetch_key_entries")
+    def test_list_usage(self, mock_fetch_entries) -> None:
+        mock_fetch_entries.return_value = [
+            KeyEntry(
+                key="prh",
+                description="PRs",
+                url="https://github.com/the-hcma/#{repo}/pulls",
+                params=("repo",),
+            )
+        ]
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            _run(
+                shortcut_args=(),
+                base_url="http://127.0.0.1:8000",
+                list_keys=False,
+                list_usage=True,
+                use_fzf=False,
+                fzf_query="",
+                print_url=False,
+                open_browser=False,
+            )
+        text = stdout.getvalue()
+        self.assertIn("prh", text)
+        self.assertIn("repo", text)
+        self.assertIn("PRs", text)
+
+    @patch("app.cli.fetch_key_entries")
+    def test_repl_keys_prints_usage(self, mock_fetch_entries) -> None:
+        mock_fetch_entries.return_value = [
+            KeyEntry(
+                key="pr",
+                description="Pull Request",
+                url="https://github.com/#{repo}/pull/#{pr_number}",
+                params=("repo", "pr_number"),
+            )
+        ]
+        responses = iter(["keys", "quit"])
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            with patch("sys.stderr", new_callable=StringIO):
+                _run(
+                    shortcut_args=(),
+                    base_url="http://127.0.0.1:8000",
+                    list_keys=False,
+                    use_fzf=False,
+                    fzf_query="",
+                    print_url=False,
+                    open_browser=False,
+                    input_fn=lambda _prompt: next(responses),
+                )
+        text = stdout.getvalue()
+        self.assertIn("pr", text)
+        self.assertIn("repo pr_number", text)
+        self.assertIn("1 keys", text)
+
+    def test_completion_token_state(self) -> None:
+        from app.interactive import completion_token_state
+
+        self.assertEqual(
+            completion_token_state("pr "),
+            ("pr", [], "", 0),
+        )
+        self.assertEqual(
+            completion_token_state("pr the-hcma/bun"),
+            ("pr", [], "the-hcma/bun", 0),
+        )
+        self.assertEqual(
+            completion_token_state("pr the-hcma/bunnify "),
+            ("pr", ["the-hcma/bunnify"], "", 1),
+        )
+        self.assertEqual(
+            completion_token_state("pr the-hcma/bunnify 24"),
+            ("pr", ["the-hcma/bunnify"], "24", 1),
+        )
+
+    def test_infer_fixed_github_org(self) -> None:
+        from app.github_complete import infer_fixed_github_org
+
+        self.assertEqual(
+            infer_fixed_github_org("https://github.com/the-hcma/#{repo}/pulls"),
+            "the-hcma",
+        )
+        self.assertIsNone(
+            infer_fixed_github_org("https://github.com/#{repo}/pull/#{pr_number}")
+        )
+
+    def test_param_completer_repos_and_prs(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        entry = KeyEntry(
+            key="pr",
+            description="Pull Request",
+            url="https://github.com/#{repo}/pull/#{pr_number}",
+            params=("repo", "pr_number"),
+        )
+
+        def fake_suggest(*, param_name, url_template, filled_args, prefix):
+            del url_template
+            if param_name == "repo":
+                return [
+                    name
+                    for name in ("the-hcma/bunnify", "the-hcma/other")
+                    if name.startswith(prefix)
+                ]
+            if param_name == "pr_number":
+                self.assertEqual(filled_args, ["the-hcma/bunnify"])
+                return [num for num in ("242", "245") if num.startswith(prefix)]
+            return []
+
+        completer = ShortcutCompleter(
+            ["pr"],
+            theme=Theme(enabled=False),
+            entries=[entry],
+            param_suggest_fn=fake_suggest,
+        )
+        repos = [
+            c.text
+            for c in completer.get_completions(
+                Document("pr the-hcma/bun"), complete_event=None
+            )  # type: ignore[arg-type]
+        ]
+        self.assertEqual(repos, ["the-hcma/bunnify"])
+        prs = [
+            c.text
+            for c in completer.get_completions(
+                Document("pr the-hcma/bunnify 24"), complete_event=None
+            )  # type: ignore[arg-type]
+        ]
+        self.assertEqual(prs, ["242", "245"])
+
+    def test_list_github_repos_uses_rest_api(self) -> None:
+        from app.github_complete import clear_github_completion_cache, list_github_repos
+
+        clear_github_completion_cache()
+        seen: list[str] = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"name":"bunnify"},{"name":"fpdf"}]'
+
+        def opener(request, timeout=0):  # noqa: ARG001
+            seen.append(request.full_url)
+            return FakeResponse()
+
+        names = list_github_repos(
+            org="the-hcma",
+            prefix="bun",
+            token="test-token",
+            opener=opener,
+        )
+        self.assertEqual(names, ["bunnify"])
+        self.assertTrue(any("/orgs/the-hcma/repos" in url for url in seen))
+
+    def test_suggest_pr_numbers_for_fixed_org(self) -> None:
+        from app.github_complete import (
+            clear_github_completion_cache,
+            suggest_param_values,
+        )
+
+        clear_github_completion_cache()
+        seen: list[str] = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"number":242,"title":"cli"},{"number":100,"title":"other"}]'
+
+        def opener(request, timeout=0):  # noqa: ARG001
+            seen.append(request.full_url)
+            return FakeResponse()
+
+        values = suggest_param_values(
+            param_name="pr_number",
+            url_template="https://github.com/the-hcma/#{repo}/pull/#{pr_number}",
+            filled_args=["bunnify"],
+            prefix="24",
+            token="test-token",
+            opener=opener,
+        )
+        self.assertEqual(values, ["242"])
+        self.assertTrue(any("/repos/the-hcma/bunnify/pulls" in url for url in seen))
+
+    def test_failed_api_fetch_does_not_poison_cache(self) -> None:
+        import urllib.error
+
+        from app.github_complete import clear_github_completion_cache, list_github_repos
+
+        clear_github_completion_cache()
+        calls = {"n": 0}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"name":"bunnify"}]'
+
+        def opener(_request, timeout=0):  # noqa: ARG001
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise urllib.error.URLError("boom")
+            return FakeResponse()
+
+        self.assertEqual(
+            list_github_repos(org="the-hcma", token="t", opener=opener),
+            [],
+        )
+        names = list_github_repos(
+            org="the-hcma", prefix="bun", token="t", opener=opener
+        )
+        self.assertEqual(names, ["bunnify"])
+        self.assertEqual(calls["n"], 2)
+
+    def test_desc_truncation_respects_width(self) -> None:
+        from app.usage import format_key_usage_lines
+
+        lines = format_key_usage_lines(
+            [
+                KeyEntry(key="a", description="A" * 40, url="u"),
+                KeyEntry(key="b", description="H" * 50, url="u"),
+            ]
+        )
+        # Cap is 40; truncated description must not exceed that width.
+        self.assertIn("…", lines[1])
+        # Extract the description column between padded key and URL.
+        body = lines[1].strip()
+        # "b" + spaces + desc(40) + spaces + "u"
+        self.assertRegex(body, r"^b\s+.{40}\s+u$")

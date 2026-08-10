@@ -20,7 +20,8 @@ from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.formatted_text import AnyFormattedText
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 
-from app.client import ClientError
+from app.client import ClientError, KeyEntry
+from app.github_complete import suggest_param_values
 from app.theme import Theme
 
 try:
@@ -32,7 +33,7 @@ REPL_META_COMMANDS: tuple[tuple[str, str], ...] = (
     ("edit-mode", "Switch Emacs vs Vim keys: edit-mode emacs | vim"),
     ("exit", "Leave the REPL"),
     ("help", "Show this help"),
-    ("keys", "List known shortcut keys"),
+    ("keys", "List shortcuts with params / description / target"),
     ("quit", "Leave the REPL"),
     ("refresh", "Re-fetch shortcut keys from the server"),
 )
@@ -69,12 +70,33 @@ def history_file_path() -> Path:
     return Path(user_cache_dir("bunnify")) / "repl_history"
 
 
+def completion_token_state(text: str) -> tuple[str, list[str], str, int]:
+    """
+    Split ``text`` into ``(key, completed_args, prefix, arg_index)``.
+
+    ``arg_index`` is the parameter index currently being typed (0-based).
+    A trailing space means the next empty argument is being completed.
+    """
+    stripped_right = text.rstrip(" \t")
+    trailing_space = len(text) > len(stripped_right)
+    tokens = stripped_right.split()
+    if not tokens:
+        return "", [], "", 0
+    key = tokens[0]
+    args = tokens[1:]
+    if trailing_space:
+        return key, args, "", len(args)
+    if not args:
+        return key, [], "", 0
+    return key, args[:-1], args[-1], len(args) - 1
+
+
 class ShortcutCompleter(Completer):
     """
     Tab-complete the first token against meta-commands + shortcut keys.
 
-    After a space, completes via optional ``suggestions_fn`` (server OpenSearch
-    suggestions) so parameterized shortcuts stay discoverable.
+    After a space, prefers GitHub-aware parameter completions from key
+    metadata, then falls back to optional OpenSearch ``suggestions_fn``.
     """
 
     def __init__(
@@ -84,14 +106,25 @@ class ShortcutCompleter(Completer):
         theme: Theme | None = None,
         include_meta: bool = True,
         suggestions_fn: Callable[[str], list[str]] | None = None,
+        entries: Iterable[KeyEntry] | None = None,
+        param_suggest_fn: Callable[..., list[str]] | None = None,
     ) -> None:
         self._keys = sorted(keys)
         self._theme = theme or Theme(enabled=False)
         self._include_meta = include_meta
         self._suggestions_fn = suggestions_fn
+        self._entries_by_key: dict[str, KeyEntry] = {}
+        self._param_suggest_fn = param_suggest_fn or suggest_param_values
+        if entries is not None:
+            self.set_entries(entries)
 
     def set_keys(self, keys: Iterable[str]) -> None:
         self._keys = sorted(keys)
+
+    def set_entries(self, entries: Iterable[KeyEntry]) -> None:
+        mapping = {entry.key: entry for entry in entries}
+        self._entries_by_key = mapping
+        self._keys = sorted(mapping.keys()) if mapping else self._keys
 
     def get_completions(
         self,
@@ -124,28 +157,76 @@ class ShortcutCompleter(Completer):
 
         for key in self._keys:
             if key.lower().startswith(needle):
+                entry = self._entries_by_key.get(key)
+                meta = "shortcut"
+                if entry is not None:
+                    if entry.params:
+                        meta = " ".join(entry.params)
+                    elif entry.description:
+                        meta = entry.description[:40]
                 yield Completion(
                     key,
                     start_position=-len(partial),
                     style=key_style,
-                    display_meta="shortcut",
+                    display_meta=meta,
                 )
 
     def _param_completions(self, text: str):
-        if self._suggestions_fn is None:
-            # Still offer edit-mode subargs when completing that meta command.
-            parts = text.split(None, 1)
-            if len(parts) == 2 and parts[0].lower() == "edit-mode":
-                prefix = parts[1].lower()
-                style = self._theme.completion_param_style()
-                for alias in _EDIT_MODE_SUBARGS:
-                    if alias.startswith(prefix):
-                        yield Completion(
-                            alias,
-                            start_position=-len(parts[1]),
-                            style=style,
-                            display_meta="edit-mode",
-                        )
+        key, filled_args, prefix, arg_index = completion_token_state(text)
+        style = self._theme.completion_param_style()
+
+        key_set = {candidate.lower() for candidate in self._keys}
+        if key.lower() == "edit-mode" and "edit-mode" not in key_set:
+            needle = prefix.lower()
+            for alias in _EDIT_MODE_SUBARGS:
+                if alias.startswith(needle):
+                    yield Completion(
+                        alias,
+                        start_position=-len(prefix),
+                        style=style,
+                        display_meta="edit-mode",
+                    )
+            return
+
+        entry = self._entries_by_key.get(key)
+        if entry is None:
+            # Case-insensitive key lookup.
+            lowered = key.lower()
+            for candidate_key, candidate in self._entries_by_key.items():
+                if candidate_key.lower() == lowered:
+                    entry = candidate
+                    break
+
+        yielded = False
+        if entry is not None and entry.params and arg_index < len(entry.params):
+            param_name = entry.params[arg_index]
+            try:
+                values = self._param_suggest_fn(
+                    param_name=param_name,
+                    url_template=entry.url,
+                    filled_args=filled_args,
+                    prefix=prefix,
+                )
+            except OSError:
+                values = []
+            except ValueError:
+                values = []
+            except TypeError:
+                values = []
+            seen: set[str] = set()
+            for value in values:
+                if value in seen:
+                    continue
+                seen.add(value)
+                yielded = True
+                yield Completion(
+                    value,
+                    start_position=-len(prefix),
+                    style=style,
+                    display_meta=param_name,
+                )
+
+        if yielded or self._suggestions_fn is None:
             return
 
         try:
@@ -156,14 +237,11 @@ class ShortcutCompleter(Completer):
             return
         except ValueError:
             return
-        style = self._theme.completion_param_style()
-        seen: set[str] = set()
+        seen_suggestions: set[str] = set()
         for item in suggestions:
-            if item in seen:
+            if item in seen_suggestions:
                 continue
-            seen.add(item)
-            # Prefer completing the trailing fragment when the suggestion
-            # shares the typed prefix; otherwise replace the whole buffer.
+            seen_suggestions.add(item)
             if item.lower().startswith(text.lower()):
                 yield Completion(
                     item,
@@ -223,6 +301,7 @@ def create_repl_session(
     theme: Theme,
     editing_mode: EditingMode = EditingMode.VI,
     suggestions_fn: Callable[[str], list[str]] | None = None,
+    entries: Iterable[KeyEntry] | None = None,
     history_path: Path | None = None,
 ) -> tuple[PromptSession[str], ShortcutCompleter]:
     """
@@ -236,6 +315,7 @@ def create_repl_session(
         theme=theme,
         include_meta=True,
         suggestions_fn=suggestions_fn,
+        entries=entries,
     )
     # FuzzyCompleter makes Tab forgiving (domesti-bot uses prefix-only; we go further).
     completer: Completer = FuzzyCompleter(inner, enable_fuzzy=True)

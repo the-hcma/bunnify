@@ -15,6 +15,8 @@ from prompt_toolkit.shortcuts import CompleteStyle
 
 from app.client import (
     ClientError,
+    KeyEntry,
+    fetch_key_entries,
     fetch_keys,
     fetch_suggestions,
     resolve_shortcut,
@@ -31,6 +33,7 @@ from app.interactive import (
     repl_prompt_message,
 )
 from app.theme import Theme, stdout_color_enabled
+from app.usage import format_key_usage_lines
 
 
 def open_url(url: str, *, opener: Callable[[str], bool] | None = None) -> None:
@@ -187,7 +190,8 @@ def _run_repl(
     fzf_picker: Callable[..., str | None],
     editing_mode: EditingMode,
 ) -> None:
-    keys = fetch_keys(base_url=base_url)
+    entries = fetch_key_entries(base_url=base_url)
+    keys = [entry.key for entry in entries]
     click.echo(
         f"{theme.brand('bunnify')} "
         f"{theme.dim('interactive — Tab fuzzy-completes; quit to exit')}"
@@ -222,6 +226,7 @@ def _run_repl(
                 fzf_picker=fzf_picker,
                 session=None,
                 set_keys=None,
+                set_entries=None,
             ):
                 break
         return
@@ -234,12 +239,17 @@ def _run_repl(
         theme=theme,
         editing_mode=editing_mode,
         suggestions_fn=suggestions_fn,
+        entries=entries,
     )
 
     def set_keys(new_keys: list[str]) -> None:
         nonlocal keys
         keys = new_keys
         completer.set_keys(new_keys)
+
+    def set_entries(new_entries: list[KeyEntry]) -> None:
+        completer.set_entries(new_entries)
+        set_keys([entry.key for entry in new_entries])
 
     while True:
         try:
@@ -268,6 +278,7 @@ def _run_repl(
             fzf_picker=fzf_picker,
             session=session,
             set_keys=set_keys,
+            set_entries=set_entries,
         ):
             break
 
@@ -284,6 +295,7 @@ def _dispatch_repl_line(
     fzf_picker: Callable[..., str | None],
     session: object | None,
     set_keys: Callable[[list[str]], None] | None,
+    set_entries: Callable[[list[KeyEntry]], None] | None = None,
 ) -> bool:
     """Handle one REPL line. Returns False when the REPL should exit."""
     parts = line.split(None, 1)
@@ -299,17 +311,25 @@ def _dispatch_repl_line(
         _print_repl_help(theme)
         return True
     if lowered == "keys" and "keys" not in key_set:
-        for key in keys:
-            click.echo(f"  {theme.cmd(key)}")
-        click.echo(theme.meta(f"{len(keys)} keys"))
-        return True
-    if lowered == "refresh" and "refresh" not in key_set:
         try:
-            new_keys = fetch_keys(base_url=base_url)
+            entries = fetch_key_entries(base_url=base_url)
         except ClientError as exc:
             click.echo(theme.err(f"error: {exc}"), err=True)
             return True
-        if set_keys is not None:
+        for usage_line in format_key_usage_lines(entries, theme=theme):
+            click.echo(usage_line)
+        click.echo(theme.meta(f"{len(entries)} keys"))
+        return True
+    if lowered == "refresh" and "refresh" not in key_set:
+        try:
+            new_entries = fetch_key_entries(base_url=base_url)
+        except ClientError as exc:
+            click.echo(theme.err(f"error: {exc}"), err=True)
+            return True
+        new_keys = [entry.key for entry in new_entries]
+        if set_entries is not None:
+            set_entries(new_entries)
+        elif set_keys is not None:
             set_keys(new_keys)
         else:
             keys[:] = new_keys
@@ -339,6 +359,7 @@ def _run(
     shortcut_args: tuple[str, ...],
     base_url: str,
     list_keys: bool,
+    list_usage: bool = False,
     use_fzf: bool,
     fzf_query: str,
     print_url: bool,
@@ -351,6 +372,12 @@ def _run(
 ) -> None:
     active_theme = theme or Theme(enabled=False)
     picker = fzf_picker or pick_key_with_fzf
+
+    if list_usage:
+        entries = fetch_key_entries(base_url=base_url)
+        for usage_line in format_key_usage_lines(entries, theme=active_theme):
+            click.echo(usage_line)
+        return
 
     if list_keys:
         for key in fetch_keys(base_url=base_url):
@@ -419,6 +446,11 @@ def _run(
     help="Print shortcut keys (one per line) for fzf / shell completion.",
 )
 @click.option(
+    "--list-usage",
+    is_flag=True,
+    help="Print short usage for each shortcut (params, description, target).",
+)
+@click.option(
     "--fzf",
     "use_fzf",
     is_flag=True,
@@ -468,6 +500,7 @@ def main(
     shortcut_args: tuple[str, ...],
     base_url_option: str | None,
     list_keys: bool,
+    list_usage: bool,
     use_fzf: bool,
     fzf_query: str,
     print_url: bool,
@@ -492,6 +525,7 @@ def main(
     Fuzzy pick (fzf) for argv / shell completion workflows:
       ./scripts/bunnify --fzf
       ./scripts/bunnify --list-keys | fzf
+      ./scripts/bunnify --list-usage
     """
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))
     mode_name = (
@@ -514,6 +548,7 @@ def main(
             shortcut_args=shortcut_args,
             base_url=resolved_url,
             list_keys=list_keys,
+            list_usage=list_usage,
             use_fzf=use_fzf,
             fzf_query=fzf_query,
             print_url=print_url or dry_run,
