@@ -52,8 +52,9 @@ def search_redirect(request: HttpRequest) -> HttpResponse:
     Example: "pr 12345" or "pr 12345 Shopify/shopify-build" or "g django tutorial"
     Special: "h" shows all bookmarks
 
-    For bookmarks with multiple parameters, splits by space.
-    For bookmarks with single parameter, passes everything after key as the value.
+    Token placeholders are whitespace-separated; free-text placeholders
+    (``search_terms``, ``phrase``, …) take the remainder of the query.
+    Extra arguments beyond what the shortcut accepts return HTTP 400 with usage.
     """
     query_param = request.GET.get("q", "")
     query = str(query_param).strip() if query_param else ""
