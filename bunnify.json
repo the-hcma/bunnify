@@ -79,17 +79,21 @@
     "description": "GitHub",
     "url": "https://github.com"
   },
-  "ghealth": {
-    "description": "GitHub Status",
+  "ghh": {
+    "description": "GitHub Health",
     "url": "https://www.githubstatus.com"
   },
-  "ghh": {
-    "description": "the-hcma's GitHub repo",
-    "url": "https://github.com/the-hcma/#{repo}/"
+  "ghhi": {
+    "description": "GitHub Incidents",
+    "url": "https://www.githubstatus.com/history"
   },
   "ghp": {
     "description": "GitHub Profile",
     "url": "https://github.com/settings/profile"
+  },
+  "ghrh": {
+    "description": "the-hcma's GitHub repo",
+    "url": "https://github.com/the-hcma/#{repo}/"
   },
   "gk": {
     "description": "Google Keep",
