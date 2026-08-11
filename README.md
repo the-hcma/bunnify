@@ -432,6 +432,10 @@ bunnify/
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Releasing
+
+Maintainers should follow the automated [release process](docs/RELEASING.md).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

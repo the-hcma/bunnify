@@ -1,0 +1,233 @@
+# Release Please opens release PRs from Conventional Commits on main; merging
+# creates a tag and publishes the Python distributions. See docs/RELEASING.md.
+
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.release.outputs.pr }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Assert Release Please acted on releasable commits
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: |
+          commit_title=$(git log -1 --format='%s' "$COMMIT_SHA")
+          if echo "$commit_title" | grep -qE '^(feat|fix)(\([^)]*\))?!?:' && \
+             [[ "$RELEASE_CREATED" != "true" ]] && \
+             [[ -z "$RELEASE_PR" ]]; then
+            echo "ERROR: Commit '$commit_title' is releasable, but Release Please neither created a release nor opened or updated a release PR." >&2
+            echo "Check the commit format and ensure squash_merge_commit_message=BLANK is configured." >&2
+            exit 1
+          fi
+
+  resolve-release-pr:
+    name: Resolve release PR
+    needs: release-please
+    if: >-
+      always() &&
+      needs.release-please.result == 'success' &&
+      needs.release-please.outputs.pr != '' &&
+      needs.release-please.outputs.release_created != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Resolve release PR commits
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_JSON: ${{ needs.release-please.outputs.pr }}
+        run: |
+          set -euo pipefail
+          pr_number=$(jq -r '.number' <<<"$RELEASE_PR_JSON")
+          head_sha=$(gh pr view "$pr_number" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json headRefOid \
+            --jq .headRefOid)
+          head_ref=$(gh pr view "$pr_number" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json headRefName \
+            --jq .headRefName)
+          base_sha=$(gh pr view "$pr_number" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json baseRefOid \
+            --jq .baseRefOid)
+          {
+            echo "base_sha=${base_sha}"
+            echo "head_ref=${head_ref}"
+            echo "head_sha=${head_sha}"
+          } >>"$GITHUB_OUTPUT"
+
+  update-uv-lock:
+    name: Update uv.lock
+    needs: [release-please, resolve-release-pr]
+    if: >-
+      always() &&
+      needs.release-please.result == 'success' &&
+      needs.resolve-release-pr.result == 'success' &&
+      needs.release-please.outputs.pr != '' &&
+      needs.release-please.outputs.release_created != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.push.outputs.head_sha }}
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.resolve-release-pr.outputs.head_sha }}
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Regenerate uv.lock
+        run: uv lock
+
+      - name: Commit and push if changed
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [[ -z "$(git status --porcelain=v1)" ]]; then
+            echo "No lockfile changes."
+            echo "head_sha=${head_sha}" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: update uv.lock"
+          git push origin "HEAD:refs/heads/${{ needs.resolve-release-pr.outputs.head_ref }}"
+          echo "head_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+  ci:
+    name: Release PR CI
+    needs: [release-please, resolve-release-pr, update-uv-lock]
+    if: >-
+      always() &&
+      needs.release-please.result == 'success' &&
+      needs.resolve-release-pr.result == 'success' &&
+      needs.update-uv-lock.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.update-uv-lock.outputs.head_sha || needs.resolve-release-pr.outputs.head_sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: latest
+
+      - name: Python lint and format checks
+        run: bash .github/ci/python-static
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint bash scripts
+        run: bash .github/ci/shellcheck
+
+      - name: Run Django checks
+        run: uv run python manage.py check
+
+      - name: Run migrations
+        run: uv run python manage.py migrate
+
+      - name: Validate example bookmark file
+        run: |
+          cp bunnify.json.example /tmp/test_bookmarks.json
+          uv run python manage.py load_bookmarks --file /tmp/test_bookmarks.json
+
+      - name: Validate bunnify-server script
+        run: ./scripts/bunnify-server --help
+
+      - name: Run unit tests
+        run: ./test_bunnify
+
+      - name: Run integration tests
+        run: ./test_integration
+
+      - name: Run installed-wheel packaging smoke
+        run: ./test_packaging
+
+      - name: Scan for secrets
+        env:
+          GITLEAKS_BASE: ${{ needs.resolve-release-pr.outputs.base_sha }}
+          GITLEAKS_HEAD: ${{ needs.update-uv-lock.outputs.head_sha || needs.resolve-release-pr.outputs.head_sha }}
+        run: bash .github/ci/secret-scan
+
+  publish-pypi:
+    name: Publish PyPI
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: latest
+
+      - name: Set up Python 3.14
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Verify PyPI release
+        run: |
+          version="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          ./scripts/verify-pypi-release "$version"
