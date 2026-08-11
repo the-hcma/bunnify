@@ -420,16 +420,10 @@ class FirstTokenFuzzyCompleter(Completer):
         self._inner = inner
 
     def _match_haystacks(self, completion: Completion) -> tuple[str, str]:
-        """Return ``(key_text, description_or_blurb)`` for fuzzy matching."""
+        """Return ``(key_text, shortcut_description)`` for fuzzy matching."""
         key_text = completion.text
         entry = self._inner._lookup_entry(key_text)
-        if entry is not None and entry.description.strip():
-            return key_text, entry.description
-        meta = completion.display_meta_text or ""
-        # Meta rows store the blurb in display_meta; drop param prefixes if present.
-        if " — " in meta:
-            meta = meta.split(" — ", 1)[1]
-        return key_text, meta
+        return key_text, entry.description if entry is not None else ""
 
     def get_completions(
         self,

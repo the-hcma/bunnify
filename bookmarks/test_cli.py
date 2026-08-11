@@ -750,6 +750,24 @@ class ConfigUnitTests(TestCase):
         ]
         self.assertEqual(metas, ["<repo> — Open org pull requests"])
 
+    def test_fuzzy_completer_excludes_meta_blurbs(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import FirstTokenFuzzyCompleter, ShortcutCompleter
+        from app.theme import Theme
+
+        completer = FirstTokenFuzzyCompleter(
+            ShortcutCompleter(
+                ["gh"],
+                theme=Theme(enabled=False),
+                entries=[KeyEntry(key="gh", description="GitHub")],
+            )
+        )
+        completions = list(
+            completer.get_completions(Document("vim"), complete_event=None)  # type: ignore[arg-type]
+        )
+        self.assertNotIn("edit-mode", [completion.text for completion in completions])
+
     def test_fuzzy_completer_matches_description_shows_keys(self) -> None:
         from prompt_toolkit.document import Document
 
