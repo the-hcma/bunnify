@@ -2,15 +2,24 @@
 
 A powerful Python-based bookmark manager and URL shortcut system with advanced command palette, Chrome integration, and real-time GitHub Copilot code reviews.
 
-## Prerequisites
+## Install
 
-- **Python 3.14+**
-- **[uv](https://docs.astral.sh/uv/)** - Fast Python package manager
+[pipx](https://pipx.pypa.io/) is the recommended installation path:
 
 ```bash
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pipx install bunnify
+bunnify --version
+bunnify setup
 ```
+
+As an optional alternative, install into your own Python 3.14+ environment with
+`python -m pip install bunnify`. Homebrew packaging is intentionally deferred:
+pipx provides isolated installation for this pure-Python application without a
+second release path to maintain.
+
+The wheel installs both `bunnify` and `bunnify-server`; neither command needs a
+repository checkout or `uv` at runtime. See
+[Local and remote setup](docs/LOCAL.md) for server setup and lifecycle commands.
 
 ## Features
 
@@ -44,13 +53,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### Infrastructure
 - **Dual-Stack Networking**: IPv4 and IPv6 support (accessible via 127.0.0.1, [::1], or localhost)
-- **Comprehensive Logging**: Detailed logs with PID/function/line numbers to `/tmp/bunnify.log`
+- **Comprehensive Logging**: Detailed rotating logs under the XDG data directory
 - **File Watching**: Auto-reload bookmarks when JSON file changes
 - **Daemonization**: Background process management with proper cleanup
 
-## Quick Start
+## Development checkout
 
-### 1. Clone and Setup
+Development requires Python 3.14+ and
+[uv](https://docs.astral.sh/uv/). Clone and set up the checkout:
 
 ```bash
 # Clone the repository

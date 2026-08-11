@@ -52,6 +52,7 @@ from app.interactive import (
 from app.local_server import ensure_local_server
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
+from app.version import package_version
 
 
 def ensure_ready_base_url(
@@ -721,6 +722,7 @@ def _run(
 @click.command(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+@click.version_option(version=package_version(), prog_name="bunnify")
 @click.argument("shortcut_args", nargs=-1)
 @click.option(
     "--base-url",

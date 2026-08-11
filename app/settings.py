@@ -10,10 +10,17 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
+import sys
 from pathlib import Path
+
+from app.config import data_dir
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATABASE_PATH = DATA_DIR / "db.sqlite3"
 
 
 # Quick-start development settings - unsuitable for production
@@ -76,7 +83,7 @@ WSGI_APPLICATION = "app.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": DATABASE_PATH,
     }
 }
 
@@ -117,11 +124,6 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
-# Logging Configuration
-import os
-import sys
-from pathlib import Path
-
 # Get log level from environment variable, default to WARNING
 LOG_LEVEL = os.environ.get("BUNNIFY_LOG_LEVEL", "WARNING").upper()
 
@@ -129,7 +131,7 @@ LOG_LEVEL = os.environ.get("BUNNIFY_LOG_LEVEL", "WARNING").upper()
 LOG_TO_CONSOLE = os.environ.get("BUNNIFY_LOG_CONSOLE", "false").lower() == "true"
 
 # Log file path
-LOG_FILE = os.environ.get("BUNNIFY_LOG_FILE", str(Path("/tmp") / "bunnify.log"))
+LOG_FILE = os.environ.get("BUNNIFY_LOG_FILE", str(DATA_DIR / "bunnify.log"))
 
 LOGGING = {
     "version": 1,

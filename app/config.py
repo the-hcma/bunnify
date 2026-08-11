@@ -16,6 +16,7 @@ from app.client import DEFAULT_BASE_URL
 
 BOOKMARKS_ENV_VAR = "BUNNIFY_BOOKMARKS"
 BOOKMARKS_FILE_NAME = "bookmarks.json"
+DATA_DIR_ENV_VAR = "BUNNIFY_DATA_DIR"
 ENV_FILE_NAME = "config.env"
 ENV_VAR = "BUNNIFY_BASE_URL"
 EXAMPLE_BOOKMARKS_NAME = "bunnify.json.example"
@@ -50,9 +51,27 @@ def xdg_config_home(*, environ: dict[str, str] | None = None) -> Path:
     return Path.home() / ".config"
 
 
+def xdg_data_home(*, environ: dict[str, str] | None = None) -> Path:
+    """Return ``$XDG_DATA_HOME`` or the Unix default ``~/.local/share``."""
+    env = environ if environ is not None else os.environ
+    raw = (env.get("XDG_DATA_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".local" / "share"
+
+
 def config_dir(*, environ: dict[str, str] | None = None) -> Path:
     """Return ``$XDG_CONFIG_HOME/bunnify`` or ``~/.config/bunnify``."""
     return xdg_config_home(environ=environ) / "bunnify"
+
+
+def data_dir(*, environ: dict[str, str] | None = None) -> Path:
+    """Return Bunnify's writable data directory, honoring ``BUNNIFY_DATA_DIR``."""
+    env = environ if environ is not None else os.environ
+    override = (env.get(DATA_DIR_ENV_VAR) or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return xdg_data_home(environ=env) / "bunnify"
 
 
 def env_file_path(*, environ: dict[str, str] | None = None) -> Path:
@@ -148,7 +167,7 @@ def read_env_value(path: Path, key: str) -> str | None:
 
 def run_dir(*, environ: dict[str, str] | None = None) -> Path:
     """Return the XDG directory used for managed server PID and port files."""
-    return config_dir(environ=environ) / "run"
+    return data_dir(environ=environ) / "run"
 
 
 def save_preferences(

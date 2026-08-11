@@ -123,6 +123,7 @@ jobs:
       run: |
         shellcheck scripts/bunnify-server
         shellcheck test_integration
+        shellcheck test_packaging
         if [ -d scripts ]; then find scripts -type f | xargs shellcheck; fi
 
   test:
@@ -166,6 +167,11 @@ jobs:
       run: |
         chmod +x ./test_integration
         ./test_integration
+
+    - name: Run installed-wheel packaging smoke
+      run: |
+        chmod +x ./test_packaging
+        ./test_packaging
   secret-scan:
     name: Secret Scan
     needs: guard

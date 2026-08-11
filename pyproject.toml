@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 bunnify = "app.cli:main"
+bunnify-server = "app.server_cli:main"
 
 [build-system]
 requires = ["hatchling"]

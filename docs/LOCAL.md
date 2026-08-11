@@ -1,11 +1,15 @@
 # Local and remote server setup
 
-Run the interactive setup from a development checkout:
+Run the interactive setup after installing with pipx:
 
 ```bash
-./scripts/bunnify setup
-# equivalent: ./scripts/bunnify --setup
+bunnify setup
+# equivalent: bunnify --setup
 ```
+
+In a development checkout, `./scripts/bunnify` and
+`./scripts/bunnify-server` are thin `uv` wrappers around the same installed
+entry points.
 
 Setup defaults to **local** mode. It creates the user bookmarks file when
 needed, starts a managed server, verifies `/health`, and records the selected
@@ -29,19 +33,21 @@ server override that is not persisted.
 ## Manual local workflow
 
 ```bash
-mkdir -p ~/.config/bunnify/run
-./scripts/bunnify-server \
+mkdir -p ~/.local/share/bunnify/run
+bunnify-server \
   --port 8000 \
-  --pid-dir ~/.config/bunnify/run \
+  --pid-dir ~/.local/share/bunnify/run \
   --noninteractive
 
 curl --max-time 2 http://127.0.0.1:8000/health
 
-./scripts/bunnify-server --stop --pid-dir ~/.config/bunnify/run
+bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 ```
 
 If port 8000 belongs to another service, use `--port 0`; the chosen port is
-written to `~/.config/bunnify/run/.bunnify.port`.
+written to `~/.local/share/bunnify/run/.bunnify.port`. Set
+`BUNNIFY_DATA_DIR` to relocate the SQLite database, logs, and managed runtime
+files together.
 
 ## macOS LaunchAgent
 
@@ -64,10 +70,9 @@ example when needed. Confirm that port 8000 is free before loading the agent.
 
 ## Troubleshooting
 
-- `scripts/bunnify-server` missing: managed local mode is not packaged in the
-  CLI wheel yet; run from a development checkout.
-- Health check fails: inspect `/tmp/bunnify.log` and
-  `/tmp/bunnify_startup.log`, then retry `bunnify setup`.
+- Health check fails: inspect
+  `~/.local/share/bunnify/bunnify.log` and the managed run directory's
+  `bunnify-startup.log`, then retry `bunnify setup`.
 - Port occupied: stop that service or accept the interactive retry to choose an
   ephemeral port. Noninteractive mode never kills an unrelated process.
 - Stale managed process: run the manual `--stop --pid-dir` command above and

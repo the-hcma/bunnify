@@ -36,6 +36,7 @@ run "$uv_cmd run pyright --warnings"
 if command -v shellcheck >/dev/null 2>&1; then
     run "shellcheck scripts/bunnify-server"
     run "shellcheck test_integration"
+    run "shellcheck test_packaging"
     if [ -d scripts ]; then
         run "find scripts -type f | xargs shellcheck"
     fi
@@ -49,6 +50,8 @@ fi
 # Django checks and unit tests
 run "$uv_cmd run python manage.py check"
 run "./test_bunnify"
+echo "⏳ Running installed-wheel packaging smoke (timeout 180s)"
+run "chmod +x ./test_packaging && timeout 180 ./test_packaging"
 
 if [ "$skip_integration" != "true" ]; then
     echo "⏳ Running integration script (timeout 120s)"
