@@ -658,6 +658,29 @@ class ConfigUnitTests(TestCase):
                 "http://from-file:9000",
             )
 
+    def test_resolve_uses_legacy_env_when_xdg_file_is_missing(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import resolve_base_url, write_base_url_to_env_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / "checkout" / "bunnify.env"
+            write_base_url_to_env_file(legacy, "http://from-legacy:9000")
+
+            with patch(
+                "app.config.legacy_env_file_path",
+                return_value=legacy,
+            ):
+                self.assertEqual(
+                    resolve_base_url(
+                        environ={"XDG_CONFIG_HOME": str(root / "xdg")},
+                        persist=False,
+                    ),
+                    "http://from-legacy:9000",
+                )
+
     def test_prompt_persists_env_file(self) -> None:
         import tempfile
         from pathlib import Path
