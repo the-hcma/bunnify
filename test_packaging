@@ -7,7 +7,6 @@ build_dir="$temp_root/dist"
 venv_dir="$temp_root/venv"
 outside_dir="$temp_root/outside"
 pid_dir="$temp_root/run"
-bookmarks_file="$temp_root/bookmarks.json"
 log_file="$temp_root/bunnify.log"
 
 cleanup() {
@@ -19,7 +18,6 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$build_dir" "$outside_dir" "$pid_dir"
-cp "$repo_root/bunnify.json.example" "$bookmarks_file"
 
 echo "📦 Building wheel..."
 timeout 120 uv build --wheel --out-dir "$build_dir"
@@ -37,6 +35,7 @@ bin_dir="$venv_dir/bin"
 
 cd "$outside_dir"
 export BUNNIFY_DATA_DIR="$temp_root/data"
+export XDG_CONFIG_HOME="$temp_root/config"
 
 "$bin_dir/bunnify" --help >/dev/null
 "$bin_dir/bunnify" --version
@@ -45,11 +44,17 @@ export BUNNIFY_DATA_DIR="$temp_root/data"
 
 echo "🐰 Starting installed server outside the repository..."
 "$bin_dir/bunnify-server" \
-    --bookmarks "$bookmarks_file" \
     --log-file "$log_file" \
     --noninteractive \
     --pid-dir "$pid_dir" \
     --port 0
+
+if [[ ! -s "$XDG_CONFIG_HOME/bunnify/bookmarks.json" ]]; then
+    echo "Installed server did not seed the packaged bookmarks example" >&2
+    exit 1
+fi
+"$venv_dir/bin/python" -m json.tool \
+    "$XDG_CONFIG_HOME/bunnify/bookmarks.json" >/dev/null
 
 port_file="$pid_dir/.bunnify.port"
 for _ in {1..100}; do
