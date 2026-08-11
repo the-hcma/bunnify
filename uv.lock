@@ -52,7 +52,7 @@ requires-dist = [
     { name = "packaging", specifier = "==26.2" },
     { name = "pathspec", specifier = "==1.1.1" },
     { name = "platformdirs", specifier = ">=4.11.0" },
-    { name = "prompt-toolkit", specifier = ">=3.0.52" },
+    { name = "prompt-toolkit", specifier = ">=3.0.53" },
     { name = "rpds-py", specifier = ">=2026.6.3" },
     { name = "typing-extensions", specifier = "==4.16.0" },
 ]
