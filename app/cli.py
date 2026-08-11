@@ -21,7 +21,7 @@ from app.client import (
     fetch_suggestions,
     resolve_shortcut,
 )
-from app.config import ENV_VAR, env_file_path, resolve_base_url
+from app.config import ENV_VAR, resolve_base_url
 from app.github_complete import (
     bootstrap_github_completion_cache,
     ensure_github_authenticated,
@@ -468,7 +468,8 @@ def _run(
     default=None,
     help=(
         "Base URL of the local Bunnify server. "
-        f"Falls back to {ENV_VAR} / bunnify.env; prompts and persists if unset."
+        f"Falls back to {ENV_VAR}, ~/.config/bunnify/config.env, then legacy "
+        "bunnify.env; prompts and persists to the XDG config if unset."
     ),
 )
 @click.option(
@@ -525,7 +526,10 @@ def _run(
     "--env-file",
     type=click.Path(path_type=Path),
     default=None,
-    help="Path to bunnify.env (default: repo-root bunnify.env).",
+    help=(
+        "Path to the environment file (default: ~/.config/bunnify/config.env, "
+        "XDG-aware; legacy repo-root bunnify.env is a fallback)."
+    ),
 )
 def main(
     shortcut_args: tuple[str, ...],
@@ -568,7 +572,7 @@ def main(
         resolved_url = resolve_base_url(
             cli_value=base_url_option,
             persist=base_url_option is None,
-            env_path=env_file or env_file_path(),
+            env_path=env_file,
             prompt_fn=lambda message: click.prompt(
                 message.rstrip(": "),
                 default="",

@@ -528,6 +528,99 @@ class CliUnitTests(TestCase):
 
 
 class ConfigUnitTests(TestCase):
+    def test_config_dir_respects_xdg_config_home(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import config_dir
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                config_dir(environ={"XDG_CONFIG_HOME": tmp}),
+                Path(tmp) / "bunnify",
+            )
+
+    def test_default_env_file_under_xdg_resolves_base_url(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import (
+            env_file_path,
+            resolve_base_url,
+            write_base_url_to_env_file,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            environ = {"XDG_CONFIG_HOME": tmp}
+            path = Path(tmp) / "bunnify" / "config.env"
+            self.assertEqual(env_file_path(environ=environ), path)
+            write_base_url_to_env_file(path, "http://from-xdg:9000")
+            self.assertEqual(
+                resolve_base_url(environ=environ, persist=False),
+                "http://from-xdg:9000",
+            )
+
+    def test_ensure_user_bookmarks_copies_legacy_noninteractive(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / "legacy.json"
+            target = root / "config" / "bookmarks.json"
+            legacy.write_text('{"legacy": true}\n', encoding="utf-8")
+
+            result = ensure_user_bookmarks(
+                dest=target,
+                legacy=legacy,
+                allow_prompt=False,
+            )
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.read_bytes(), legacy.read_bytes())
+
+    def test_ensure_user_bookmarks_seeds_without_legacy(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "config" / "bookmarks.json"
+            with patch(
+                "app.config.example_bookmarks_bytes",
+                return_value=b'{"example": true}\n',
+            ):
+                result = ensure_user_bookmarks(
+                    dest=target,
+                    legacy=root / "missing.json",
+                    allow_prompt=False,
+                )
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.read_bytes(), b'{"example": true}\n')
+
+    def test_seed_bookmarks_does_not_overwrite(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import seed_bookmarks_from_example
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "bookmarks.json"
+            target.write_text('{"personal": true}\n', encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                seed_bookmarks_from_example(target)
+
+            self.assertEqual(
+                target.read_text(encoding="utf-8"),
+                '{"personal": true}\n',
+            )
+
     def test_resolve_prefers_cli_then_env_then_file(self) -> None:
         import tempfile
         from pathlib import Path
