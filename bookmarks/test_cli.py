@@ -684,14 +684,12 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.env"
             bookmarks = Path(tmp) / "bookmarks.json"
-            save_preferences(
-                ServerPreferences(
-                    mode="remote",
-                    base_url="https://unavailable.example",
-                    local_port=None,
-                ),
-                env_path=path,
+            remote_preferences = ServerPreferences(
+                mode="remote",
+                base_url="https://unavailable.example",
+                local_port=None,
             )
+            save_preferences(remote_preferences, env_path=path)
             with (
                 patch("app.cli.check_health", side_effect=[False, True]),
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
@@ -710,10 +708,7 @@ class ConfigUnitTests(TestCase):
 
             self.assertEqual(result, "http://127.0.0.1:8123")
             preferences = load_preferences(environ={}, env_path=path)
-            self.assertIsNotNone(preferences)
-            assert preferences is not None
-            self.assertEqual(preferences.mode, "local")
-            self.assertEqual(preferences.local_port, 8123)
+            self.assertEqual(preferences, remote_preferences)
 
     def test_ensure_ready_base_url_uses_legacy_remote_url(self) -> None:
         import tempfile

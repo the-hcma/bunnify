@@ -99,6 +99,7 @@ def ensure_ready_base_url(
             )
         return DEFAULT_BASE_URL
 
+    persist_local_preferences = preferences.mode == "local"
     if preferences.mode == "remote":
         if not preferences.base_url:
             raise ClientError("Remote mode requires BUNNIFY_BASE_URL")
@@ -113,7 +114,7 @@ def ensure_ready_base_url(
             )
         log(f"Cannot reach a healthy Bunnify server at {preferences.base_url}")
         try:
-            answer = ask("Use the managed local server instead? [Y/n]: ")
+            answer = ask("Use the managed local server for this run instead? [Y/n]: ")
         except EOFError as exc:
             raise ClientError("Connection aborted") from exc
         if answer.strip().lower() in {"n", "no"}:
@@ -161,7 +162,9 @@ def ensure_ready_base_url(
             ):
                 raise ClientError(message)
             continue
-        if actual_port != preferences.local_port or base_url != preferences.base_url:
+        if persist_local_preferences and (
+            actual_port != preferences.local_port or base_url != preferences.base_url
+        ):
             path = env_path if env_path is not None else env_file_path(environ=environ)
             save_preferences(
                 ServerPreferences(

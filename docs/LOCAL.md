@@ -11,8 +11,8 @@ Setup defaults to **local** mode. It creates the user bookmarks file when
 needed, starts a managed server, verifies `/health`, and records the selected
 port. Remote mode prompts for a URL and saves it only after its `/health`
 response is HTTP 200 with body `ok`. If a configured remote server later
-becomes unavailable, the interactive CLI offers to start and switch to the
-managed local server.
+becomes unavailable, the interactive CLI offers to use the managed local
+server for that run without replacing the saved remote preference.
 
 Verified settings are stored in `~/.config/bunnify/config.env` (or
 `$XDG_CONFIG_HOME/bunnify/config.env`):
