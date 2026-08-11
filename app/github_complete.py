@@ -23,11 +23,11 @@ _DEFAULT_TIMEOUT_SECONDS = 8.0
 _GH_TOKEN_TIMEOUT_SECONDS = 8.0
 _GH_LOGIN_TIMEOUT_SECONDS = 600.0
 _PERSIST_VERSION = 1
-_REPO_PARAM_NAMES = frozenset({"repo", "repository", "org_repo"})
+_REPO_PARAM_NAMES = frozenset({"org_repo", "repo", "repository"})
 _PR_PARAM_NAMES = frozenset(
-    {"pr_number", "pr_id", "pr", "pull", "pull_number", "number"}
+    {"number", "pr", "pr_id", "pr_number", "pull", "pull_number"}
 )
-_ISSUE_PARAM_NAMES = frozenset({"issue_number", "issue_id", "issue", "issue_num"})
+_ISSUE_PARAM_NAMES = frozenset({"issue", "issue_id", "issue_num", "issue_number"})
 _API_ROOT = "https://api.github.com"
 _UNSET = object()
 
