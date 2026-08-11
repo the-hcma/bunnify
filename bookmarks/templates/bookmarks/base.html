@@ -52,6 +52,11 @@
         nav a:hover {
             background-color: #ecf0f1;
         }
+        .build-info {
+            color: #aeb6bf;
+            font-size: 0.75rem;
+            margin-top: auto;
+        }
         .content {
             margin-left: 200px;
             flex: 1;
@@ -80,6 +85,9 @@
             <a href="/">Home</a>
             <a href="/list/">All Bookmarks</a>
         </nav>
+        {% if build_info %}
+            <footer class="build-info">{{ build_info }}</footer>
+        {% endif %}
     </header>
     <div class="content">
         {% block content %}{% endblock %}

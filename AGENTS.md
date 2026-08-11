@@ -90,7 +90,7 @@ The **primary clone** (repo root — first entry in `git worktree list`, usually
 ## Shell Scripts
 
  - Do not use `.sh` extensions for shell script files.
- - **`shellcheck`** is strongly recommended for all shell scripts.
+ - **`shellcheck`** is **required** for all shell scripts (local `scripts/checks` and CI both fail if it is missing or reports issues).
  - Non-exported variables must be lowercase; only exported environment variables should be UPPERCASE.
  - Use `local` for all function-scoped variables in bash scripts and prefer `readonly` for values that must not change.
  - Prefer long, verbose command-line arguments (e.g. `curl --silent` over `curl -s`) when composing shell scripts, as they are intrinsically self-documenting.
@@ -143,7 +143,7 @@ No PR may be merged if the above commands fail.
 
 - **Run the unified preflight script:** Prefer using `scripts/checks` which runs formatting, linters, unit tests and (optionally) integration tests with sensible timeouts.
 - **Formatting & linting:** `uv run ruff check .`, `uv run ruff format --check .`, and `uv run pyright --warnings` must pass locally before creating a PR.
-- **Shell linting:** Run `shellcheck scripts/bunnify-server test_integration scripts/*` and ensure there are no new errors or warnings.
+- **Shell linting:** `shellcheck` must be installed locally. `scripts/checks` runs `.github/ci/shellcheck` (same targets as CI) and **fails** if shellcheck is missing.
 - **Unit tests:** Run `./test_bunnify` and ensure all tests pass.
 - **Integration tests (required pre-PR):** Run `./test_integration` — this script uses OS-chosen ephemeral ports when passed `--port 0` and includes explicit timeouts; run it locally to validate end-to-end behavior.
 - **Parallelization guidance:** When possible, run formatting and static checks in parallel to reduce feedback time (our CI runs `ruff check`, `ruff format --check`, and `pyright` in a separate job from shellcheck and tests). Locally, `scripts/checks` can be used as a single-entrypoint; CI runs jobs in parallel automatically.

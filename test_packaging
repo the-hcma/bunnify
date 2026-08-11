@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+temp_root="$(mktemp -d)"
+build_dir="$temp_root/dist"
+venv_dir="$temp_root/venv"
+outside_dir="$temp_root/outside"
+home_dir="$temp_root/home"
+pid_dir="$temp_root/run"
+log_file="$temp_root/bunnify.log"
+
+cleanup() {
+    if [[ -x "${bin_dir:-}/bunnify-server" ]]; then
+        "${bin_dir}/bunnify-server" --stop --pid-dir "$pid_dir" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$temp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$build_dir" "$home_dir" "$outside_dir" "$pid_dir"
+
+echo "📦 Building wheel..."
+timeout 120 uv build --wheel --out-dir "$build_dir"
+wheels=("$build_dir"/*.whl)
+wheel_path="${wheels[0]}"
+if [[ ! -f "$wheel_path" ]]; then
+    echo "No wheel produced under $build_dir" >&2
+    exit 1
+fi
+
+echo "📦 Installing wheel into an isolated virtual environment..."
+timeout 120 uv venv --python 3.14 "$venv_dir"
+timeout 120 uv pip install --python "$venv_dir/bin/python" "$wheel_path"
+bin_dir="$venv_dir/bin"
+
+cd "$outside_dir"
+export BUNNIFY_DATA_DIR="$temp_root/data"
+export HOME="$home_dir"
+export XDG_CONFIG_HOME="$temp_root/config"
+
+"$bin_dir/bunnify" --help >/dev/null
+"$bin_dir/bunnify" --version
+"$bin_dir/bunnify-server" --help >/dev/null
+"$bin_dir/bunnify-server" --version
+
+echo "🐰 Starting installed server outside the repository..."
+"$bin_dir/bunnify-server" \
+    --log-file "$log_file" \
+    --noninteractive \
+    --pid-dir "$pid_dir" \
+    --port 0
+
+if [[ ! -s "$XDG_CONFIG_HOME/bunnify/bookmarks.json" ]]; then
+    echo "Installed server did not seed the packaged bookmarks example" >&2
+    exit 1
+fi
+"$venv_dir/bin/python" -m json.tool \
+    "$XDG_CONFIG_HOME/bunnify/bookmarks.json" >/dev/null
+
+port_file="$pid_dir/.bunnify.port"
+for _ in {1..100}; do
+    if [[ -s "$port_file" ]]; then
+        port="$(<"$port_file")"
+        if health="$(curl --fail --silent --max-time 2 "http://127.0.0.1:$port/health")" \
+            && [[ "$health" == "ok" ]]; then
+            break
+        fi
+    fi
+    sleep 0.1
+done
+
+if [[ "${health:-}" != "ok" ]]; then
+    echo "Installed server did not pass /health" >&2
+    if [[ -f "$log_file" ]]; then
+        cat "$log_file" >&2
+    fi
+    exit 1
+fi
+
+"$bin_dir/bunnify-server" --stop --pid-dir "$pid_dir"
+echo "✅ Installed wheel packaging smoke passed"

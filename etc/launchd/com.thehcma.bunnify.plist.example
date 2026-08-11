@@ -8,13 +8,13 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>__REPOSITORY_ROOT__/scripts/bunnify-server</string>
+    <string>__BUNNIFY_SERVER__</string>
     <string>--foreground</string>
     <string>--noninteractive</string>
     <string>--port</string>
     <string>8000</string>
     <string>--pid-dir</string>
-    <string>__HOME__/.config/bunnify/run</string>
+    <string>__HOME__/.local/share/bunnify/run/launchd</string>
   </array>
 
   <key>KeepAlive</key>

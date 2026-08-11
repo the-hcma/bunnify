@@ -120,10 +120,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y shellcheck
 
     - name: Lint bash scripts with shellcheck
-      run: |
-        shellcheck scripts/bunnify-server
-        shellcheck test_integration
-        if [ -d scripts ]; then find scripts -type f | xargs shellcheck; fi
+      run: bash .github/ci/shellcheck
 
   test:
     name: Tests & validations
@@ -166,6 +163,11 @@ jobs:
       run: |
         chmod +x ./test_integration
         ./test_integration
+
+    - name: Run installed-wheel packaging smoke
+      run: |
+        chmod +x ./test_packaging
+        ./test_packaging
   secret-scan:
     name: Secret Scan
     needs: guard

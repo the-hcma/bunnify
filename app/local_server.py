@@ -1,14 +1,14 @@
-"""Start and stop the checkout-provided Bunnify server for the CLI."""
+"""Start and stop the installed Bunnify server for the CLI."""
 
 from __future__ import annotations
 
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 from app.client import check_health
-from app.config import repo_root
 
 
 def ensure_local_server(
@@ -34,21 +34,15 @@ def ensure_local_server(
         if check_health(base_url):
             return base_url, selected_port
 
-    script = find_bunnify_server_script()
-    if script is None:
-        raise RuntimeError(
-            "Cannot start a local Bunnify server: scripts/bunnify-server was not "
-            "found or is not executable. Local managed mode currently requires "
-            "a development checkout."
-        )
-
     pid_dir.mkdir(parents=True, exist_ok=True)
     port_file = pid_dir / ".bunnify.port"
     if selected_port == 0:
         port_file.unlink(missing_ok=True)
 
     command = [
-        str(script),
+        sys.executable,
+        "-m",
+        "app.server_cli",
         "--port",
         str(selected_port),
         "--pid-dir",
@@ -99,22 +93,17 @@ def ensure_local_server(
     )
 
 
-def find_bunnify_server_script() -> Path | None:
-    """Return the executable development-checkout server script, if available."""
-    script = repo_root() / "scripts" / "bunnify-server"
-    return script if script.is_file() and script.stat().st_mode & 0o111 else None
-
-
 def stop_local_server(pid_dir: Path) -> None:
     """Stop the managed local server associated with ``pid_dir``."""
-    script = find_bunnify_server_script()
-    if script is None:
-        raise RuntimeError(
-            "Cannot stop the local Bunnify server: scripts/bunnify-server was "
-            "not found or is not executable."
-        )
     completed = subprocess.run(
-        [str(script), "--stop", "--pid-dir", str(pid_dir)],
+        [
+            sys.executable,
+            "-m",
+            "app.server_cli",
+            "--stop",
+            "--pid-dir",
+            str(pid_dir),
+        ],
         capture_output=True,
         check=False,
         text=True,

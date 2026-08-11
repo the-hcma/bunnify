@@ -15,12 +15,16 @@ from django.shortcuts import redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
+from app.version import build_info
+
 from .keys_catalog import catalog_payload
 from .models import Bookmark
 from .resolve import PLACEHOLDER_PATTERN, resolve_query, substitute_placeholder_values
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
+
+BUILD_INFO = build_info()
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -43,6 +47,11 @@ def _absolute_resolve_url(request: HttpRequest, url: str) -> str:
     script_prefix = request.path.removesuffix(request.path_info).rstrip("/")
     absolute_url = request.build_absolute_uri(f"{script_prefix}/{url.lstrip('/')}")
     return absolute_url if absolute_url is not None else url
+
+
+def _build_info_context() -> dict[str, str]:
+    """Return template context describing this Bunnify build."""
+    return {"build_info": BUILD_INFO}
 
 
 @require_http_methods(["GET"])
@@ -147,7 +156,12 @@ def list_bookmarks(request: HttpRequest) -> HttpResponse:
         bookmarks_with_params.append({"bookmark": bookmark, "params": placeholders})
 
     return render(
-        request, "bookmarks/list.html", {"bookmarks_with_params": bookmarks_with_params}
+        request,
+        "bookmarks/list.html",
+        {
+            **_build_info_context(),
+            "bookmarks_with_params": bookmarks_with_params,
+        },
     )
 
 
@@ -186,7 +200,7 @@ def index(request: HttpRequest) -> HttpResponse:
     Home page with instructions
     """
     logger.debug("Index page request")
-    return render(request, "bookmarks/index.html")
+    return render(request, "bookmarks/index.html", _build_info_context())
 
 
 @require_http_methods(["GET"])

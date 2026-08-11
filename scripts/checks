@@ -32,23 +32,20 @@ run "$uv_cmd run ruff check ."
 run "$uv_cmd run ruff format --check ."
 run "$uv_cmd run pyright --warnings"
 
-# Shell linting (only when shellcheck is available)
-if command -v shellcheck >/dev/null 2>&1; then
-    run "shellcheck scripts/bunnify-server"
-    run "shellcheck test_integration"
-    if [ -d scripts ]; then
-        run "find scripts -type f | xargs shellcheck"
-    fi
-    if [ -f etc/bunnify-completion ]; then
-        run "shellcheck etc/bunnify-completion"
-    fi
-else
-    echo "⚠️  shellcheck not installed — skipping shell lint"
+# Shell linting (required — same gate as CI lint-shell)
+if ! command -v shellcheck >/dev/null 2>&1; then
+    echo "❌ shellcheck is required but not installed." >&2
+    echo "   Install it, then re-run: brew install shellcheck   # macOS" >&2
+    echo "                           apt-get install shellcheck # Debian/Ubuntu" >&2
+    exit 1
 fi
+run "bash .github/ci/shellcheck"
 
 # Django checks and unit tests
 run "$uv_cmd run python manage.py check"
 run "./test_bunnify"
+echo "⏳ Running installed-wheel packaging smoke (timeout 180s)"
+run "chmod +x ./test_packaging && timeout 180 ./test_packaging"
 
 if [ "$skip_integration" != "true" ]; then
     echo "⏳ Running integration script (timeout 120s)"
