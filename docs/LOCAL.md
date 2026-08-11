@@ -31,7 +31,6 @@ mkdir -p ~/.config/bunnify/run
 ./scripts/bunnify-server \
   --port 8000 \
   --pid-dir ~/.config/bunnify/run \
-  --bookmarks ~/.config/bunnify/bookmarks.json \
   --noninteractive
 
 curl --max-time 2 http://127.0.0.1:8000/health
@@ -57,7 +56,9 @@ launchctl kickstart -k "gui/$(id -u)/com.thehcma.bunnify"
 launchctl bootout "gui/$(id -u)/com.thehcma.bunnify"
 ```
 
-The template runs the server in the foreground with `KeepAlive` enabled.
+The template runs the server in the foreground with `KeepAlive` enabled. It
+uses the default user bookmarks path, seeding the file from the packaged
+example when needed. Confirm that port 8000 is free before loading the agent.
 
 ## Troubleshooting
 

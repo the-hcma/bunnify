@@ -15,8 +15,6 @@
     <string>8000</string>
     <string>--pid-dir</string>
     <string>__HOME__/.config/bunnify/run</string>
-    <string>--bookmarks</string>
-    <string>__HOME__/.config/bunnify/bookmarks.json</string>
   </array>
 
   <key>KeepAlive</key>
