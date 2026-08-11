@@ -23,10 +23,11 @@ _DEFAULT_TIMEOUT_SECONDS = 8.0
 _GH_TOKEN_TIMEOUT_SECONDS = 8.0
 _GH_LOGIN_TIMEOUT_SECONDS = 600.0
 _PERSIST_VERSION = 1
-_REPO_PARAM_NAMES = frozenset({"repo", "repository", "org_repo"})
+_REPO_PARAM_NAMES = frozenset({"org_repo", "repo", "repository"})
 _PR_PARAM_NAMES = frozenset(
-    {"pr_number", "pr_id", "pr", "pull", "pull_number", "number"}
+    {"number", "pr", "pr_id", "pr_number", "pull", "pull_number"}
 )
+_ISSUE_PARAM_NAMES = frozenset({"issue", "issue_id", "issue_num", "issue_number"})
 _API_ROOT = "https://api.github.com"
 _UNSET = object()
 
@@ -168,8 +169,8 @@ def load_github_completion_cache(
         for key, values in entries.items():
             if not isinstance(key, str) or not isinstance(values, list):
                 continue
-            # PR lists are session-volatile; never restore them from disk.
-            if key.startswith("prs:"):
+            # PR/issue lists are session-volatile; never restore them from disk.
+            if key.startswith(("prs:", "issues:")):
                 continue
             names = [item for item in values if isinstance(item, str)]
             _cache[key] = (time.monotonic() + _CACHE_TTL_SECONDS, names)
@@ -183,7 +184,7 @@ def save_github_completion_cache(
 ) -> Path | None:
     """Persist org/repo completion snapshot under ``~/scratch/bunnify/``."""
     cache_path = path if path is not None else default_github_completion_cache_path()
-    # Only orgs/repos belong on disk; PR numbers go stale across sessions.
+    # Only orgs/repos belong on disk; PR/issue numbers go stale across sessions.
     snapshot = {
         key: values
         for key, values in _cache_snapshot().items()
@@ -515,6 +516,56 @@ def list_open_pull_requests(
     return [num for num in cached if num.startswith(needle)]
 
 
+def list_open_issues(
+    repo: str,
+    *,
+    prefix: str = "",
+    limit: int = 50,
+    token: str | None = None,
+    opener: Any | None = None,
+    runner: GhRunner | None = None,
+) -> list[str]:
+    """List open issue numbers (as strings) for ``owner/name`` (excludes PRs)."""
+    if not repo or "/" not in repo:
+        return []
+    owner, name = repo.split("/", 1)
+    if not owner or not name:
+        return []
+    cache_key = f"issues:{repo}:{limit}"
+    cached = _cache_get(cache_key)
+    if cached is None:
+        per_page = min(max(limit, 1), 100)
+        payload = _github_get_json(
+            f"/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(name)}/issues",
+            query={
+                "state": "open",
+                "per_page": str(per_page),
+                "sort": "updated",
+                "direction": "desc",
+            },
+            token=token,
+            opener=opener,
+            runner=runner,
+        )
+        if payload is None:
+            return []
+        numbers: list[str] = []
+        if isinstance(payload, list):
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                # The issues endpoint also returns PRs; skip those.
+                if "pull_request" in item:
+                    continue
+                if isinstance(item.get("number"), int):
+                    numbers.append(str(item["number"]))
+        cached = numbers[:limit]
+        _cache_set(cache_key, cached)
+
+    needle = prefix.lower()
+    return [num for num in cached if num.startswith(needle)]
+
+
 def resolve_repo_for_pr(
     *,
     url_template: str,
@@ -732,6 +783,14 @@ def suggest_param_values(
         if full_repo is None:
             return []
         return list_open_pull_requests(
+            full_repo, prefix=prefix, token=token, opener=opener, runner=runner
+        )
+    if name in _ISSUE_PARAM_NAMES:
+        repo_token = filled_args[-1] if filled_args else ""
+        full_repo = resolve_repo_for_pr(url_template=url_template, repo_arg=repo_token)
+        if full_repo is None:
+            return []
+        return list_open_issues(
             full_repo, prefix=prefix, token=token, opener=opener, runner=runner
         )
     return []

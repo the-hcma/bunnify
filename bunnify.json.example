@@ -23,6 +23,18 @@
     "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
     "url": "https://github.com/#{repo}/pull/#{pr_number}"
   },
+  "i": {
+    "description": "GitHub Issue (Usage: i <org/repo> <issue_number>)",
+    "url": "https://github.com/#{repo}/issues/#{issue_number}"
+  },
+  "ih": {
+    "description": "the-hcma GitHub Issues (Usage: ih <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/issues"
+  },
+  "ihh": {
+    "description": "thehcma GitHub Issues (Usage: ihh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}/issues"
+  },
   "rpr": {
     "description": "Request Copilot review for PR",
     "url": "http://127.0.0.1:8000/review-pr/?pr=#{pr_id}"
