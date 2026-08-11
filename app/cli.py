@@ -142,10 +142,11 @@ def ensure_ready_base_url(
             allow_prompt=interactive,
             print_fn=log,
         )
+    preferred_port = preferences.local_port
     while True:
         try:
             base_url, actual_port = ensure_local_server(
-                port=preferences.local_port,
+                port=preferred_port,
                 pid_dir=run_dir(environ=environ),
                 bookmarks=bookmarks,
             )
@@ -154,6 +155,7 @@ def ensure_ready_base_url(
                 ask, f"Local server failed: {exc}\nRetry? [Y/n]: "
             ):
                 raise ClientError(str(exc)) from exc
+            preferred_port = None
             continue
         if not check_health(base_url):
             message = f"Local server health check failed for {base_url}"
@@ -271,6 +273,7 @@ def run_setup(
                 )
             except (OSError, RuntimeError, ValueError) as exc:
                 if _retry_requested(ask, f"Local server failed: {exc}\nRetry? [Y/n]: "):
+                    preferred_port = None
                     continue
                 raise ClientError("Setup aborted; settings were not changed") from exc
             if check_health(base_url):

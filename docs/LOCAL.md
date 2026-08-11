@@ -68,7 +68,7 @@ example when needed. Confirm that port 8000 is free before loading the agent.
   CLI wheel yet; run from a development checkout.
 - Health check fails: inspect `/tmp/bunnify.log` and
   `/tmp/bunnify_startup.log`, then retry `bunnify setup`.
-- Port occupied: stop that service or choose an unused port. Noninteractive
-  mode never kills an unrelated process.
+- Port occupied: stop that service or accept the interactive retry to choose an
+  ephemeral port. Noninteractive mode never kills an unrelated process.
 - Stale managed process: run the manual `--stop --pid-dir` command above and
   rerun setup.

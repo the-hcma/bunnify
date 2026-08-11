@@ -710,6 +710,57 @@ class ConfigUnitTests(TestCase):
             preferences = load_preferences(environ={}, env_path=path)
             self.assertEqual(preferences, remote_preferences)
 
+    def test_ensure_ready_base_url_retries_with_ephemeral_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.config import (
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    side_effect=[
+                        RuntimeError("port unavailable"),
+                        ("http://127.0.0.1:9123", 9123),
+                    ],
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+            ):
+                result = ensure_ready_base_url(
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    prompt_fn=lambda _message: "",
+                    allow_prompt=True,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:9123")
+            self.assertEqual(
+                [call.kwargs["port"] for call in ensure_server.call_args_list],
+                [8123, None],
+            )
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 9123)
+
     def test_ensure_ready_base_url_uses_legacy_remote_url(self) -> None:
         import tempfile
         from pathlib import Path
@@ -948,6 +999,57 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.mode, "local")
             self.assertEqual(preferences.local_port, 8123)
+
+    def test_setup_local_retry_uses_ephemeral_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            responses = iter(["local", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    side_effect=[
+                        RuntimeError("port unavailable"),
+                        ("http://127.0.0.1:9123", 9123),
+                    ],
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:9123")
+            self.assertEqual(
+                [call.kwargs["port"] for call in ensure_server.call_args_list],
+                [8123, None],
+            )
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 9123)
 
     def test_setup_remote_persists_verified_url(self) -> None:
         import tempfile
