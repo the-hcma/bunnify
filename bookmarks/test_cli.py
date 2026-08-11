@@ -626,6 +626,51 @@ class ConfigUnitTests(TestCase):
             self.assertIn("BUNNIFY_BASE_URL=http://127.0.0.1:8765", text)
             self.assertIn("BUNNIFY_LOCAL_PORT=8765", text)
 
+    def test_ensure_ready_base_url_falls_back_from_remote_to_local(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.config import (
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://unavailable.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            with (
+                patch("app.cli.check_health", side_effect=[False, True]),
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8123", 8123),
+                ),
+            ):
+                result = ensure_ready_base_url(
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    prompt_fn=lambda _message: "",
+                    allow_prompt=True,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8123")
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "local")
+            self.assertEqual(preferences.local_port, 8123)
+
     def test_ensure_user_bookmarks_copies_legacy_noninteractive(self) -> None:
         import tempfile
         from pathlib import Path

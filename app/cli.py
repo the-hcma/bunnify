@@ -90,14 +90,40 @@ def ensure_ready_base_url(
     if preferences.mode == "remote":
         if not preferences.base_url:
             raise ClientError("Remote mode requires BUNNIFY_BASE_URL")
-        return _wait_for_healthy_remote(
-            preferences.base_url,
+        if check_health(preferences.base_url):
+            return preferences.base_url
+        if not interactive:
+            return _wait_for_healthy_remote(
+                preferences.base_url,
+                prompt_fn=ask,
+                interactive=False,
+                print_fn=log,
+            )
+        log(f"Cannot reach a healthy Bunnify server at {preferences.base_url}")
+        try:
+            answer = ask("Use the managed local server instead? [Y/n]: ")
+        except EOFError as exc:
+            raise ClientError("Connection aborted") from exc
+        if answer.strip().lower() in {"n", "no"}:
+            return _wait_for_healthy_remote(
+                preferences.base_url,
+                prompt_fn=ask,
+                interactive=True,
+                print_fn=log,
+            )
+        bookmarks = ensure_user_bookmarks(
+            environ=environ,
             prompt_fn=ask,
-            interactive=interactive,
+            allow_prompt=True,
             print_fn=log,
         )
-
-    bookmarks = default_bookmarks_path(environ=environ)
+        preferences = ServerPreferences(
+            mode="local",
+            base_url=None,
+            local_port=None,
+        )
+    else:
+        bookmarks = default_bookmarks_path(environ=environ)
     while True:
         try:
             base_url, actual_port = ensure_local_server(
