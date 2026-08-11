@@ -1,5 +1,7 @@
 from django.test import Client, TestCase
 
+from app.version import build_info
+
 from .models import Bookmark
 
 
@@ -30,6 +32,7 @@ class SmokeTests(TestCase):
         """Test that the index page loads successfully"""
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, build_info())
 
     def test_list_page_loads(self):
         """Test that the list page loads and shows bookmarks"""

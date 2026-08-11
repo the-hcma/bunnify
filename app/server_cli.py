@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from app.client import check_health
 from app.config import data_dir, ensure_user_bookmarks, run_dir
-from app.version import package_version
+from app.version import build_version
 
 LOG_LEVELS = ("CRITICAL", "DEBUG", "ERROR", "INFO", "WARNING")
 
@@ -104,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {package_version()}",
+        version=f"%(prog)s {build_version()}",
     )
     return parser
 
@@ -208,6 +209,20 @@ def _initialize_database(*, bookmarks: Path, noninteractive: bool) -> None:
     call_command("load_bookmarks", file=str(bookmarks), verbosity=0)
 
 
+def _is_bunnify_command(command: str) -> bool:
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return False
+    if not arguments:
+        return False
+
+    if len(arguments) >= 3 and arguments[1:3] == ["-m", "app.server_cli"]:
+        return True
+    executable_names = {Path(argument).name for argument in arguments[:2]}
+    return "bunnify-server" in executable_names
+
+
 def _is_bunnify_process(pid: int) -> bool:
     if not _is_process_running(pid):
         return False
@@ -221,8 +236,7 @@ def _is_bunnify_process(pid: int) -> bool:
         )
     except OSError, subprocess.TimeoutExpired:
         return False
-    command = completed.stdout
-    return "app.server_cli" in command or "bunnify-server" in command
+    return _is_bunnify_command(completed.stdout)
 
 
 def _is_process_running(pid: int) -> bool:

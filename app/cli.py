@@ -52,7 +52,9 @@ from app.interactive import (
 from app.local_server import ensure_local_server
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
-from app.version import package_version
+from app.version import build_info
+
+BUILD_INFO = build_info()
 
 
 def ensure_ready_base_url(
@@ -722,7 +724,11 @@ def _run(
 @click.command(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
-@click.version_option(version=package_version(), prog_name="bunnify")
+@click.version_option(
+    version=BUILD_INFO.removeprefix("bunnify "),
+    prog_name="bunnify",
+    message="%(prog)s %(version)s",
+)
 @click.argument("shortcut_args", nargs=-1)
 @click.option(
     "--base-url",
@@ -831,11 +837,20 @@ def main(
       ./scripts/bunnify --setup
 
     \b
+    Build identity (`version` is a reserved shortcut name):
+      ./scripts/bunnify version
+      ./scripts/bunnify --version
+
+    \b
     Fuzzy pick (fzf) for argv / shell completion workflows:
       ./scripts/bunnify --fzf
       ./scripts/bunnify --list-keys | fzf
       ./scripts/bunnify --list-usage
     """
+    if shortcut_args == ("version",):
+        click.echo(BUILD_INFO)
+        return
+
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))
 
     def prompt_fn(message: str) -> str:

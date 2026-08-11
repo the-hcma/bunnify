@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest import mock
 
@@ -15,8 +16,43 @@ from app import settings
 from app.cli import main as cli_main
 from app.config import data_dir
 from app.local_server import ensure_local_server, stop_local_server
+from app.server_cli import _is_bunnify_command
 from app.server_cli import main as server_main
-from app.version import package_version
+from app.version import build_info, build_version, git_commit, package_version
+
+
+class BuildInfoTests(SimpleTestCase):
+    @mock.patch("app.version.git_commit", return_value="abcdef1")
+    @mock.patch("app.version.package_version", return_value="0.2.3")
+    def test_build_info_formats_version_and_commit(
+        self,
+        _package_version: mock.Mock,
+        _git_commit: mock.Mock,
+    ) -> None:
+        self.assertEqual(build_info(), "bunnify 0.2.3 (commit abcdef1)")
+        self.assertEqual(build_version(), "0.2.3 (commit abcdef1)")
+
+    def test_git_commit_prefers_environment(self) -> None:
+        self.assertEqual(
+            git_commit(environ={"BUNNIFY_GIT_SHA": "abcdef1234567890"}),
+            "abcdef1",
+        )
+
+    def test_package_version_falls_back_to_pyproject(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pyproject_path = Path(temporary_directory) / "pyproject.toml"
+            pyproject_path.write_text(
+                '[project]\nname = "bunnify"\nversion = "1.2.3"\n'
+            )
+
+            with mock.patch(
+                "app.version.version",
+                side_effect=PackageNotFoundError,
+            ):
+                self.assertEqual(
+                    package_version(pyproject_path=pyproject_path),
+                    "1.2.3",
+                )
 
 
 class CliVersionTests(SimpleTestCase):
@@ -24,7 +60,13 @@ class CliVersionTests(SimpleTestCase):
         result = CliRunner().invoke(cli_main, ["--version"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn(package_version(), result.output)
+        self.assertEqual(result.output, f"{build_info()}\n")
+
+    def test_version_command_prints_build_info(self) -> None:
+        result = CliRunner().invoke(cli_main, ["version"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.output, f"{build_info()}\n")
 
 
 class ConfigDataDirTests(SimpleTestCase):
@@ -90,7 +132,24 @@ class ServerCliVersionTests(SimpleTestCase):
             server_main(["--version"])
 
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn(package_version(), output.getvalue())
+        self.assertEqual(output.getvalue(), f"bunnify-server {build_version()}\n")
+
+
+class ServerProcessTests(SimpleTestCase):
+    def test_accepts_bunnify_console_script(self) -> None:
+        self.assertTrue(
+            _is_bunnify_command(
+                "/tmp/venv/bin/python /tmp/venv/bin/bunnify-server --port 8000"
+            )
+        )
+
+    def test_accepts_bunnify_server_module(self) -> None:
+        self.assertTrue(
+            _is_bunnify_command("/tmp/venv/bin/python -m app.server_cli --port 8000")
+        )
+
+    def test_rejects_command_containing_bunnify_name(self) -> None:
+        self.assertFalse(_is_bunnify_command("grep -r bunnify-server ."))
 
 
 class SettingsDataDirTests(SimpleTestCase):

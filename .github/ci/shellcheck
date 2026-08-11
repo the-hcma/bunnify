@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Shared shellcheck gate for local preflight (scripts/checks) and CI.
+set -euo pipefail
+
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "ERROR: shellcheck is required but was not found on PATH." >&2
+  exit 1
+fi
+
+targets=(
+  scripts/bunnify-server
+  test_integration
+  test_packaging
+)
+
+if [ -d scripts ]; then
+  # Portable (no mapfile / assoc arrays): collect script paths.
+  while IFS= read -r path; do
+    targets+=("$path")
+  done < <(find scripts -type f | LC_ALL=C sort)
+fi
+
+if [ -f etc/bunnify-completion ]; then
+  targets+=(etc/bunnify-completion)
+fi
+
+# Deduplicate while preserving order (bunnify-server may appear twice).
+unique=()
+for path in "${targets[@]}"; do
+  already=0
+  for existing in "${unique[@]+"${unique[@]}"}"; do
+    if [ "$existing" = "$path" ]; then
+      already=1
+      break
+    fi
+  done
+  if [ "$already" -eq 0 ]; then
+    unique+=("$path")
+  fi
+done
+
+shellcheck "${unique[@]}"
