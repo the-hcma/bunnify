@@ -7,23 +7,29 @@ import re
 import shutil
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
+from typing import Literal
 
 from app.client import DEFAULT_BASE_URL
 
-ENV_VAR = "BUNNIFY_BASE_URL"
 BOOKMARKS_ENV_VAR = "BUNNIFY_BOOKMARKS"
-ENV_FILE_NAME = "config.env"
-LEGACY_ENV_FILE_NAME = "bunnify.env"
 BOOKMARKS_FILE_NAME = "bookmarks.json"
+ENV_FILE_NAME = "config.env"
+ENV_VAR = "BUNNIFY_BASE_URL"
 EXAMPLE_BOOKMARKS_NAME = "bunnify.json.example"
+LEGACY_ENV_FILE_NAME = "bunnify.env"
 LEGACY_BOOKMARKS_PATH = Path.home() / "work" / "bunnify" / "bunnify.json"
+LOCAL_PORT_ENV_VAR = "BUNNIFY_LOCAL_PORT"
+MODE_ENV_VAR = "BUNNIFY_MODE"
 
-_BASE_URL_LINE = re.compile(
-    rf"^\s*{re.escape(ENV_VAR)}\s*=\s*(.*)$",
-    re.MULTILINE,
-)
+
+@dataclass(frozen=True)
+class ServerPreferences:
+    mode: Literal["local", "remote"]
+    base_url: str
+    local_port: int | None
 
 
 def repo_root() -> Path:
@@ -72,51 +78,110 @@ def legacy_bookmarks_path() -> Path:
     return LEGACY_BOOKMARKS_PATH
 
 
+def load_preferences(
+    *,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+) -> ServerPreferences | None:
+    """Load server preferences from the process environment and XDG config."""
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+
+    def value(key: str) -> str | None:
+        from_environment = (env.get(key) or "").strip()
+        return from_environment or read_env_value(path, key)
+
+    mode_raw = value(MODE_ENV_VAR)
+    base_url_raw = value(ENV_VAR)
+    local_port_raw = value(LOCAL_PORT_ENV_VAR)
+    if not any((mode_raw, base_url_raw, local_port_raw)):
+        return None
+
+    if mode_raw:
+        mode = mode_raw.lower()
+        if mode not in {"local", "remote"}:
+            raise ValueError(f"{MODE_ENV_VAR} must be 'local' or 'remote'")
+    else:
+        mode = "local" if local_port_raw else "remote"
+
+    local_port = None
+    if local_port_raw:
+        try:
+            local_port = int(local_port_raw)
+        except ValueError as exc:
+            raise ValueError(f"{LOCAL_PORT_ENV_VAR} must be an integer") from exc
+        if not 1 <= local_port <= 65535:
+            raise ValueError(f"{LOCAL_PORT_ENV_VAR} must be between 1 and 65535")
+
+    base_url = normalize_base_url(base_url_raw or "")
+    if base_url:
+        base_url = _ensure_http_scheme(base_url)
+    elif mode == "local" and local_port is not None:
+        base_url = f"http://127.0.0.1:{local_port}"
+
+    return ServerPreferences(
+        mode=mode,
+        base_url=base_url,
+        local_port=local_port,
+    )
+
+
 def normalize_base_url(value: str) -> str:
     return value.strip().rstrip("/")
 
 
-def _ensure_http_scheme(url: str) -> str:
-    """Require or prepend an http(s) scheme for CLI base URLs."""
-    lowered = url.lower()
-    if lowered.startswith(("http://", "https://")):
-        return url
-    if "://" in url:
-        raise ValueError(f"Base URL must use http:// or https:// (got {url!r})")
-    return f"http://{url}"
-
-
-def read_base_url_from_env_file(path: Path) -> str | None:
-    """Return ``BUNNIFY_BASE_URL`` from ``path``, or ``None`` if unset/missing."""
+def read_env_value(path: Path, key: str) -> str | None:
+    """Return one value from an env file, or ``None`` when missing or empty."""
     if not path.is_file():
         return None
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return None
-    match = _BASE_URL_LINE.search(text)
+    match = _env_line_pattern(key).search(text)
     if match is None:
         return None
     raw = match.group(1).strip()
-    # Drop unquoted inline comments (``.env`` style: ``URL  # note``).
-    # Require whitespace before ``#`` so URL fragments are preserved.
     raw = re.sub(r"\s+#.*$", "", raw).strip().strip("'").strip('"')
-    return normalize_base_url(raw) if raw else None
+    return raw or None
 
 
-def write_base_url_to_env_file(path: Path, base_url: str) -> None:
-    """Create or update ``BUNNIFY_BASE_URL`` in ``path`` (preserves other lines)."""
-    normalized = normalize_base_url(base_url)
-    if not normalized:
-        raise ValueError(f"{ENV_VAR} cannot be empty")
-    line = f"{ENV_VAR}={normalized}\n"
+def run_dir(*, environ: dict[str, str] | None = None) -> Path:
+    """Return the XDG directory used for managed server PID and port files."""
+    return config_dir(environ=environ) / "run"
+
+
+def save_preferences(
+    preferences: ServerPreferences,
+    *,
+    env_path: Path | None = None,
+) -> None:
+    """Persist a complete, verified server preference set."""
+    path = env_path if env_path is not None else env_file_path()
+    write_env_value(path, ENV_VAR, normalize_base_url(preferences.base_url))
+    write_env_value(
+        path,
+        LOCAL_PORT_ENV_VAR,
+        str(preferences.local_port) if preferences.local_port is not None else "",
+    )
+    write_env_value(path, MODE_ENV_VAR, preferences.mode)
+
+
+def write_env_value(path: Path, key: str, value: str) -> None:
+    """Create or update one env value while preserving all other lines."""
+    if "\n" in key or "=" in key or not key.strip():
+        raise ValueError("Environment key must be a non-empty single name")
+    if "\n" in value:
+        raise ValueError(f"{key} cannot contain a newline")
+    pattern = _env_line_pattern(key)
+    line = f"{key}={value}\n"
     if path.is_file():
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             raise OSError(f"Cannot read {path}: {exc}") from exc
-        if _BASE_URL_LINE.search(text):
-            text = _BASE_URL_LINE.sub(f"{ENV_VAR}={normalized}", text, count=1)
+        if pattern.search(text):
+            text = pattern.sub(lambda _match: f"{key}={value}", text, count=1)
             if not text.endswith("\n"):
                 text += "\n"
         else:
@@ -131,6 +196,20 @@ def write_base_url_to_env_file(path: Path, base_url: str) -> None:
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def read_base_url_from_env_file(path: Path) -> str | None:
+    """Return ``BUNNIFY_BASE_URL`` from ``path``, or ``None`` if unset/missing."""
+    value = read_env_value(path, ENV_VAR)
+    return normalize_base_url(value) if value else None
+
+
+def write_base_url_to_env_file(path: Path, base_url: str) -> None:
+    """Create or update ``BUNNIFY_BASE_URL`` in ``path`` (preserves other lines)."""
+    normalized = normalize_base_url(base_url)
+    if not normalized:
+        raise ValueError(f"{ENV_VAR} cannot be empty")
+    write_env_value(path, ENV_VAR, normalized)
 
 
 def example_bookmarks_bytes() -> bytes | None:
@@ -286,3 +365,20 @@ def resolve_base_url(
     if persist:
         write_base_url_to_env_file(primary, chosen)
     return chosen
+
+
+def _ensure_http_scheme(url: str) -> str:
+    """Require or prepend an http(s) scheme for CLI base URLs."""
+    lowered = url.lower()
+    if lowered.startswith(("http://", "https://")):
+        return url
+    if "://" in url:
+        raise ValueError(f"Base URL must use http:// or https:// (got {url!r})")
+    return f"http://{url}"
+
+
+def _env_line_pattern(key: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"^[^\S\r\n]*{re.escape(key)}[^\S\r\n]*=[^\S\r\n]*(.*)$",
+        re.MULTILINE,
+    )

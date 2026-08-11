@@ -74,7 +74,8 @@ uv run python manage.py load_bookmarks
 
 Personal bookmarks live in `~/.config/bunnify` (or `$XDG_CONFIG_HOME/bunnify`);
 the repository-root `bunnify.json` is no longer tracked. See
-[Configuration](docs/CONFIG.md) for migration and environment overrides.
+[Configuration](docs/CONFIG.md) for migration and environment overrides, and
+[Local and remote setup](docs/LOCAL.md) for managed startup and macOS launchd.
 
 ### 2. Start the Server
 
@@ -156,6 +157,9 @@ With the server running (`./scripts/bunnify-server`) and dependencies synced (`u
 run the CLI via the repo wrapper (no manual `uv run` needed):
 
 ```bash
+# Configure a managed local server (default) or a remote server
+./scripts/bunnify setup
+
 # Interactive REPL with Tab completion (loops until quit/exit)
 ./scripts/bunnify
 
@@ -173,9 +177,10 @@ run the CLI via the repo wrapper (no manual `uv run` needed):
 ./scripts/bunnify --print-url gh
 ```
 
-Base URL resolution (first match wins): `--base-url` → `BUNNIFY_BASE_URL` →
-`~/.config/bunnify/config.env` → legacy gitignored `bunnify.env` → interactive
-prompt (persisted to the XDG config file). The REPL defaults to **Vim** keys
+On first interactive use, setup defaults to a managed local server; remote
+servers can be selected with `bunnify setup`. Only health-verified preferences
+are persisted in `~/.config/bunnify/config.env`. `--base-url` is a one-time
+override. The REPL defaults to **Vim** keys
 (`--edit-mode emacs` or `BUNNIFY_EDIT_MODE=emacs`; switch mid-session with
 `edit-mode`). Tab uses fuzzy completion with colored meta vs shortcut matches,
 persistent history, and history auto-suggest. Unknown shortcuts exit non-zero in
