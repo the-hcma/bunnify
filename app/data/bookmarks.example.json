@@ -1,0 +1,42 @@
+{
+  "c": {
+    "description": "Google Calendar",
+    "url": "https://calendar.google.com"
+  },
+  "g": {
+    "description": "Google Search",
+    "url": "https://www.google.com/search?q=#{search_terms}"
+  },
+  "gm": {
+    "description": "Gmail",
+    "url": "https://mail.google.com"
+  },
+  "gh": {
+    "description": "GitHub",
+    "url": "https://github.com"
+  },
+  "gtcl": {
+    "description": "Graphite CLI changelog",
+    "url": "https://graphite.com/docs/cli-changelog"
+  },
+  "pr": {
+    "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
+    "url": "https://github.com/#{repo}/pull/#{pr_number}"
+  },
+  "i": {
+    "description": "GitHub Issue (Usage: i <org/repo> <issue_number>)",
+    "url": "https://github.com/#{repo}/issues/#{issue_number}"
+  },
+  "ih": {
+    "description": "the-hcma GitHub Issues (Usage: ih <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/issues"
+  },
+  "ihh": {
+    "description": "thehcma GitHub Issues (Usage: ihh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}/issues"
+  },
+  "rpr": {
+    "description": "Request Copilot review for PR",
+    "url": "http://127.0.0.1:8000/review-pr/?pr=#{pr_id}"
+  }
+}

@@ -9,6 +9,7 @@ from typing import Any
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandParser
 
+from app.config import default_bookmarks_path
 from bookmarks.models import Bookmark
 
 # Get logger for this module
@@ -22,8 +23,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--file",
             type=str,
-            default=str(Path.home() / "work" / "bunnify" / "bunnify.json"),
-            help="Path to the JSON file to watch",
+            default=str(default_bookmarks_path()),
+            help=(
+                "Path to the JSON bookmarks file to watch "
+                "(default: ~/.config/bunnify/bookmarks.json; "
+                "override with BUNNIFY_BOOKMARKS)"
+            ),
         )
         parser.add_argument(
             "--interval",

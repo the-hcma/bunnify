@@ -63,14 +63,18 @@ uv sync
 # Run migrations
 uv run python manage.py migrate
 
-# Create your bookmarks file
-mkdir -p ~/work/bunnify
-cp bunnify.json.example ~/work/bunnify/bunnify.json
-# Edit ~/work/bunnify/bunnify.json with your bookmarks
+# Create your bookmarks file from the example
+mkdir -p ~/.config/bunnify
+cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+# Edit ~/.config/bunnify/bookmarks.json with your bookmarks
 
 # Load bookmarks
 uv run python manage.py load_bookmarks
 ```
+
+Personal bookmarks live in `~/.config/bunnify` (or `$XDG_CONFIG_HOME/bunnify`);
+the repository-root `bunnify.json` is no longer tracked. See
+[Configuration](docs/CONFIG.md) for migration and environment overrides.
 
 ### 2. Start the Server
 
@@ -170,8 +174,8 @@ run the CLI via the repo wrapper (no manual `uv run` needed):
 ```
 
 Base URL resolution (first match wins): `--base-url` → `BUNNIFY_BASE_URL` →
-gitignored `bunnify.env` → interactive prompt (persisted to `bunnify.env`).
-Copy `bunnify.env.example` to get started. The REPL defaults to **Vim** keys
+`~/.config/bunnify/config.env` → legacy gitignored `bunnify.env` → interactive
+prompt (persisted to the XDG config file). The REPL defaults to **Vim** keys
 (`--edit-mode emacs` or `BUNNIFY_EDIT_MODE=emacs`; switch mid-session with
 `edit-mode`). Tab uses fuzzy completion with colored meta vs shortcut matches,
 persistent history, and history auto-suggest. Unknown shortcuts exit non-zero in

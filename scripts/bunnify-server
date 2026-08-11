@@ -29,8 +29,12 @@ OPTIONS:
         Display this help message and exit
 
     -f, --bookmarks FILE
-        Path to the bookmarks JSON file (REQUIRED)
-        Default: ~/work/bunnify/bunnify.json
+        Path to the bookmarks JSON file.
+        Default: \$XDG_CONFIG_HOME/bunnify/bookmarks.json
+                 (usually ~/.config/bunnify/bookmarks.json)
+        BUNNIFY_BOOKMARKS overrides the default path. On first use, Bunnify
+        copies legacy ~/work/bunnify/bunnify.json when present, otherwise it
+        seeds the packaged example.
         The server will not start if this file does not exist.
 
     --foreground
@@ -99,7 +103,9 @@ LOGGING:
     Log rotation: 10MB max size, 5 backup files
 
 CONFIGURATION:
-    Bookmarks file: ~/work/bunnify/bunnify.json
+    Bookmarks file: ~/.config/bunnify/bookmarks.json (XDG-aware)
+    Override: BUNNIFY_BOOKMARKS or --bookmarks FILE
+    Legacy migration: ~/work/bunnify/bunnify.json is copied on first use
     Database: SQLite (db.sqlite3)
     Port: 8000
 
@@ -204,8 +210,8 @@ trap 'cleanup_startup' INT TERM
 export BUNNIFY_LOG_LEVEL="WARNING"
 export BUNNIFY_LOG_CONSOLE="false"
 
-# Default bookmarks file
-bookmarks_file="${HOME}/work/bunnify/bunnify.json"
+# Resolved after argument parsing so an explicit --bookmarks path wins.
+bookmarks_file=""
 
 # Flags
 do_stop=false
@@ -400,6 +406,14 @@ do_stop() {
 # Handle stop command now that functions are defined
 if $do_stop; then
     do_stop
+fi
+
+# Resolve and initialize the default bookmarks file only when none was supplied.
+if [ -z "$bookmarks_file" ]; then
+    if ! bookmarks_file=$($uv_cmd run python -c 'from app.config import ensure_user_bookmarks; print(ensure_user_bookmarks(allow_prompt=False))'); then
+        echo "❌ Error: Could not initialize the default bookmarks file"
+        exit 1
+    fi
 fi
 
 # Function to stop existing server

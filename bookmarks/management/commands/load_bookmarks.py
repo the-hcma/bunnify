@@ -8,6 +8,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandParser
 from jsonschema import ValidationError, validate
 
+from app.config import default_bookmarks_path
 from bookmarks.models import Bookmark
 
 # Get logger for this module
@@ -21,8 +22,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--file",
             type=str,
-            default=str(Path.home() / "work" / "bunnify" / "bunnify.json"),
-            help="Path to the JSON file containing bookmarks",
+            default=str(default_bookmarks_path()),
+            help=(
+                "Path to the JSON bookmarks file "
+                "(default: ~/.config/bunnify/bookmarks.json; "
+                "override with BUNNIFY_BOOKMARKS)"
+            ),
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
