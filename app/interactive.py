@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import NamedTuple
 
 from platformdirs import user_cache_dir
 from prompt_toolkit import HTML, PromptSession
@@ -14,11 +16,10 @@ from prompt_toolkit.completion import (
     CompleteEvent,
     Completer,
     Completion,
-    FuzzyCompleter,
 )
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import EditingMode
-from prompt_toolkit.formatted_text import AnyFormattedText
+from prompt_toolkit.formatted_text import AnyFormattedText, StyleAndTextTuples
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 
 from app.client import ClientError, KeyEntry
@@ -352,12 +353,77 @@ class ShortcutCompleter(Completer):
                     )
 
 
+class _FuzzyMatch(NamedTuple):
+    match_length: int
+    start_pos: int
+    completion: Completion
+    from_key: bool
+
+
+def _best_fuzzy_match(needle: str, haystack: str) -> tuple[int, int] | None:
+    """Best prompt_toolkit-style subsequence match: ``(match_length, start_pos)``.
+
+    Matching is case-insensitive (``str.casefold``); positions refer to the
+    original ``haystack`` (ASCII-safe; same approach as prompt_toolkit's
+    ``re.IGNORECASE`` fuzzy completer).
+    """
+    if not needle:
+        return 0, 0
+    if not haystack:
+        return None
+    # Casefold both sides so "Translate" matches "Google Translate …".
+    folded_needle = needle.casefold()
+    folded_haystack = haystack.casefold()
+    pat = ".*?".join(map(re.escape, folded_needle))
+    pat = f"(?=({pat}))"
+    regex = re.compile(pat)
+    matches = list(regex.finditer(folded_haystack))
+    if not matches:
+        return None
+    best = min(matches, key=lambda match: (match.start(), len(match.group(1))))
+    return len(best.group(1)), best.start()
+
+
+def _fuzzy_highlight_display(
+    word: str,
+    *,
+    match_length: int,
+    start_pos: int,
+    needle: str,
+) -> AnyFormattedText:
+    """Highlight subsequence matches on a completion label (prompt_toolkit parity)."""
+    if match_length == 0:
+        return word
+
+    result: StyleAndTextTuples = []
+    result.append(("class:fuzzymatch.outside", word[:start_pos]))
+    characters = list(needle.casefold())
+    for char in word[start_pos : start_pos + match_length]:
+        classname = "class:fuzzymatch.inside"
+        if characters and char.casefold() == characters[0]:
+            classname += ".character"
+            del characters[0]
+        result.append((classname, char))
+    result.append(("class:fuzzymatch.outside", word[start_pos + match_length :]))
+    return result
+
+
 class FirstTokenFuzzyCompleter(Completer):
-    """Apply fuzzy matching only while completing the first token (key/meta)."""
+    """Fuzzy-match the first token against shortcut keys *and* descriptions.
+
+    Matching is case-insensitive. Offered completions always insert/display the
+    command key (or meta name); descriptions are used only for matching and
+    ranking.
+    """
 
     def __init__(self, inner: ShortcutCompleter) -> None:
         self._inner = inner
-        self._fuzzy = FuzzyCompleter(inner, enable_fuzzy=True)
+
+    def _match_haystacks(self, completion: Completion) -> tuple[str, str]:
+        """Return ``(key_text, shortcut_description)`` for fuzzy matching."""
+        key_text = completion.text
+        entry = self._inner._lookup_entry(key_text)
+        return key_text, entry.description if entry is not None else ""
 
     def get_completions(
         self,
@@ -368,7 +434,59 @@ class FirstTokenFuzzyCompleter(Completer):
         if self._inner.wants_param_completion(text) or any(ch.isspace() for ch in text):
             yield from self._inner.get_completions(document, complete_event)
             return
-        yield from self._fuzzy.get_completions(document, complete_event)
+
+        needle = text
+        # Ask the inner completer for the full candidate set (empty first token).
+        empty = Document(text="", cursor_position=0)
+        candidates = list(self._inner.get_completions(empty, complete_event))
+
+        if needle == "":
+            yield from candidates
+            return
+
+        fuzzy_matches: list[_FuzzyMatch] = []
+        for completion in candidates:
+            key_text, description = self._match_haystacks(completion)
+            key_hit = _best_fuzzy_match(needle, key_text)
+            if key_hit is not None:
+                match_length, start_pos = key_hit
+                fuzzy_matches.append(
+                    _FuzzyMatch(match_length, start_pos, completion, True)
+                )
+                continue
+            desc_hit = _best_fuzzy_match(needle, description)
+            if desc_hit is not None:
+                match_length, start_pos = desc_hit
+                fuzzy_matches.append(
+                    _FuzzyMatch(match_length, start_pos, completion, False)
+                )
+
+        fuzzy_matches.sort(
+            key=lambda match: (
+                0 if match.from_key else 1,
+                match.start_pos,
+                match.match_length,
+            )
+        )
+
+        for match in fuzzy_matches:
+            if match.from_key:
+                display: AnyFormattedText = _fuzzy_highlight_display(
+                    match.completion.text,
+                    match_length=match.match_length,
+                    start_pos=match.start_pos,
+                    needle=needle,
+                )
+            else:
+                # Description-only hit: keep the plain command key as the label.
+                display = match.completion.display
+            yield Completion(
+                text=match.completion.text,
+                start_position=-len(needle),
+                display_meta=match.completion.display_meta,
+                display=display,
+                style=match.completion.style,
+            )
 
 
 class ReadlineShortcutCompleter:

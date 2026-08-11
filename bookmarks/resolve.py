@@ -12,6 +12,17 @@ from .models import Bookmark
 PLACEHOLDER_PATTERN = re.compile(r"#\{(\w+)\}")
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q=#{search_terms}"
 _DIRECT_URL_PREFIXES = ("http://", "https://", "chrome://", "about://", "file://")
+# Single placeholders that intentionally consume the rest of the query
+# (spaces included). Token-shaped placeholders like ``repo`` take one
+# whitespace-separated argument and reject extras.
+_REST_OF_LINE_PLACEHOLDERS = frozenset(
+    {
+        "search_terms",
+        "query",
+        "phrase",
+        "keywords",
+    }
+)
 
 ResolveKind = Literal["bookmark", "special", "direct_url", "google_fallback"]
 
@@ -85,6 +96,41 @@ def google_search_url(query: str) -> str:
     return substitute_placeholder_values(GOOGLE_SEARCH_URL, {"search_terms": query})
 
 
+def format_shortcut_usage(
+    key: str,
+    placeholders: list[str],
+    defaults: dict[str, str] | None = None,
+) -> str:
+    """Build a ``Usage: key <required> [optional]`` line for error messages."""
+    defaults = defaults or {}
+    if not placeholders:
+        return f"Usage: {key}"
+    if len(placeholders) == 1 and placeholders[0] in _REST_OF_LINE_PLACEHOLDERS:
+        name = placeholders[0]
+        token = f"[{name}]" if name in defaults else f"<{name}>"
+        return f"Usage: {key} {token}"
+    parts: list[str] = []
+    for name in placeholders:
+        if name in defaults:
+            parts.append(f"[{name}]")
+        else:
+            parts.append(f"<{name}>")
+    return f"Usage: {key} {' '.join(parts)}"
+
+
+def _too_many_parameters_error(
+    key: str,
+    placeholders: list[str],
+    defaults: dict[str, str] | None = None,
+) -> ResolveResult:
+    usage = format_shortcut_usage(key, placeholders, defaults)
+    return ResolveResult(
+        ok=False,
+        error=f"Too many parameters for bookmark '{key}'.\n{usage}",
+        key=key,
+    )
+
+
 def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
     """
     Resolve a shortcut query (``key [params...]``) to a URL.
@@ -92,6 +138,11 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
     Special keys ``h`` / ``help`` / ``cmd`` return site-relative paths (``/list/``,
     ``/cmd/``). When ``strict`` is true, unknown keys are errors instead of a
     Google search fallback.
+
+    Extra whitespace-separated arguments beyond what the shortcut accepts are
+    rejected with a usage line. When a shortcut has a single free-text
+    placeholder like ``search_terms``, it consumes the remainder of the query
+    as one value.
     """
     query = query.strip()
     if not query:
@@ -130,57 +181,72 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
 
     url = bookmark.url
     placeholders = list(dict.fromkeys(PLACEHOLDER_PATTERN.findall(url)))
+    defaults = bookmark.defaults or {}
 
     if not placeholders:
+        if param_string:
+            return _too_many_parameters_error(key, placeholders, defaults)
         return ResolveResult(ok=True, url=url, kind="bookmark", key=key)
 
     param_mapping: dict[str, str] = {}
 
     if len(placeholders) == 1:
-        if param_string or (bookmark.defaults and placeholders[0] in bookmark.defaults):
-            param_mapping[placeholders[0]] = (
-                param_string if param_string else bookmark.defaults[placeholders[0]]
-            )
+        placeholder = placeholders[0]
+        if placeholder in _REST_OF_LINE_PLACEHOLDERS:
+            if param_string or placeholder in defaults:
+                param_mapping[placeholder] = (
+                    param_string if param_string else defaults[placeholder]
+                )
+            else:
+                return ResolveResult(
+                    ok=False,
+                    error=(
+                        f"Bookmark '{key}' requires a parameter.\n"
+                        f"{format_shortcut_usage(key, placeholders, defaults)}"
+                    ),
+                    key=key,
+                )
         else:
-            return ResolveResult(
-                ok=False,
-                error=(f"Bookmark '{key}' requires a parameter.\nUsage: {key} <value>"),
-                key=key,
-            )
+            # Token placeholder (e.g. ``repo``): one arg only — do not join
+            # trailing tokens into the value (avoids ``prh repo 476`` →
+            # ``…/repo%20476/pulls``).
+            param_values = param_string.split() if param_string else []
+            if len(param_values) > 1:
+                return _too_many_parameters_error(key, placeholders, defaults)
+            if len(param_values) == 1:
+                param_mapping[placeholder] = param_values[0]
+            elif placeholder in defaults:
+                param_mapping[placeholder] = defaults[placeholder]
+            else:
+                return ResolveResult(
+                    ok=False,
+                    error=(
+                        f"Bookmark '{key}' requires a parameter.\n"
+                        f"{format_shortcut_usage(key, placeholders, defaults)}"
+                    ),
+                    key=key,
+                )
     else:
         param_values = param_string.split() if param_string else []
 
         if len(param_values) > len(placeholders):
-            return ResolveResult(
-                ok=False,
-                error=f"Too many parameters for bookmark '{key}'.",
-                key=key,
-            )
+            return _too_many_parameters_error(key, placeholders, defaults)
 
         arg_offset = len(placeholders) - len(param_values)
         for i, placeholder in enumerate(placeholders):
             arg_idx = i - arg_offset
             if arg_idx >= 0:
                 param_mapping[placeholder] = param_values[arg_idx]
-            elif placeholder in (bookmark.defaults or {}):
-                param_mapping[placeholder] = bookmark.defaults[placeholder]
+            elif placeholder in defaults:
+                param_mapping[placeholder] = defaults[placeholder]
             else:
-                required_params = [
-                    p for p in placeholders if p not in (bookmark.defaults or {})
-                ]
-                optional_params = [
-                    p for p in placeholders if p in (bookmark.defaults or {})
-                ]
+                required_params = [p for p in placeholders if p not in defaults]
                 required = ", ".join(required_params)
-                usage_args = " ".join(f"<{p}>" for p in required_params)
-                optional_suffix = (
-                    f" [{' '.join(optional_params)}]" if optional_params else ""
-                )
                 return ResolveResult(
                     ok=False,
                     error=(
                         f"Bookmark '{key}' requires parameter(s): {required}\n"
-                        f"Usage: {key} {usage_args}{optional_suffix}"
+                        f"{format_shortcut_usage(key, placeholders, defaults)}"
                     ),
                     key=key,
                 )

@@ -214,6 +214,49 @@ class SmokeTests(TestCase):
             response["Location"], "https://github.com/the-hcma/bunnify/issues"
         )
 
+    def test_single_token_placeholder_rejects_extra_args(self):
+        """``prh repo 476`` must not glue extras into ``#{repo}`` (broken %20 URL)."""
+        Bookmark.objects.create(
+            key="prh",
+            description="the-hcma GitHub Pull Requests",
+            url="https://github.com/the-hcma/#{repo}/pulls",
+        )
+        response = self.client.get("/search/", {"q": "prh repository-helpers 476"})
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(
+            response, "Too many parameters for bookmark 'prh'", status_code=400
+        )
+        self.assertContains(response, "Usage: prh <repo>", status_code=400)
+
+    def test_zero_arg_shortcut_rejects_extra_args(self):
+        response = self.client.get("/search/", {"q": "gh extra"})
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(
+            response, "Too many parameters for bookmark 'gh'", status_code=400
+        )
+        self.assertContains(response, "Usage: gh", status_code=400)
+
+    def test_multi_param_rejects_extra_args_with_usage(self):
+        response = self.client.get("/search/", {"q": "pr org/repo 1 leftover"})
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(
+            response, "Too many parameters for bookmark 'pr'", status_code=400
+        )
+        self.assertContains(response, "Usage: pr [repo] <pr_number>", status_code=400)
+
+    def test_single_token_placeholder_accepts_one_arg(self):
+        Bookmark.objects.create(
+            key="prh",
+            description="the-hcma GitHub Pull Requests",
+            url="https://github.com/the-hcma/#{repo}/pulls",
+        )
+        response = self.client.get("/search/", {"q": "prh repository-helpers"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            "https://github.com/the-hcma/repository-helpers/pulls",
+        )
+
     def test_health_check_loads(self):
         """Test that the health check endpoint loads successfully"""
         response = self.client.get("/health")
@@ -226,7 +269,7 @@ class SmokeTests(TestCase):
         Bookmark.objects.create(
             key="dual",
             description="Path and query reuse",
-            url="https://example.com/#{id}?q=#{id}",
+            url="https://example.com/#{phrase}?q=#{phrase}",
         )
         response = self.client.get("/search/", {"q": "dual a/b c"})
         self.assertEqual(response.status_code, 302)

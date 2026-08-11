@@ -750,6 +750,108 @@ class ConfigUnitTests(TestCase):
         ]
         self.assertEqual(metas, ["<repo> — Open org pull requests"])
 
+    def test_fuzzy_completer_excludes_meta_blurbs(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import FirstTokenFuzzyCompleter, ShortcutCompleter
+        from app.theme import Theme
+
+        completer = FirstTokenFuzzyCompleter(
+            ShortcutCompleter(
+                ["gh"],
+                theme=Theme(enabled=False),
+                entries=[KeyEntry(key="gh", description="GitHub")],
+            )
+        )
+        completions = list(
+            completer.get_completions(Document("vim"), complete_event=None)  # type: ignore[arg-type]
+        )
+        self.assertNotIn("edit-mode", [completion.text for completion in completions])
+
+    def test_fuzzy_completer_matches_description_shows_keys(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import FirstTokenFuzzyCompleter, ShortcutCompleter
+        from app.theme import Theme
+
+        entries = [
+            KeyEntry(
+                key="gtre",
+                description="Google Translate - English to Portuguese",
+                url="https://translate.google.com/?sl=en&tl=pt&text=#{phrase}",
+                params=("phrase",),
+            ),
+            KeyEntry(
+                key="gtrp",
+                description="Google Translate - Portuguese to English",
+                url="https://translate.google.com/?sl=pt&tl=en&text=#{phrase}",
+                params=("phrase",),
+            ),
+            KeyEntry(
+                key="gh",
+                description="GitHub",
+                url="https://github.com",
+            ),
+        ]
+        completer = FirstTokenFuzzyCompleter(
+            ShortcutCompleter(
+                [entry.key for entry in entries],
+                theme=Theme(enabled=False),
+                include_meta=False,
+                entries=entries,
+            )
+        )
+        completions = list(
+            completer.get_completions(Document("translate"), complete_event=None)  # type: ignore[arg-type]
+        )
+        texts = sorted(c.text for c in completions)
+        self.assertEqual(texts, ["gtre", "gtrp"])
+        # Alternatives must be command keys only (never description text).
+        self.assertTrue(all(c.text in {"gtre", "gtrp"} for c in completions))
+
+        for needle in ("Translate", "TRANSLATE", "TrAnSlAtE"):
+            cased = list(
+                completer.get_completions(Document(needle), complete_event=None)  # type: ignore[arg-type]
+            )
+            self.assertEqual(
+                sorted(c.text for c in cased),
+                ["gtre", "gtrp"],
+                msg=f"expected case-insensitive match for {needle!r}",
+            )
+
+    def test_fuzzy_completer_prefers_key_matches(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import FirstTokenFuzzyCompleter, ShortcutCompleter
+        from app.theme import Theme
+
+        entries = [
+            KeyEntry(
+                key="tr",
+                description="Something else",
+                url="https://example.com/tr",
+            ),
+            KeyEntry(
+                key="gtre",
+                description="Google Translate",
+                url="https://translate.google.com/",
+            ),
+        ]
+        completer = FirstTokenFuzzyCompleter(
+            ShortcutCompleter(
+                [entry.key for entry in entries],
+                theme=Theme(enabled=False),
+                include_meta=False,
+                entries=entries,
+            )
+        )
+        completions = list(
+            completer.get_completions(Document("tr"), complete_event=None)  # type: ignore[arg-type]
+        )
+        texts = [c.text for c in completions]
+        self.assertEqual(texts[0], "tr")
+        self.assertIn("gtre", texts)
+
     @patch("app.cli.fetch_key_entries")
     def test_interactive_refresh_updates_keys(self, mock_fetch_entries) -> None:
         mock_fetch_entries.side_effect = [
