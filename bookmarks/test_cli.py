@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from click.testing import CliRunner
 from django.test import Client, TestCase, override_settings
@@ -626,6 +626,50 @@ class ConfigUnitTests(TestCase):
             self.assertIn("BUNNIFY_BASE_URL=http://127.0.0.1:8765", text)
             self.assertIn("BUNNIFY_LOCAL_PORT=8765", text)
 
+    def test_ensure_ready_base_url_ensures_local_bookmarks(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            with (
+                patch(
+                    "app.cli.ensure_user_bookmarks",
+                    return_value=bookmarks,
+                ) as ensure_bookmarks,
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8123", 8123),
+                ),
+                patch("app.cli.check_health", return_value=True),
+            ):
+                result = ensure_ready_base_url(
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    allow_prompt=False,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8123")
+            ensure_bookmarks.assert_called_once_with(
+                environ={"XDG_CONFIG_HOME": tmp},
+                prompt_fn=input,
+                allow_prompt=False,
+                print_fn=ANY,
+            )
+
     def test_ensure_ready_base_url_falls_back_from_remote_to_local(self) -> None:
         import tempfile
         from pathlib import Path
@@ -670,6 +714,29 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.mode, "local")
             self.assertEqual(preferences.local_port, 8123)
+
+    def test_ensure_ready_base_url_uses_legacy_remote_url(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "bunnify.env"
+            legacy.write_text(
+                "BUNNIFY_BASE_URL=legacy.example:9000\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("app.cli.legacy_env_file_path", return_value=legacy),
+                patch("app.cli.check_health", return_value=True),
+            ):
+                result = ensure_ready_base_url(
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    allow_prompt=False,
+                )
+
+            self.assertEqual(result, "http://legacy.example:9000")
 
     def test_ensure_user_bookmarks_copies_legacy_noninteractive(self) -> None:
         import tempfile

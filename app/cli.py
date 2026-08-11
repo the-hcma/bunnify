@@ -26,10 +26,11 @@ from app.client import (
 from app.config import (
     ENV_VAR,
     ServerPreferences,
-    default_bookmarks_path,
     ensure_user_bookmarks,
     env_file_path,
+    legacy_env_file_path,
     load_preferences,
+    read_base_url_from_env_file,
     resolve_base_url,
     run_dir,
     save_preferences,
@@ -77,6 +78,17 @@ def ensure_ready_base_url(
         return base_url
 
     preferences = load_preferences(environ=environ, env_path=env_path)
+    if preferences is None and env_path is None:
+        legacy_base_url = read_base_url_from_env_file(legacy_env_file_path())
+        if legacy_base_url:
+            preferences = ServerPreferences(
+                mode="remote",
+                base_url=resolve_base_url(
+                    cli_value=legacy_base_url,
+                    persist=False,
+                ),
+                local_port=None,
+            )
     if preferences is None:
         if interactive:
             return run_setup(
@@ -123,7 +135,12 @@ def ensure_ready_base_url(
             local_port=None,
         )
     else:
-        bookmarks = default_bookmarks_path(environ=environ)
+        bookmarks = ensure_user_bookmarks(
+            environ=environ,
+            prompt_fn=ask,
+            allow_prompt=interactive,
+            print_fn=log,
+        )
     while True:
         try:
             base_url, actual_port = ensure_local_server(
