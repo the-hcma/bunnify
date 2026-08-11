@@ -147,6 +147,18 @@
     "description": "the-hcma GitHub Pull Request (Usage: hpr <repo> <pr_number>)",
     "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}"
   },
+  "i": {
+    "description": "GitHub Issue (Usage: i <org/repo> <issue_number>)",
+    "url": "https://github.com/#{repo}/issues/#{issue_number}"
+  },
+  "ih": {
+    "description": "the-hcma GitHub Issues (Usage: ih <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/issues"
+  },
+  "ihh": {
+    "description": "thehcma GitHub Issues (Usage: ihh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}/issues"
+  },
   "dl": {
     "description": "Downloads",
     "url": "https://downloads.hcma.info"

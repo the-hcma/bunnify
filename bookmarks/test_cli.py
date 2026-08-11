@@ -949,6 +949,95 @@ class KeyUsageAndCompletionTests(TestCase):
         ]
         self.assertEqual(prs, ["242", "245"])
 
+    def test_param_completer_repos_and_issues(self) -> None:
+        """Issue shortcuts complete repo + issue_number the same way as PRs."""
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        entry = KeyEntry(
+            key="i",
+            description="GitHub Issue",
+            url="https://github.com/#{repo}/issues/#{issue_number}",
+            params=("repo", "issue_number"),
+        )
+
+        def fake_suggest(*, param_name, url_template, filled_args, prefix):
+            del url_template
+            if param_name == "repo":
+                return [
+                    name
+                    for name in ("the-hcma/bunnify", "the-hcma/other")
+                    if name.startswith(prefix)
+                ]
+            if param_name == "issue_number":
+                self.assertEqual(filled_args, ["the-hcma/bunnify"])
+                return [num for num in ("42", "45") if num.startswith(prefix)]
+            return []
+
+        completer = ShortcutCompleter(
+            ["i"],
+            theme=Theme(enabled=False),
+            entries=[entry],
+            param_suggest_fn=fake_suggest,
+        )
+        repos = [
+            c.text
+            for c in completer.get_completions(
+                Document("i the-hcma/bun"), complete_event=None
+            )  # type: ignore[arg-type]
+        ]
+        self.assertEqual(repos, ["the-hcma/bunnify"])
+        issues = [
+            c.text
+            for c in completer.get_completions(
+                Document("i the-hcma/bunnify 4"), complete_event=None
+            )  # type: ignore[arg-type]
+        ]
+        self.assertEqual(issues, ["42", "45"])
+
+    def test_exact_key_tab_completes_first_param_for_issues_list(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import ShortcutCompleter
+        from app.theme import Theme
+
+        entry = KeyEntry(
+            key="ih",
+            description="Issues",
+            url="https://github.com/the-hcma/#{repo}/issues",
+            params=("repo",),
+        )
+
+        def fake_suggest(*, param_name, url_template, filled_args, prefix):
+            del url_template, filled_args
+            self.assertEqual(param_name, "repo")
+            self.assertEqual(prefix, "")
+            return ["bunnify", "fpdf"]
+
+        completer = ShortcutCompleter(
+            ["ih", "ihh"],
+            theme=Theme(enabled=False),
+            entries=[
+                entry,
+                KeyEntry(
+                    key="ihh",
+                    description="other",
+                    url="https://github.com/x/#{repo}/issues",
+                    params=("repo",),
+                ),
+            ],
+            param_suggest_fn=fake_suggest,
+        )
+        texts = [
+            c.text
+            for c in completer.get_completions(Document("ih"), complete_event=None)  # type: ignore[arg-type]
+        ]
+        self.assertIn("ih bunnify", texts)
+        self.assertIn("ih fpdf", texts)
+        self.assertIn("ihh", texts)
+
     def test_exact_key_tab_completes_first_param(self) -> None:
         from prompt_toolkit.document import Document
 
@@ -1174,6 +1263,44 @@ class KeyUsageAndCompletionTests(TestCase):
         )
         self.assertEqual(values, ["242"])
         self.assertTrue(any("/repos/the-hcma/bunnify/pulls" in url for url in seen))
+
+    def test_suggest_issue_numbers_for_fixed_org(self) -> None:
+        from app.github_complete import (
+            clear_github_completion_cache,
+            suggest_param_values,
+        )
+
+        clear_github_completion_cache()
+        seen: list[str] = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return (
+                    b'[{"number":242,"title":"bug"},'
+                    b'{"number":100,"title":"pr","pull_request":{}},'
+                    b'{"number":99,"title":"docs"}]'
+                )
+
+        def opener(request, timeout=0):  # noqa: ARG001
+            seen.append(request.full_url)
+            return FakeResponse()
+
+        values = suggest_param_values(
+            param_name="issue_number",
+            url_template="https://github.com/the-hcma/#{repo}/issues/#{issue_number}",
+            filled_args=["bunnify"],
+            prefix="2",
+            token="test-token",
+            opener=opener,
+        )
+        self.assertEqual(values, ["242"])
+        self.assertTrue(any("/repos/the-hcma/bunnify/issues" in url for url in seen))
 
     def test_failed_api_fetch_does_not_poison_cache(self) -> None:
         import urllib.error
@@ -1440,6 +1567,60 @@ class KeyUsageAndCompletionTests(TestCase):
                     opener=lambda *_a, **_k: FakeResponse(),
                 ),
                 ["42"],
+            )
+
+    def test_completion_cache_does_not_persist_issue_keys(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            list_open_issues,
+            load_github_completion_cache,
+            save_github_completion_cache,
+        )
+
+        clear_github_completion_cache()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"number":7}]'
+
+        list_open_issues(
+            "the-hcma/bunnify", token="t", opener=lambda *_a, **_k: FakeResponse()
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scratch" / "bunnify" / "github-completions.json"
+            save_github_completion_cache(path=path)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(
+                all(not key.startswith("issues:") for key in payload["entries"])
+            )
+            clear_github_completion_cache()
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "entries": {"issues:the-hcma/bunnify:50": ["99"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            load_github_completion_cache(path=path)
+            self.assertEqual(
+                list_open_issues(
+                    "the-hcma/bunnify",
+                    token="t",
+                    opener=lambda *_a, **_k: FakeResponse(),
+                ),
+                ["7"],
             )
 
     def test_bootstrap_loads_disk_across_invocations_without_blocking(self) -> None:

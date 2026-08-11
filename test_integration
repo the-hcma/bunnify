@@ -119,6 +119,9 @@ assert_redirect "/search/?q=http%3A%2F%2Fexample.com" "http://example.com"
 # Test multi parameter substitution PR bookmark
 assert_redirect "/search/?q=pr%20the-hcma%2Fbunnify%20123" "https://github.com/the-hcma/bunnify/pull/123"
 
+# Test multi parameter substitution issue bookmark
+assert_redirect "/search/?q=i%20the-hcma%2Fbunnify%2042" "https://github.com/the-hcma/bunnify/issues/42"
+
 # EXIT trap handles shutdown and cleanup
 if [ "$failed" -eq 0 ]; then
     echo "🎉 All integration tests passed!"

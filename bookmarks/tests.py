@@ -188,6 +188,32 @@ class SmokeTests(TestCase):
             response["Location"], "https://github.com/Shopify/shopify-build/pull/12345"
         )
 
+    def test_issue_shortcut_redirect(self):
+        """Test GitHub issue bookmark parameter substitution"""
+        Bookmark.objects.create(
+            key="i",
+            description="GitHub Issue",
+            url="https://github.com/#{repo}/issues/#{issue_number}",
+        )
+        response = self.client.get("/search/", {"q": "i the-hcma/bunnify 42"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"], "https://github.com/the-hcma/bunnify/issues/42"
+        )
+
+    def test_org_issues_list_shortcut(self):
+        """Test org-scoped issues list bookmark (ih)"""
+        Bookmark.objects.create(
+            key="ih",
+            description="the-hcma GitHub Issues",
+            url="https://github.com/the-hcma/#{repo}/issues",
+        )
+        response = self.client.get("/search/", {"q": "ih bunnify"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"], "https://github.com/the-hcma/bunnify/issues"
+        )
+
     def test_health_check_loads(self):
         """Test that the health check endpoint loads successfully"""
         response = self.client.get("/health")
