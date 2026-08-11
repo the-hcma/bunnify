@@ -489,7 +489,7 @@ class FirstTokenFuzzyCompleter(Completer):
             yield Completion(
                 text=match.completion.text,
                 start_position=-len(needle),
-                display_meta=match.completion._display_meta,
+                display_meta=match.completion.display_meta,
                 display=display,
                 style=match.completion.style,
             )

@@ -140,8 +140,9 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
     Google search fallback.
 
     Extra whitespace-separated arguments beyond what the shortcut accepts are
-    rejected with a usage line (free-text placeholders like ``search_terms``
-    still consume the remainder of the query as a single value).
+    rejected with a usage line. When a shortcut has a single free-text
+    placeholder like ``search_terms``, it consumes the remainder of the query
+    as one value.
     """
     query = query.strip()
     if not query:
