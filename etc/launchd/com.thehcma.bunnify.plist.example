@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.thehcma.bunnify</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPOSITORY_ROOT__/scripts/bunnify-server</string>
+    <string>--foreground</string>
+    <string>--noninteractive</string>
+    <string>--port</string>
+    <string>8000</string>
+    <string>--pid-dir</string>
+    <string>__HOME__/.config/bunnify/run</string>
+    <string>--bookmarks</string>
+    <string>__HOME__/.config/bunnify/bookmarks.json</string>
+  </array>
+
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/bunnify.err.log</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/bunnify.out.log</string>
+</dict>
+</plist>

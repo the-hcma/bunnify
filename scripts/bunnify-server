@@ -73,6 +73,11 @@ OPTIONS:
         Directory for PID and port files (default: script directory).
         Use a unique temp directory in tests/CI to avoid interfering
         with a concurrently running production server.
+        CLI managed mode uses ~/.config/bunnify/run (XDG-aware).
+
+    -y, --noninteractive
+        Never prompt. Automatically initialize an unready database and fail
+        instead of offering to kill a non-Bunnify process using the port.
 
 EXAMPLES:
     # Start with default settings (WARNING level, file logging only)
@@ -217,6 +222,7 @@ bookmarks_file=""
 do_stop=false
 foreground=false
 listen_all=false
+noninteractive=false
 server_port="8000"
 pid_dir_override=""
 
@@ -270,6 +276,10 @@ while [[ $# -gt 0 ]]; do
             listen_all=true
             shift
             ;;
+        -y|--noninteractive)
+            noninteractive=true
+            shift
+            ;;
         --log-level)
             if [ -z "$2" ]; then
                 echo "Error: --log-level requires a value"
@@ -304,14 +314,15 @@ if [ -n "$pid_dir_override" ]; then
     watcher_pid_file="$pid_dir/.bunnify_watcher.pid"
     port_file="$pid_dir/.bunnify.port"
 fi
+mkdir -p "$pid_dir"
 
 # If server_port is 0, ask the OS for a free ephemeral port, then hand that fixed port to Django.
 # We close the socket immediately so Django can bind to it; there is a brief TOCTOU window
 # but this is acceptable for local development and CI.
 if [ "$server_port" = "0" ]; then
     server_port=$($uv_cmd run python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
-    echo "$server_port" > "$port_file"
 fi
+echo "$server_port" > "$port_file"
 
 # Function to check if process is running
 is_running() {
@@ -467,6 +478,11 @@ stop_server() {
                 echo "   PID: $port_pid"
                 echo "   Command: $proc_cmd"
                 echo ""
+                if $noninteractive; then
+                    echo "❌ Aborted: noninteractive mode will not kill another process."
+                    echo "   Free port $check_port or choose another port."
+                    exit 1
+                fi
                 echo -n "Kill this process and continue? (y/N): "
                 read -r response
                 if [[ "$response" =~ ^[Yy]$ ]]; then
@@ -501,7 +517,7 @@ if [ -f "$pid_file" ]; then
         rm -f "$pid_file" "$watcher_pid_file" "$port_file"
     fi
 elif is_port_in_use; then
-    port_pid=$(lsof -ti:8000 2>/dev/null | head -1)
+    port_pid=$(lsof -ti:"$server_port" 2>/dev/null | head -1)
     if is_bunnify_process "$port_pid"; then
         echo "⚠️  Port 8000 is in use by another Bunnify process"
         echo "🔄 Stopping existing process and starting fresh..."
@@ -515,6 +531,7 @@ elif is_port_in_use; then
     fi
 fi
 
+echo "$server_port" > "$port_file"
 echo "🐰 Starting Bunnify server..."
 echo "Directory: $script_dir"
 
@@ -570,13 +587,19 @@ else
     echo ""
     echo "$db_check_output"
     echo ""
-    echo -n "Would you like me to initialize the database now? (y/N): "
-    read -r response
+    if $noninteractive; then
+        response="y"
+        echo "Initializing the database (--noninteractive)..."
+    else
+        echo -n "Would you like me to initialize the database now? (y/N): "
+        read -r response
+    fi
     if [[ "$response" =~ ^[Yy]$ ]]; then
         echo ""
         $uv_cmd run python manage.py check_database --fix
         fix_exit=$?
         if [ $fix_exit -ne 0 ]; then
+            echo "❌ Database initialization failed."
             exit 1
         fi
     else

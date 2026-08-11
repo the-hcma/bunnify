@@ -14,14 +14,26 @@ from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
 from app.client import (
+    DEFAULT_BASE_URL,
     ClientError,
     KeyEntry,
+    check_health,
     fetch_key_entries,
     fetch_keys,
     fetch_suggestions,
     resolve_shortcut,
 )
-from app.config import ENV_VAR, resolve_base_url
+from app.config import (
+    ENV_VAR,
+    ServerPreferences,
+    default_bookmarks_path,
+    ensure_user_bookmarks,
+    env_file_path,
+    load_preferences,
+    resolve_base_url,
+    run_dir,
+    save_preferences,
+)
 from app.github_complete import (
     bootstrap_github_completion_cache,
     ensure_github_authenticated,
@@ -36,8 +48,87 @@ from app.interactive import (
     read_shortcut_query,
     repl_prompt_message,
 )
+from app.local_server import ensure_local_server
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
+
+
+def ensure_ready_base_url(
+    *,
+    cli_value: str | None = None,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+    prompt_fn: Callable[[str], str] | None = None,
+    allow_prompt: bool | None = None,
+    print_fn: Callable[[str], None] | None = None,
+) -> str:
+    """Resolve preferences and return a verified or explicitly overridden URL."""
+    ask = prompt_fn or input
+    log = print_fn or click.echo
+    interactive = (
+        allow_prompt
+        if allow_prompt is not None
+        else sys.stdin.isatty() and sys.stdout.isatty()
+    )
+    if cli_value is not None and cli_value.strip():
+        base_url = resolve_base_url(cli_value=cli_value, persist=False)
+        if not check_health(base_url):
+            log(f"warning: Bunnify health check failed for {base_url}")
+        return base_url
+
+    preferences = load_preferences(environ=environ, env_path=env_path)
+    if preferences is None:
+        if interactive:
+            return run_setup(
+                prompt_fn=ask,
+                environ=environ,
+                env_path=env_path,
+                print_fn=log,
+            )
+        return DEFAULT_BASE_URL
+
+    if preferences.mode == "remote":
+        if not preferences.base_url:
+            raise ClientError("Remote mode requires BUNNIFY_BASE_URL")
+        return _wait_for_healthy_remote(
+            preferences.base_url,
+            prompt_fn=ask,
+            interactive=interactive,
+            print_fn=log,
+        )
+
+    bookmarks = default_bookmarks_path(environ=environ)
+    while True:
+        try:
+            base_url, actual_port = ensure_local_server(
+                port=preferences.local_port,
+                pid_dir=run_dir(environ=environ),
+                bookmarks=bookmarks,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            if not interactive or not _retry_requested(
+                ask, f"Local server failed: {exc}\nRetry? [Y/n]: "
+            ):
+                raise ClientError(str(exc)) from exc
+            continue
+        if not check_health(base_url):
+            message = f"Local server health check failed for {base_url}"
+            if not interactive or not _retry_requested(
+                ask, f"{message}\nRetry? [Y/n]: "
+            ):
+                raise ClientError(message)
+            continue
+        if actual_port != preferences.local_port or base_url != preferences.base_url:
+            path = env_path if env_path is not None else env_file_path(environ=environ)
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url=base_url,
+                    local_port=actual_port,
+                ),
+                env_path=path,
+            )
+        return base_url
 
 
 def open_url(url: str, *, opener: Callable[[str], bool] | None = None) -> None:
@@ -86,6 +177,101 @@ def pick_key_with_fzf(
     return selected or None
 
 
+def run_setup(
+    *,
+    prompt_fn: Callable[[str], str] | None = None,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+    print_fn: Callable[[str], None] | None = None,
+) -> str:
+    """Interactively configure a verified local or remote Bunnify server."""
+    ask = prompt_fn or input
+    log = print_fn or click.echo
+    path = env_path if env_path is not None else env_file_path(environ=environ)
+    existing = load_preferences(environ=environ, env_path=path)
+
+    while True:
+        try:
+            answer = ask("Server mode, local or remote? [local]: ")
+        except EOFError as exc:
+            raise ClientError("Setup aborted") from exc
+        mode = answer.strip().lower() or "local"
+        if mode in {"l", "local"}:
+            mode = "local"
+            break
+        if mode in {"r", "remote"}:
+            mode = "remote"
+            break
+        log("Please enter 'local' or 'remote'.")
+
+    if mode == "local":
+        bookmarks = ensure_user_bookmarks(
+            environ=environ,
+            prompt_fn=ask,
+            allow_prompt=True,
+            print_fn=log,
+        )
+        preferred_port = (
+            existing.local_port
+            if existing is not None and existing.mode == "local"
+            else None
+        )
+        while True:
+            try:
+                base_url, actual_port = ensure_local_server(
+                    port=preferred_port,
+                    pid_dir=run_dir(environ=environ),
+                    bookmarks=bookmarks,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                if _retry_requested(ask, f"Local server failed: {exc}\nRetry? [Y/n]: "):
+                    continue
+                raise ClientError("Setup aborted; settings were not changed") from exc
+            if check_health(base_url):
+                preferences = ServerPreferences(
+                    mode="local",
+                    base_url=base_url,
+                    local_port=actual_port,
+                )
+                save_preferences(preferences, env_path=path)
+                log(f"Configured local Bunnify server at {base_url}")
+                return base_url
+            if not _retry_requested(
+                ask,
+                f"Health check failed for {base_url}.\nRetry? [Y/n]: ",
+            ):
+                raise ClientError("Setup aborted; settings were not changed")
+
+    suggestion = (
+        existing.base_url
+        if existing is not None and existing.mode == "remote" and existing.base_url
+        else DEFAULT_BASE_URL
+    )
+    while True:
+        try:
+            answer = ask(f"Remote Bunnify URL [{suggestion}]: ")
+        except EOFError as exc:
+            raise ClientError("Setup aborted; settings were not changed") from exc
+        base_url = resolve_base_url(
+            cli_value=answer.strip() or suggestion,
+            persist=False,
+        )
+        if check_health(base_url):
+            preferences = ServerPreferences(
+                mode="remote",
+                base_url=base_url,
+                local_port=None,
+            )
+            save_preferences(preferences, env_path=path)
+            log(f"Configured remote Bunnify server at {base_url}")
+            return base_url
+        if not _retry_requested(
+            ask,
+            f"Health check failed for {base_url}.\nTry another URL? [Y/n]: ",
+        ):
+            raise ClientError("Setup aborted; settings were not changed")
+
+
 def matching_keys(keys: list[str], prefix: str) -> list[str]:
     """Return keys that start with ``prefix`` (case-insensitive)."""
     needle = prefix.lower()
@@ -94,6 +280,31 @@ def matching_keys(keys: list[str], prefix: str) -> list[str]:
 
 def build_query_from_args(args: tuple[str, ...]) -> str:
     return " ".join(args).strip()
+
+
+def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
+    try:
+        answer = prompt_fn(message)
+    except EOFError:
+        return False
+    return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
+
+
+def _wait_for_healthy_remote(
+    base_url: str,
+    *,
+    prompt_fn: Callable[[str], str],
+    interactive: bool,
+    print_fn: Callable[[str], None],
+) -> str:
+    while not check_health(base_url):
+        message = f"Cannot reach a healthy Bunnify server at {base_url}"
+        if not interactive:
+            raise ClientError(message)
+        print_fn(message)
+        if not _retry_requested(prompt_fn, "Retry connection? [Y/n]: "):
+            raise ClientError("Connection aborted")
+    return base_url
 
 
 def _print_repl_help(theme: Theme) -> None:
@@ -531,6 +742,12 @@ def _run(
         "XDG-aware; legacy repo-root bunnify.env is a fallback)."
     ),
 )
+@click.option(
+    "--setup",
+    "setup_requested",
+    is_flag=True,
+    help="Configure a verified local or remote server (also: `bunnify setup`).",
+)
 def main(
     shortcut_args: tuple[str, ...],
     base_url_option: str | None,
@@ -543,6 +760,7 @@ def main(
     color_mode: str,
     edit_mode: str | None,
     env_file: Path | None,
+    setup_requested: bool,
 ) -> None:
     """
     Open a Bunnify shortcut in your default browser.
@@ -557,27 +775,42 @@ def main(
       ./scripts/bunnify pr 12345
 
     \b
+    Server setup (`setup` is a reserved shortcut name):
+      ./scripts/bunnify setup
+      ./scripts/bunnify --setup
+
+    \b
     Fuzzy pick (fzf) for argv / shell completion workflows:
       ./scripts/bunnify --fzf
       ./scripts/bunnify --list-keys | fzf
       ./scripts/bunnify --list-usage
     """
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))
+
+    def prompt_fn(message: str) -> str:
+        return click.prompt(
+            message.rstrip(": "),
+            default="",
+            show_default=False,
+        )
+
     mode_name = (
         normalize_edit_mode_choice(edit_mode)
         if edit_mode is not None
         else default_edit_mode_from_environ()
     )
     try:
-        resolved_url = resolve_base_url(
+        if setup_requested or shortcut_args == ("setup",):
+            run_setup(
+                prompt_fn=prompt_fn,
+                env_path=env_file,
+                print_fn=click.echo,
+            )
+            return
+        resolved_url = ensure_ready_base_url(
             cli_value=base_url_option,
-            persist=base_url_option is None,
             env_path=env_file,
-            prompt_fn=lambda message: click.prompt(
-                message.rstrip(": "),
-                default="",
-                show_default=False,
-            ),
+            prompt_fn=prompt_fn,
         )
         _run(
             shortcut_args=shortcut_args,
@@ -591,7 +824,7 @@ def main(
             theme=theme,
             editing_mode=editing_mode_enum(mode_name),
         )
-    except (ClientError, ValueError, OSError) as exc:
+    except (ClientError, ValueError, OSError, RuntimeError) as exc:
         click.echo(theme.err(f"error: {exc}"), err=True)
         sys.exit(1)
 

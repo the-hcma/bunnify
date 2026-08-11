@@ -35,6 +35,30 @@ class KeyEntry:
     optional_params: frozenset[str] = frozenset()
 
 
+def check_health(base_url: str, *, timeout: float = 2.0) -> bool:
+    """Return whether ``base_url`` serves Bunnify's healthy ``/health`` response."""
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/health",
+        headers={"Accept": "text/plain", "User-Agent": "bunnify-cli"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = getattr(response, "status", None)
+            if status is None:
+                status = response.getcode()
+            body = response.read().decode("utf-8")
+            return status == 200 and body.strip().lower() == "ok"
+    except (
+        OSError,
+        TimeoutError,
+        UnicodeDecodeError,
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+    ):
+        return False
+
+
 def _request_json(
     url: str,
     *,
