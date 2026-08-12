@@ -20,8 +20,12 @@ by Git.
 
 ```bash
 mkdir -p ~/.config/bunnify
-cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+curl -fsSL https://raw.githubusercontent.com/thehcma/bunnify/main/bunnify.json.example \
+  -o ~/.config/bunnify/bookmarks.json
 ```
+
+In a development checkout you can instead `cp bunnify.json.example` from the
+repo root.
 
 Run `bunnify setup` to write verified settings. Existing base-URL-only files
 remain supported; they are interpreted as remote mode.

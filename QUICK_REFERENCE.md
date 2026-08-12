@@ -7,7 +7,9 @@ base URL is usually `http://127.0.0.1:8000` — check
 ## Bookmarks file
 
 ```bash
-~/.config/bunnify/bookmarks.json   # required; seed from bunnify.json.example
+mkdir -p ~/.config/bunnify
+curl -fsSL https://raw.githubusercontent.com/thehcma/bunnify/main/bunnify.json.example \
+  -o ~/.config/bunnify/bookmarks.json
 ```
 
 ## CLI
@@ -62,9 +64,5 @@ More: [docs/CONFIG.md](docs/CONFIG.md), [docs/LOCAL.md](docs/LOCAL.md)
 
 ## Linux service host
 
-```bash
-~/work/ai/repository-helpers/scripts/setup-service
-journalctl --user -u bunnify -f
-```
-
-See [docs/SYSTEMD.md](docs/SYSTEMD.md).
+Run `setup-service` from a [repository-helpers](https://github.com/the-hcma/repository-helpers)
+clone (see [docs/SYSTEMD.md](docs/SYSTEMD.md)).

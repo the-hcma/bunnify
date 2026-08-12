@@ -15,19 +15,17 @@ bunnify --version
 The wheel installs **`bunnify`** (CLI) and **`bunnify-server`** (Django
 server). No repository checkout or `uv` is required at runtime.
 
-Optional: `python -m pip install bunnify` in a Python 3.14+ environment.
-Homebrew packaging is intentionally deferred.
-
 ## Quick start
 
 ### 1. Create your bookmarks file
 
-Copy the [documented example](bunnify.json.example) into XDG config (required
-before the server starts):
+Download the [documented example](https://github.com/thehcma/bunnify/blob/main/bunnify.json.example)
+into XDG config (required before the server starts):
 
 ```bash
 mkdir -p ~/.config/bunnify
-cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+curl -fsSL https://raw.githubusercontent.com/thehcma/bunnify/main/bunnify.json.example \
+  -o ~/.config/bunnify/bookmarks.json
 # edit ~/.config/bunnify/bookmarks.json with your shortcuts
 ```
 
@@ -111,7 +109,7 @@ With the server running (default `http://127.0.0.1:8000` after setup):
   },
   "pr": {
     "description": "Pull request",
-    "url": "https://github.com/org/repo/pull/#{pr_number}",
+    "url": "https://github.com/#{repo}/pull/#{pr_number}",
     "defaults": { "repo": "org/repo" }
   }
 }
