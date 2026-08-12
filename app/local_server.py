@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from app.client import check_health
+from app.config import read_persisted_local_port
 
 
 def ensure_local_server(
@@ -24,10 +25,17 @@ def ensure_local_server(
 
     selected_port = port
     if selected_port is None:
-        default_url = "http://127.0.0.1:8000"
-        if check_health(default_url):
-            return default_url, 8000
-        selected_port = 8000 if _port_is_free(8000) else 0
+        persisted_port = read_persisted_local_port()
+        if persisted_port:
+            persisted_url = f"http://127.0.0.1:{persisted_port}"
+            if check_health(persisted_url):
+                return persisted_url, persisted_port
+            selected_port = persisted_port
+        else:
+            default_url = "http://127.0.0.1:8000"
+            if check_health(default_url):
+                return default_url, 8000
+            selected_port = 8000 if port_is_free(8000) else 0
 
     if selected_port:
         base_url = f"http://127.0.0.1:{selected_port}"
@@ -115,7 +123,7 @@ def stop_local_server(pid_dir: Path) -> None:
         raise RuntimeError(f"Failed to stop the local Bunnify server{suffix}")
 
 
-def _port_is_free(port: int) -> bool:
+def port_is_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
         try:
             candidate.bind(("127.0.0.1", port))
