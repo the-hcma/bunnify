@@ -74,7 +74,7 @@ def ensure_local_server(
     while actual_port == 0 and time.monotonic() < deadline:
         try:
             actual_port = int(port_file.read_text(encoding="utf-8").strip())
-        except OSError, ValueError:
+        except (OSError, ValueError):
             time.sleep(0.1)
 
     if not actual_port:

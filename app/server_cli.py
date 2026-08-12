@@ -253,7 +253,7 @@ def _listener_pids(port: int) -> list[int]:
             text=True,
             timeout=5,
         )
-    except OSError, subprocess.TimeoutExpired:
+    except (OSError, subprocess.TimeoutExpired):
         return []
     pids: list[int] = []
     for line in completed.stdout.splitlines():
@@ -366,7 +366,7 @@ def _process_command(pid: int) -> str | None:
             text=True,
             timeout=5,
         )
-    except OSError, subprocess.TimeoutExpired:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     command = completed.stdout.strip()
     return command or None
@@ -394,14 +394,14 @@ def _process_managed_by_pid_dir(pid: int, pid_dir: Path) -> bool:
 def _read_pid(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
 
 
 def _read_port(path: Path) -> int | None:
     try:
         port = int(path.read_text(encoding="utf-8").strip())
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
     if not 1 <= port <= 65535:
         return None
