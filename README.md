@@ -119,11 +119,6 @@ Required fields: `description`, `url`. Placeholders use `#{parameter_name}`.
 Reload after edits: the server watches the JSON file, or run
 `load_bookmarks` in a development checkout.
 
-## Migrating from a git checkout
-
-If you previously used a repo-local `bunnify.json` or `~/work/bunnify/`,
-see [Migrating from a git checkout](docs/MIGRATING.md).
-
 ## Development checkout
 
 Contributors clone the repo and use `uv` — separate from the pipx path above.
@@ -155,7 +150,6 @@ the checkout `.venv` (same entry points systemd uses on service hosts).
 | [CONFIG.md](docs/CONFIG.md) | XDG paths and environment variables |
 | [LOCAL.md](docs/LOCAL.md) | Local vs remote setup, ports, LaunchAgent |
 | [SYSTEMD.md](docs/SYSTEMD.md) | Linux user service |
-| [MIGRATING.md](docs/MIGRATING.md) | Move off a git checkout |
 | [CHROME_SETUP.md](CHROME_SETUP.md) | Browser search engine |
 | [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | Cheat sheet |
 | [RELEASING.md](docs/RELEASING.md) | Maintainers: PyPI releases |

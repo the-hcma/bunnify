@@ -49,13 +49,6 @@ written to `~/.local/share/bunnify/run/.bunnify.port`. Set
 `BUNNIFY_DATA_DIR` to relocate the SQLite database, logs, and managed runtime
 files together.
 
-Before upgrading from a checkout that stored PID files under
-`~/.config/bunnify/run`, stop that server explicitly:
-
-```bash
-bunnify-server --stop --pid-dir ~/.config/bunnify/run
-```
-
 ## macOS LaunchAgent
 
 Copy `etc/launchd/com.thehcma.bunnify.plist.example` to
