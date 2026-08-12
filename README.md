@@ -76,8 +76,8 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 # edit ~/.config/bunnify/bookmarks.json with your shortcuts
 ```
 
-See [Configuration](docs/CONFIG.md) for overrides (`BUNNIFY_BOOKMARKS`,
-`XDG_CONFIG_HOME`).
+See [Configuration](https://github.com/the-hcma/bunnify/blob/main/docs/CONFIG.md)
+for overrides (`BUNNIFY_BOOKMARKS`, `XDG_CONFIG_HOME`).
 
 ### 2. Configure local or remote mode
 
@@ -139,10 +139,13 @@ curl --max-time 2 http://127.0.0.1:8000/health
 `bunnify setup` starts a managed local server for daily CLI use. Details:
 [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
-**Linux production:** [systemd user service](docs/SYSTEMD.md) via
-`setup-service` from [repository-helpers](https://github.com/the-hcma/repository-helpers).
+**Linux production:**
+[systemd user service](https://github.com/the-hcma/bunnify/blob/main/docs/SYSTEMD.md)
+via `setup-service` from
+[repository-helpers](https://github.com/the-hcma/repository-helpers).
 
-**macOS:** [LaunchAgent example](etc/launchd/com.thehcma.bunnify.plist.example).
+**macOS:**
+[LaunchAgent example](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.plist.example).
 
 ## Web usage
 
@@ -194,8 +197,9 @@ cp bunnify.json.example ~/.config/bunnify/bookmarks.json
 ./test_bunnify
 ```
 
-Full guidelines: [CONTRIBUTING.md](CONTRIBUTING.md). Quality gates:
-`./scripts/checks`.
+Full guidelines:
+[CONTRIBUTING.md](https://github.com/the-hcma/bunnify/blob/main/CONTRIBUTING.md).
+Quality gates: `./scripts/checks`.
 
 Wrappers under `./scripts/` prefer `uv run` when `uv` is on `PATH`, otherwise
 the checkout `.venv` (same entry points systemd uses on service hosts).
@@ -204,12 +208,12 @@ the checkout `.venv` (same entry points systemd uses on service hosts).
 
 | Doc | Audience |
 |-----|----------|
-| [CONFIG.md](docs/CONFIG.md) | XDG paths and environment variables |
-| [LOCAL.md](docs/LOCAL.md) | Local vs remote setup, ports, LaunchAgent |
-| [SYSTEMD.md](docs/SYSTEMD.md) | Linux user service |
-| [CHROME_SETUP.md](CHROME_SETUP.md) | Browser search engine |
-| [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | Cheat sheet |
-| [RELEASING.md](docs/RELEASING.md) | Maintainers: PyPI releases |
+| [CONFIG.md](https://github.com/the-hcma/bunnify/blob/main/docs/CONFIG.md) | XDG paths and environment variables |
+| [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md) | Local vs remote setup, ports, LaunchAgent |
+| [SYSTEMD.md](https://github.com/the-hcma/bunnify/blob/main/docs/SYSTEMD.md) | Linux user service |
+| [CHROME_SETUP.md](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md) | Browser search engine |
+| [QUICK_REFERENCE.md](https://github.com/the-hcma/bunnify/blob/main/QUICK_REFERENCE.md) | Cheat sheet |
+| [RELEASING.md](https://github.com/the-hcma/bunnify/blob/main/docs/RELEASING.md) | Maintainers: PyPI releases |
 
 ## Troubleshooting
 
@@ -242,8 +246,10 @@ bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 
 ## Releasing
 
-Maintainers: [docs/RELEASING.md](docs/RELEASING.md) (Release Please + PyPI).
+Maintainers:
+[docs/RELEASING.md](https://github.com/the-hcma/bunnify/blob/main/docs/RELEASING.md)
+(Release Please + PyPI).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/the-hcma/bunnify/blob/main/LICENSE).

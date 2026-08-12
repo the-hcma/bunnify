@@ -156,6 +156,30 @@ def ensure_ready_base_url(
         return base_url
 
 
+def format_browser_setup_text(base_url: str) -> str:
+    """Return Chrome/Edge OpenSearch instructions for ``base_url``."""
+    normalized = base_url.rstrip("/")
+    search_url = f"{normalized}/search/?q=%s"
+    return "\n".join(
+        [
+            "Configure Chrome or Edge for address-bar shortcuts",
+            "(use this exact URL — it must match the server you just set up):",
+            "",
+            "1. Open search-engine settings:",
+            "     Chrome → chrome://settings/searchEngines",
+            "     Edge   → edge://settings/searchEngines",
+            "2. Add (or edit) a site search entry:",
+            "     Search engine name: Bunnify",
+            "     Shortcut / keyword: b",
+            f"     URL: {search_url}",
+            "3. Save, then in the address bar type: b gh",
+            "",
+            f"Saved server base URL: {normalized}",
+            "Guide: https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md",
+        ]
+    )
+
+
 def format_onboarding_text() -> str:
     """Return post-install / post-upgrade next steps for the terminal."""
     bookmarks = default_bookmarks_path()
@@ -246,16 +270,26 @@ def run_setup(
     environ: dict[str, str] | None = None,
     env_path: Path | None = None,
     print_fn: Callable[[str], None] | None = None,
+    theme: Theme | None = None,
 ) -> str:
     """Interactively configure a verified local or remote Bunnify server."""
     ask = prompt_fn or input
     log = print_fn or click.echo
+    colors = theme if theme is not None else Theme(enabled=False)
     path = env_path if env_path is not None else env_file_path(environ=environ)
     existing = load_preferences(environ=environ, env_path=path)
 
+    log(colors.header("Bunnify setup"))
+    log(colors.dim("Press Enter to accept the value in [brackets]."))
+
     while True:
         try:
-            answer = ask("Server mode, local or remote? [local]: ")
+            answer = ask(
+                colors.brand("Server mode")
+                + colors.dim(" [local]")
+                + colors.dim(" (Enter accepts)")
+                + ": "
+            )
         except EOFError as exc:
             raise ClientError("Setup aborted") from exc
         mode = answer.strip().lower() or "local"
@@ -265,7 +299,7 @@ def run_setup(
         if mode in {"r", "remote"}:
             mode = "remote"
             break
-        log("Please enter 'local' or 'remote'.")
+        log(colors.warn("Please enter 'local' or 'remote'."))
 
     if mode == "local":
         bookmarks = ensure_user_bookmarks(
@@ -282,6 +316,7 @@ def run_setup(
                 else None
             ),
             print_fn=log,
+            theme=colors,
         )
         while True:
             try:
@@ -291,7 +326,10 @@ def run_setup(
                     bookmarks=bookmarks,
                 )
             except (OSError, RuntimeError, ValueError) as exc:
-                if _retry_requested(ask, f"Local server failed: {exc}\nRetry? [Y/n]: "):
+                if _retry_requested(
+                    ask,
+                    colors.warn(f"Local server failed: {exc}\n") + "Retry? [Y/n]: ",
+                ):
                     preferred_port = None
                     continue
                 raise ClientError("Setup aborted; settings were not changed") from exc
@@ -302,11 +340,22 @@ def run_setup(
                     local_port=actual_port,
                 )
                 save_preferences(preferences, env_path=path, environ=environ)
-                log(f"Configured local Bunnify server at {base_url}")
+                log(
+                    colors.ok(
+                        f"✓ Port {actual_port} is free (or already running "
+                        "Bunnify) and /health returned ok"
+                    )
+                )
+                log(colors.ok(f"✓ Configured local Bunnify server at {base_url}"))
+                log("")
+                log(colors.header("Browser"))
+                for line in format_browser_setup_text(base_url).splitlines():
+                    log(line)
                 return base_url
             if not _retry_requested(
                 ask,
-                f"Health check failed for {base_url}.\nRetry? [Y/n]: ",
+                colors.warn(f"Health check failed for {base_url}.\n")
+                + "Retry? [Y/n]: ",
             ):
                 raise ClientError("Setup aborted; settings were not changed")
 
@@ -317,7 +366,12 @@ def run_setup(
     )
     while True:
         try:
-            answer = ask(f"Remote Bunnify URL [{suggestion}]: ")
+            answer = ask(
+                colors.brand("Remote Bunnify URL")
+                + colors.dim(f" [{suggestion}]")
+                + colors.dim(" (Enter accepts)")
+                + ": "
+            )
         except EOFError as exc:
             raise ClientError("Setup aborted; settings were not changed") from exc
         base_url = resolve_base_url(
@@ -331,11 +385,17 @@ def run_setup(
                 local_port=None,
             )
             save_preferences(preferences, env_path=path, environ=environ)
-            log(f"Configured remote Bunnify server at {base_url}")
+            log(colors.ok(f"✓ Health check passed for {base_url}"))
+            log(colors.ok(f"✓ Configured remote Bunnify server at {base_url}"))
+            log("")
+            log(colors.header("Browser"))
+            for line in format_browser_setup_text(base_url).splitlines():
+                log(line)
             return base_url
         if not _retry_requested(
             ask,
-            f"Health check failed for {base_url}.\nTry another URL? [Y/n]: ",
+            colors.warn(f"Health check failed for {base_url}.\n")
+            + "Try another URL? [Y/n]: ",
         ):
             raise ClientError("Setup aborted; settings were not changed")
 
@@ -350,12 +410,16 @@ def build_query_from_args(args: tuple[str, ...]) -> str:
     return " ".join(args).strip()
 
 
-def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
-    try:
-        answer = prompt_fn(message)
-    except EOFError:
-        return False
-    return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
+def _find_usable_local_port(start: int) -> int:
+    """Return the next free port or healthy Bunnify at or above ``start``."""
+    candidate = max(start, MIN_LOCAL_PORT)
+    while candidate <= 65535:
+        if port_is_free(candidate):
+            return candidate
+        if check_health(f"http://127.0.0.1:{candidate}"):
+            return candidate
+        candidate += 1
+    raise ClientError(f"No free local port found between {MIN_LOCAL_PORT} and 65535")
 
 
 def _prompt_local_port(
@@ -363,16 +427,23 @@ def _prompt_local_port(
     *,
     existing_port: int | None,
     print_fn: Callable[[str], None] | None = None,
+    theme: Theme | None = None,
 ) -> int:
     """Ask for a free non-privileged local server port."""
     log = print_fn or (lambda _message: None)
+    colors = theme if theme is not None else Theme(enabled=False)
     default_port = existing_port if existing_port is not None else 8000
     if default_port != 0 and not MIN_LOCAL_PORT <= default_port <= 65535:
         default_port = 8000
 
     while True:
         try:
-            answer = prompt_fn(f"Local server port [{default_port}]: ")
+            answer = prompt_fn(
+                colors.brand("Local server port")
+                + colors.dim(f" [{default_port}]")
+                + colors.dim(" (Enter accepts)")
+                + ": "
+            )
         except EOFError as exc:
             raise ClientError("Setup aborted") from exc
         stripped = answer.strip()
@@ -383,24 +454,41 @@ def _prompt_local_port(
             try:
                 port = int(stripped)
             except ValueError:
-                log(f"Invalid port: {stripped!r}. Try again.")
+                log(colors.warn(f"Invalid port: {stripped!r}. Try again."))
                 continue
         assert port is not None
         if port == 0:
+            log(colors.dim("Using an OS-assigned ephemeral port (0)."))
             return 0
         if not MIN_LOCAL_PORT <= port <= 65535:
             log(
-                f"Port must be {MIN_LOCAL_PORT}-65535 "
-                "(or 0 for an OS-assigned port). Try again."
+                colors.warn(
+                    f"Port must be {MIN_LOCAL_PORT}-65535 "
+                    "(or 0 for an OS-assigned port). Try again."
+                )
             )
             continue
-        if not port_is_free(port):
-            if check_health(f"http://127.0.0.1:{port}"):
-                return port
-            log(f"Port {port} is already in use. Choose another port.")
-            default_port = port
-            continue
-        return port
+        if port_is_free(port):
+            log(colors.ok(f"✓ Port {port} is free"))
+            return port
+        if check_health(f"http://127.0.0.1:{port}"):
+            log(colors.ok(f"✓ Port {port} is already serving a healthy Bunnify"))
+            return port
+        log(colors.warn(f"Port {port} is already in use. Searching for a free port…"))
+        found = _find_usable_local_port(port + 1)
+        if port_is_free(found):
+            log(colors.ok(f"✓ Found free port {found}"))
+        else:
+            log(colors.ok(f"✓ Found healthy Bunnify on port {found}"))
+        return found
+
+
+def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
+    try:
+        answer = prompt_fn(message)
+    except EOFError:
+        return False
+    return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
 
 
 def _wait_for_healthy_remote(
@@ -900,7 +988,7 @@ def main(
       ./scripts/bunnify pr 12345
 
     \b
-    After pipx install or upgrade:
+    After pipx install or upgrade (`onboard` is a reserved shortcut name):
       bunnify onboard
       bunnify --onboard
 
@@ -948,6 +1036,7 @@ def main(
                 prompt_fn=prompt_fn,
                 env_path=env_file,
                 print_fn=click.echo,
+                theme=theme,
             )
             return
         resolved_url = ensure_ready_base_url(
