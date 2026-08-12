@@ -969,7 +969,7 @@ class ConfigUnitTests(TestCase):
                 patch(
                     "app.cli.ensure_local_server",
                     return_value=("http://127.0.0.1:8123", 8123),
-                ),
+                ) as ensure_server,
                 patch("app.cli.check_health", return_value=True),
             ):
                 result = run_setup(
@@ -980,6 +980,7 @@ class ConfigUnitTests(TestCase):
                 )
 
             self.assertEqual(result, "http://127.0.0.1:8123")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
             preferences = load_preferences(environ={}, env_path=path)
             self.assertIsNotNone(preferences)
             assert preferences is not None

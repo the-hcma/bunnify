@@ -358,7 +358,7 @@ def _prompt_local_port(
         raise ClientError("Setup aborted") from exc
     stripped = answer.strip()
     if not stripped:
-        return existing_port
+        return existing_port if existing_port is not None else 8000
     try:
         port = int(stripped)
     except ValueError as exc:
