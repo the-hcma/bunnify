@@ -992,6 +992,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.env"
             bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -1005,11 +1006,18 @@ class ConfigUnitTests(TestCase):
                     prompt_fn=lambda _message: "",
                     environ={"XDG_CONFIG_HOME": tmp},
                     env_path=path,
-                    print_fn=lambda _message: None,
+                    print_fn=messages.append,
                 )
 
             self.assertEqual(result, "http://127.0.0.1:8123")
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            joined = "\n".join(messages)
+            self.assertIn("Port 8000 is free", joined)
+            self.assertIn("Configured local Bunnify server", joined)
+            self.assertIn("http://127.0.0.1:8123/search/?q=%s", joined)
+            self.assertIn("chrome://settings/searchEngines", joined)
+            self.assertIn("edge://settings/searchEngines", joined)
+            self.assertIn("Shortcut / keyword: b", joined)
             preferences = load_preferences(environ={}, env_path=path)
             self.assertIsNotNone(preferences)
             assert preferences is not None
@@ -1103,7 +1111,7 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.local_port, 8765)
 
-    def test_setup_local_reprompts_when_default_port_busy(self) -> None:
+    def test_setup_local_finds_next_free_port_when_busy(self) -> None:
         import tempfile
         from pathlib import Path
 
@@ -1112,23 +1120,20 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.env"
             bookmarks = Path(tmp) / "bookmarks.json"
-            responses = iter(["local", "", "8765"])
+            responses = iter(["local", ""])
             messages: list[str] = []
+
+            def port_free(port: int) -> bool:
+                return port != 8000
+
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
                     "app.cli.ensure_local_server",
-                    return_value=("http://127.0.0.1:8765", 8765),
+                    return_value=("http://127.0.0.1:8001", 8001),
                 ) as ensure_server,
-                patch("app.cli.check_health", return_value=True),
-                patch(
-                    "app.cli.check_health",
-                    side_effect=lambda url: ":8765" in url,
-                ),
-                patch(
-                    "app.cli.port_is_free",
-                    side_effect=[False, True],
-                ),
+                patch("app.cli.check_health", side_effect=lambda url: ":8001" in url),
+                patch("app.cli.port_is_free", side_effect=port_free),
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
@@ -1137,9 +1142,51 @@ class ConfigUnitTests(TestCase):
                     print_fn=messages.append,
                 )
 
-            self.assertEqual(result, "http://127.0.0.1:8765")
-            self.assertEqual(ensure_server.call_args.kwargs["port"], 8765)
-            self.assertTrue(any("already in use" in message for message in messages))
+            self.assertEqual(result, "http://127.0.0.1:8001")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8001)
+            joined = "\n".join(messages)
+            self.assertIn("already in use", joined)
+            self.assertIn("Found free port 8001", joined)
+            self.assertIn("http://127.0.0.1:8001/search/?q=%s", joined)
+            self.assertIn("chrome://settings/searchEngines", joined)
+            self.assertIn("edge://settings/searchEngines", joined)
+            self.assertIn("Shortcut / keyword: b", joined)
+
+    def test_setup_local_scan_reuses_healthy_bunnify(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            responses = iter(["local", ""])
+            messages: list[str] = []
+
+            def port_free(port: int) -> bool:
+                return port not in {8000, 8001}
+
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8001", 8001),
+                ) as ensure_server,
+                patch("app.cli.check_health", side_effect=lambda url: ":8001" in url),
+                patch("app.cli.port_is_free", side_effect=port_free),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8001")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8001)
+            joined = "\n".join(messages)
+            self.assertIn("Found healthy Bunnify on port 8001", joined)
 
     def test_setup_local_accepts_port_with_healthy_server(self) -> None:
         import tempfile
@@ -1338,6 +1385,20 @@ class ConfigUnitTests(TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         setup.assert_called_once()
+
+    def test_onboard_prints_next_steps(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["onboard"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("bookmarks.json", result.output)
+        self.assertIn("bunnify setup", result.output)
+        self.assertIn("CHROME_SETUP.md", result.output)
+        self.assertIn("pipx upgrade bunnify", result.output)
+
+        flagged = CliRunner().invoke(main, ["--onboard"])
+        self.assertEqual(flagged.exit_code, 0)
+        self.assertIn("bunnify setup", flagged.output)
 
     def test_base_url_prepends_http_scheme(self) -> None:
         from app.config import resolve_base_url

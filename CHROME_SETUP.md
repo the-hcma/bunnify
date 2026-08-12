@@ -1,17 +1,18 @@
-# Chrome search engine setup
+# Chrome / Edge search engine setup
 
-Configure Bunnify as a Chrome search engine for fast bookmark access from the
-address bar.
+Configure Bunnify as a Chrome or Edge search engine for fast bookmark access
+from the address bar. Both browsers use the same OpenSearch / site-search URL
+pattern.
 
-**Prefer local on a laptop.** Point Chrome at the same machine’s managed server
-(`bunnify setup` → **local**). Use a remote URL only when you intentionally
+**Prefer local on a laptop.** Point the browser at the same machine’s managed
+server (`bunnify setup` → **local**). Use a remote URL only when you intentionally
 share a centralized/home-server install — and keep that host reachable whenever
 you use the address bar.
 
 **Prerequisites:** Bunnify server running (local `bunnify-server` / `bunnify setup`,
 or a reachable remote). Setup saves the verified base URL to
-`~/.config/bunnify/config.env` as `BUNNIFY_BASE_URL`. Chrome’s search-engine URL
-must match that value; if you change mode or port, update Chrome too.
+`~/.config/bunnify/config.env` as `BUNNIFY_BASE_URL`. The browser search-engine
+URL must match that value; if you change mode or port, update the engine too.
 
 Read your base URL (use it in the steps below instead of hard-coded `:8000`):
 
@@ -21,7 +22,9 @@ grep '^BUNNIFY_BASE_URL=' ~/.config/bunnify/config.env | cut -d= -f2-
 
 ## Recommended: manual OpenSearch URL
 
-1. Open `chrome://settings/searchEngines`
+1. Open search-engine settings:
+   - Chrome: `chrome://settings/searchEngines`
+   - Edge: `edge://settings/searchEngines`
 2. Add a site search entry:
    - **Search engine:** `Bunnify`
    - **Keyword:** `b` (or your preference)
@@ -38,10 +41,10 @@ Examples in the address bar (with keyword `b`):
 ## Automatic detection
 
 1. Start the server
-2. Visit `<BUNNIFY_BASE_URL>/` in Chrome (same value as above)
-3. Chrome may offer to add the engine from `/opensearch.xml`
+2. Visit `<BUNNIFY_BASE_URL>/` in Chrome or Edge (same value as above)
+3. The browser may offer to add the engine from `/opensearch.xml`
 
-Manual setup is more reliable across Chrome versions.
+Manual setup is more reliable across browser versions.
 
 ## IPv6 / localhost
 

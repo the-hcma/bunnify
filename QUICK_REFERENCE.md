@@ -18,6 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 
 ```bash
 bunnify                         # interactive REPL
+bunnify onboard                 # post-install / upgrade checklist
 bunnify --setup                 # configure local or remote server
 bunnify gh                      # open a shortcut (example key from bunnify.json.example)
 bunnify pr the-hcma/bunnify 272 # parameterized shortcut (repo + PR number)

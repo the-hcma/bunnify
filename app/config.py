@@ -319,8 +319,11 @@ def ensure_user_bookmarks(
         f"{target}\n"
         "Create it manually before starting the server, for example:\n"
         f"  mkdir -p {target.parent}\n"
-        f"  cp /path/to/your/bookmarks.json {target}\n"
-        "Or set BUNNIFY_BOOKMARKS to an existing file path."
+        "  curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/"
+        "bunnify.json.example \\\n"
+        f"    -o {target}\n"
+        "Or set BUNNIFY_BOOKMARKS to an existing file path.\n"
+        "Full checklist: bunnify onboard"
     )
 
 
