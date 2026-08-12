@@ -38,6 +38,29 @@ if [[ -d "$HOME/.local/bin" ]]; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
+# Service host runtime paths (match etc/systemd/bunnify.service).
+scratch_root="$HOME/scratch/bunnify"
+export BUNNIFY_DATA_DIR="${BUNNIFY_DATA_DIR:-${scratch_root}/data}"
+export BUNNIFY_LOG_FILE="${BUNNIFY_LOG_FILE:-${scratch_root}/bunnify.log}"
+mkdir -p "$BUNNIFY_DATA_DIR" "$(dirname "$BUNNIFY_LOG_FILE")"
+
+# One-time migration from the old repo-local database and bookmarks layout.
+if [[ -f "${repo_dir}/db.sqlite3" && ! -f "${BUNNIFY_DATA_DIR}/db.sqlite3" ]]; then
+    cp "${repo_dir}/db.sqlite3" "${BUNNIFY_DATA_DIR}/db.sqlite3"
+    echo "  Migrated database to ${BUNNIFY_DATA_DIR}/db.sqlite3"
+fi
+config_bookmarks="${XDG_CONFIG_HOME:-$HOME/.config}/bunnify/bookmarks.json"
+if [[ ! -f "$config_bookmarks" ]]; then
+    mkdir -p "$(dirname "$config_bookmarks")"
+    if [[ -f "${repo_dir}/bunnify.json" ]]; then
+        cp "${repo_dir}/bunnify.json" "$config_bookmarks"
+        echo "  Migrated bookmarks to ${config_bookmarks}"
+    elif [[ -f "${HOME}/work/bunnify/bunnify.json" ]]; then
+        cp "${HOME}/work/bunnify/bunnify.json" "$config_bookmarks"
+        echo "  Migrated legacy bookmarks to ${config_bookmarks}"
+    fi
+fi
+
 # Worktree database: when running from a linked worktree, point DATABASE_URL at
 # the primary worktree's db.sqlite3 so all worktrees share the same live database.
 # Without this, Django resolves db.sqlite3 relative to settings.py inside the

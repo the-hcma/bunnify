@@ -38,6 +38,11 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def checkout_bookmarks_path() -> Path:
+    """Repository-local ``bunnify.json`` (legacy checkout layout, gitignored)."""
+    return repo_root() / "bunnify.json"
+
+
 def xdg_config_home(*, environ: dict[str, str] | None = None) -> Path:
     """Return the XDG config home (``$XDG_CONFIG_HOME`` or ``~/.config``).
 
@@ -278,8 +283,8 @@ def ensure_user_bookmarks(
 
     Order:
     1. Existing destination (never overwrite).
-    2. Interactive offer to copy/symlink legacy ``~/work/bunnify/bunnify.json``.
-       Non-interactive: copy legacy when present.
+    2. Copy/symlink from ``~/work/bunnify/bunnify.json`` or the checkout's
+       gitignored ``bunnify.json`` when present. Non-interactive: copy when found.
     3. Seed from ``bunnify.json.example`` / packaged example.
     """
     target = dest if dest is not None else default_bookmarks_path(environ=environ)
@@ -287,16 +292,19 @@ def ensure_user_bookmarks(
         return target
 
     legacy_path = legacy if legacy is not None else legacy_bookmarks_path()
+    checkout_path = checkout_bookmarks_path()
     should_prompt = allow_prompt if allow_prompt is not None else sys.stdin.isatty()
     log = print_fn or (lambda _msg: None)
 
-    if legacy_path.is_file():
+    for source in (legacy_path, checkout_path):
+        if not source.is_file():
+            continue
         choice = "copy"
         if should_prompt:
             ask = prompt_fn or input
             try:
                 answer = ask(
-                    f"Found legacy bookmarks at {legacy_path}.\n"
+                    f"Found bookmarks at {source}.\n"
                     f"Migrate to {target}? [c]opy / [s]ymlink / [e]xample seed: "
                 )
             except EOFError:
@@ -309,15 +317,17 @@ def ensure_user_bookmarks(
             else:
                 choice = "copy"
 
+        if choice == "example":
+            break
+
         target.parent.mkdir(parents=True, exist_ok=True)
         if choice == "symlink":
-            target.symlink_to(legacy_path.resolve())
-            log(f"Symlinked bookmarks: {target} → {legacy_path}")
+            target.symlink_to(source.resolve())
+            log(f"Symlinked bookmarks: {target} → {source}")
             return target
-        if choice == "copy":
-            shutil.copyfile(legacy_path, target)
-            log(f"Copied legacy bookmarks to {target}")
-            return target
+        shutil.copyfile(source, target)
+        log(f"Copied bookmarks to {target} from {source}")
+        return target
 
     seeded = seed_bookmarks_from_example(target)
     log(f"Seeded bookmarks from example at {seeded}")
