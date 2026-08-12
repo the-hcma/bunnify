@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.3.0...bunnify-v0.4.0) (2026-08-12)
+
+
+### Features
+
+* embed release commit and clarify busy-port setup ([#280](https://github.com/the-hcma/bunnify/issues/280)) ([83f279e](https://github.com/the-hcma/bunnify/commit/83f279eeff5c3b976815893296b224b3c7e1a606))
+
 ## [0.3.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.2.0...bunnify-v0.3.0) (2026-08-12)
 
 
