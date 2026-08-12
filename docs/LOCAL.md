@@ -1,6 +1,22 @@
 # Local and remote server setup
 
-Run the interactive setup after installing with pipx:
+## Which mode to choose
+
+| Situation | Mode |
+|-----------|------|
+| Laptop / desktop you carry or use daily | **local** (default) — run `bunnify-server` on the same machine as Chrome and the CLI |
+| Always-on home lab or shared household host | **remote** — one centralized server; other devices point at its URL |
+
+On a laptop, prefer **local**. Chrome OpenSearch and the CLI both talk to the same
+base URL from `~/.config/bunnify/config.env`. If that URL is a remote host and
+the host is unreachable, both the CLI and the browser fail — there is no
+automatic fallback to a local server. Re-run `bunnify setup` and choose local
+(or restore the remote) when that happens.
+
+Remote mode fits a **home server** (or similar) that stays up on the LAN/VPN so
+phones, desktops, and laptops can share one bookmark install.
+
+## Setup
 
 ```bash
 bunnify setup
@@ -15,10 +31,9 @@ Setup defaults to **local** mode. It requires an existing bookmarks file (see
 [Configuration](CONFIG.md)), prompts for a free non-privileged listening port
 (default `8000`, or `0` for an OS-assigned port), starts a managed server,
 verifies `/health`, and records the selected port in `config.env` and under
-`$BUNNIFY_DATA_DIR/run/` (for example `~/scratch/bunnify/run` on service hosts). Remote mode prompts for a URL and saves it only
-after its `/health` response is HTTP 200 with body `ok`. If a configured remote
-server later becomes unavailable, the interactive CLI offers to use the managed
-local server for that run without replacing the saved remote preference.
+`$BUNNIFY_DATA_DIR/run/` (for example `~/scratch/bunnify/run` on service hosts).
+Remote mode prompts for a URL and saves it only after its `/health` response is
+HTTP 200 with body `ok`.
 
 Verified settings are stored in `~/.config/bunnify/config.env` (or
 `$XDG_CONFIG_HOME/bunnify/config.env`):
@@ -80,3 +95,7 @@ port 8000 is free unless you override `--port`.
   ephemeral port. Noninteractive mode never kills an unrelated process.
 - Stale managed process: run the manual `--stop --pid-dir` command above and
   rerun setup.
+- Remote unreachable: the CLI does not switch to local automatically. Fix the
+  network/server or run `bunnify setup` and choose **local** (laptop) or a
+  healthy remote URL. Update Chrome’s search engine to the same
+  `BUNNIFY_BASE_URL` (see [CHROME_SETUP](../CHROME_SETUP.md)).

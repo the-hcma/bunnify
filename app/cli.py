@@ -103,49 +103,22 @@ def ensure_ready_base_url(
             )
         return DEFAULT_BASE_URL
 
-    persist_local_preferences = preferences.mode == "local"
     if preferences.mode == "remote":
         if not preferences.base_url:
             raise ClientError("Remote mode requires BUNNIFY_BASE_URL")
-        if check_health(preferences.base_url):
-            return preferences.base_url
-        if not interactive:
-            return _wait_for_healthy_remote(
-                preferences.base_url,
-                prompt_fn=ask,
-                interactive=False,
-                print_fn=log,
-            )
-        log(f"Cannot reach a healthy Bunnify server at {preferences.base_url}")
-        try:
-            answer = ask("Use the managed local server for this run instead? [Y/n]: ")
-        except EOFError as exc:
-            raise ClientError("Connection aborted") from exc
-        if answer.strip().lower() in {"n", "no"}:
-            return _wait_for_healthy_remote(
-                preferences.base_url,
-                prompt_fn=ask,
-                interactive=True,
-                print_fn=log,
-            )
-        bookmarks = ensure_user_bookmarks(
-            environ=environ,
+        return _wait_for_healthy_remote(
+            preferences.base_url,
             prompt_fn=ask,
-            allow_prompt=True,
+            interactive=interactive,
             print_fn=log,
         )
-        preferences = ServerPreferences(
-            mode="local",
-            base_url=None,
-            local_port=None,
-        )
-    else:
-        bookmarks = ensure_user_bookmarks(
-            environ=environ,
-            prompt_fn=ask,
-            allow_prompt=interactive,
-            print_fn=log,
-        )
+
+    bookmarks = ensure_user_bookmarks(
+        environ=environ,
+        prompt_fn=ask,
+        allow_prompt=interactive,
+        print_fn=log,
+    )
     preferred_port = preferences.local_port
     while True:
         try:
@@ -168,9 +141,7 @@ def ensure_ready_base_url(
             ):
                 raise ClientError(message)
             continue
-        if persist_local_preferences and (
-            actual_port != preferences.local_port or base_url != preferences.base_url
-        ):
+        if actual_port != preferences.local_port or base_url != preferences.base_url:
             path = env_path if env_path is not None else env_file_path(environ=environ)
             save_preferences(
                 ServerPreferences(

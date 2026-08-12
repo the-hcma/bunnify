@@ -670,45 +670,73 @@ class ConfigUnitTests(TestCase):
                 print_fn=ANY,
             )
 
-    def test_ensure_ready_base_url_falls_back_from_remote_to_local(self) -> None:
+    def test_ensure_ready_base_url_remote_unreachable_raises(self) -> None:
         import tempfile
         from pathlib import Path
 
         from app.cli import ensure_ready_base_url
-        from app.config import (
-            ServerPreferences,
-            load_preferences,
-            save_preferences,
-        )
+        from app.client import ClientError
+        from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.env"
-            bookmarks = Path(tmp) / "bookmarks.json"
-            remote_preferences = ServerPreferences(
-                mode="remote",
-                base_url="https://unavailable.example",
-                local_port=None,
-            )
-            save_preferences(remote_preferences, env_path=path)
-            with (
-                patch("app.cli.check_health", side_effect=[False, True]),
-                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
-                patch(
-                    "app.cli.ensure_local_server",
-                    return_value=("http://127.0.0.1:8123", 8123),
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://unavailable.example",
+                    local_port=None,
                 ),
+                env_path=path,
+            )
+            with (
+                patch("app.cli.check_health", return_value=False),
+                patch("app.cli.ensure_local_server") as ensure_server,
             ):
-                result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
-                    env_path=path,
-                    prompt_fn=lambda _message: "",
-                    allow_prompt=True,
-                    print_fn=lambda _message: None,
-                )
+                with self.assertRaises(ClientError) as raised:
+                    ensure_ready_base_url(
+                        environ={"XDG_CONFIG_HOME": tmp},
+                        env_path=path,
+                        allow_prompt=False,
+                        print_fn=lambda _message: None,
+                    )
 
-            self.assertEqual(result, "http://127.0.0.1:8123")
-            preferences = load_preferences(environ={}, env_path=path)
-            self.assertEqual(preferences, remote_preferences)
+            self.assertIn("unavailable.example", str(raised.exception))
+            ensure_server.assert_not_called()
+
+    def test_ensure_ready_base_url_remote_retry_then_abort(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.client import ClientError
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://unavailable.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            responses = iter(["n"])
+            with (
+                patch("app.cli.check_health", return_value=False),
+                patch("app.cli.ensure_local_server") as ensure_server,
+            ):
+                with self.assertRaises(ClientError) as raised:
+                    ensure_ready_base_url(
+                        environ={"XDG_CONFIG_HOME": tmp},
+                        env_path=path,
+                        prompt_fn=lambda _message: next(responses),
+                        allow_prompt=True,
+                        print_fn=lambda _message: None,
+                    )
+
+            self.assertEqual(str(raised.exception), "Connection aborted")
+            ensure_server.assert_not_called()
 
     def test_ensure_ready_base_url_retries_with_ephemeral_port(self) -> None:
         import tempfile

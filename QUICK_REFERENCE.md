@@ -1,8 +1,12 @@
 # ⚡ Quick reference
 
-Assumes `pipx install bunnify`, a seeded `~/.config/bunnify/bookmarks.json`,
-and a completed `bunnify --setup`. Your base URL is in
-`~/.config/bunnify/config.env` as `BUNNIFY_BASE_URL`.
+# ⚡ Quick reference
+
+Assumes `pipx install bunnify`, `pipx ensurepath` (so `~/.local/bin` is on
+`PATH`), a seeded `~/.config/bunnify/bookmarks.json`, and a completed
+`bunnify --setup`. Prefer **local** mode on a laptop; use **remote** for a
+home-server install. Your base URL is in `~/.config/bunnify/config.env` as
+`BUNNIFY_BASE_URL` — Chrome must use the same URL.
 
 ## Bookmarks file
 
