@@ -49,9 +49,9 @@ One-time override without saving: `bunnify --base-url https://… shortcut`.
 ```bash
 bunnify              # interactive REPL (Tab completion, history)
 bunnify gh           # open a shortcut in the browser
-bunnify pr 12345     # parameterized shortcut
+bunnify pr the-hcma/bunnify 272   # parameterized shortcut
 bunnify --fzf        # fuzzy picker
-bunnify --print-url vault
+bunnify --print-url gh
 ```
 
 Unknown keys exit non-zero in direct mode (no search-engine fallback).

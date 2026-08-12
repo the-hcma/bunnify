@@ -1,8 +1,8 @@
 # ⚡ Quick reference
 
-Assumes `pipx install bunnify` and a completed `bunnify setup`. Default local
-base URL is usually `http://127.0.0.1:8000` — check
-`~/.config/bunnify/config.env`.
+Assumes `pipx install bunnify`, a seeded `~/.config/bunnify/bookmarks.json`,
+and a completed `bunnify --setup`. Your base URL is in
+`~/.config/bunnify/config.env` as `BUNNIFY_BASE_URL`.
 
 ## Bookmarks file
 
@@ -15,23 +15,23 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 ## CLI
 
 ```bash
-bunnify                    # REPL
-bunnify setup              # reconfigure local/remote
-bunnify gh                 # open shortcut
-bunnify pr 12345           # parameterized
-bunnify --fzf              # fuzzy pick
-bunnify --print-url vault  # print URL only
-bunnify --list-keys        # all keys
+bunnify                         # interactive REPL
+bunnify --setup                 # configure local or remote server
+bunnify gh                      # open a shortcut (example key from bunnify.json.example)
+bunnify pr the-hcma/bunnify 272 # parameterized shortcut (repo + PR number)
+bunnify --fzf                   # fuzzy-pick a shortcut (requires fzf on PATH)
+bunnify --print-url gh          # print resolved URL instead of opening browser
+bunnify --list-keys             # list keys from the running server
 ```
 
 ## Server
 
 ```bash
 bunnify-server --help
-bunnify-server --foreground --noninteractive --port 8000   # stay in foreground
+bunnify-server --foreground --noninteractive --port 8000   # foreground (systemd/debug)
 bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run
 bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
-curl -sf http://127.0.0.1:8000/health
+curl -sf "$(grep '^BUNNIFY_BASE_URL=' ~/.config/bunnify/config.env | cut -d= -f2-)/health"
 ```
 
 Development checkout: prefix with `./scripts/` (e.g. `./scripts/bunnify-server`).
