@@ -11,6 +11,7 @@ palette, Chrome OpenSearch integration, and parameterized redirects.
 pipx install bunnify
 pipx ensurepath   # adds ~/.local/bin to PATH if needed (restart the shell)
 bunnify --version
+bunnify onboard   # print bookmarks / setup / Chrome next steps
 ```
 
 pipx installs `bunnify` and `bunnify-server` under **`~/.local/bin`** by default
@@ -21,44 +22,38 @@ running either command. Prefer the pipx apps over any checkout
 The wheel installs **`bunnify`** (CLI) and **`bunnify-server`** (Django
 server). No repository checkout or `uv` is required at runtime.
 
-### After install
+### After install or upgrade
 
-Do these once so the CLI, server, and browser all work together:
+pipx does not print package docs after install. Run:
 
-1. **Create your bookmarks file** at
-   `~/.config/bunnify/bookmarks.json` (required before the server starts):
+```bash
+bunnify onboard
+```
 
-   ```bash
-   mkdir -p ~/.config/bunnify
-   curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
-     -o ~/.config/bunnify/bookmarks.json
-   # edit ~/.config/bunnify/bookmarks.json with your shortcuts
-   ```
+That prints the ready-to-go checklist (bookmarks path, `bunnify setup`,
+Chrome/Edge, and upgrade). Same text:
 
-   Override path with `BUNNIFY_BOOKMARKS` or `XDG_CONFIG_HOME` — see
-   [Configuration](https://github.com/the-hcma/bunnify/blob/main/docs/CONFIG.md).
+```bash
+bunnify --onboard
+```
 
-2. **Configure and start the server** (local on a laptop; remote only for a
-   home/always-on host):
+Summary of what it covers:
 
-   ```bash
-   bunnify setup
-   ```
-
-   Full guide:
-   [Local and remote server setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md)
-
-3. **Configure Chrome or Edge** as a site search engine using the same
-   `BUNNIFY_BASE_URL` from `~/.config/bunnify/config.env`:
-   [Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
-
-4. **Try it:** `bunnify gh` or type `b gh` in the address bar (if keyword is `b`).
+1. **Bookmarks** at `~/.config/bunnify/bookmarks.json` (required before the
+   server starts) — seed from
+   [bunnify.json.example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
+2. **`bunnify setup`** — local on a laptop; remote for a home/always-on host  
+   [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md)
+3. **Chrome / Edge** — match `BUNNIFY_BASE_URL` from `config.env`  
+   [CHROME_SETUP.md](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
+4. **Try it:** `bunnify gh` or address-bar keyword (e.g. `b gh`)
 
 ### Upgrade
 
 ```bash
 pipx upgrade bunnify
 bunnify --version
+bunnify onboard    # refresh next-step reminders
 ```
 
 Bookmarks and `~/.config/bunnify/config.env` are user data — upgrades do not

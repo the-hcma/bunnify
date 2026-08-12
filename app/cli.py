@@ -27,6 +27,7 @@ from app.config import (
     ENV_VAR,
     MIN_LOCAL_PORT,
     ServerPreferences,
+    default_bookmarks_path,
     ensure_user_bookmarks,
     env_file_path,
     legacy_env_file_path,
@@ -153,6 +154,44 @@ def ensure_ready_base_url(
                 environ=environ,
             )
         return base_url
+
+
+def format_onboarding_text() -> str:
+    """Return post-install / post-upgrade next steps for the terminal."""
+    bookmarks = default_bookmarks_path()
+    config = env_file_path()
+    return "\n".join(
+        [
+            "Bunnify — next steps after install or upgrade",
+            "",
+            "1. Create your bookmarks file (required before the server starts):",
+            f"     mkdir -p {bookmarks.parent}",
+            "     curl -fsSL \\",
+            "       https://raw.githubusercontent.com/the-hcma/bunnify/"
+            "main/bunnify.json.example \\",
+            f"       -o {bookmarks}",
+            f"     # edit {bookmarks}",
+            "",
+            "2. Configure and start the server (local on a laptop; remote for a",
+            "   home/always-on host):",
+            "     bunnify setup",
+            "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
+            "",
+            "3. Configure Chrome or Edge using BUNNIFY_BASE_URL from:",
+            f"     {config}",
+            "   Guide: https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md",
+            "",
+            "4. Try it:  bunnify gh   (or address-bar keyword, e.g. b gh)",
+            "",
+            "Upgrade later:",
+            "     pipx upgrade bunnify",
+            "     bunnify --version",
+            "   Bookmarks and config.env are kept across upgrades.",
+            "",
+            "Docs: https://github.com/the-hcma/bunnify",
+            "Re-print this message anytime:  bunnify onboard",
+        ]
+    )
 
 
 def open_url(url: str, *, opener: Callable[[str], bool] | None = None) -> None:
@@ -822,6 +861,12 @@ def _run(
     ),
 )
 @click.option(
+    "--onboard",
+    "onboard_requested",
+    is_flag=True,
+    help="Print post-install / upgrade next steps (also: `bunnify onboard`).",
+)
+@click.option(
     "--setup",
     "setup_requested",
     is_flag=True,
@@ -839,6 +884,7 @@ def main(
     color_mode: str,
     edit_mode: str | None,
     env_file: Path | None,
+    onboard_requested: bool,
     setup_requested: bool,
 ) -> None:
     """
@@ -852,6 +898,11 @@ def main(
     Direct:
       ./scripts/bunnify vault
       ./scripts/bunnify pr 12345
+
+    \b
+    After pipx install or upgrade:
+      bunnify onboard
+      bunnify --onboard
 
     \b
     Server setup (`setup` is a reserved shortcut name):
@@ -871,6 +922,10 @@ def main(
     """
     if shortcut_args == ("version",):
         click.echo(BUILD_INFO)
+        return
+
+    if onboard_requested or shortcut_args == ("onboard",):
+        click.echo(format_onboarding_text())
         return
 
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))

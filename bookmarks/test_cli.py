@@ -1339,6 +1339,20 @@ class ConfigUnitTests(TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         setup.assert_called_once()
 
+    def test_onboard_prints_next_steps(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["onboard"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("bookmarks.json", result.output)
+        self.assertIn("bunnify setup", result.output)
+        self.assertIn("CHROME_SETUP.md", result.output)
+        self.assertIn("pipx upgrade bunnify", result.output)
+
+        flagged = CliRunner().invoke(main, ["--onboard"])
+        self.assertEqual(flagged.exit_code, 0)
+        self.assertIn("bunnify setup", flagged.output)
+
     def test_base_url_prepends_http_scheme(self) -> None:
         from app.config import resolve_base_url
 
