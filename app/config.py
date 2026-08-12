@@ -283,8 +283,8 @@ def ensure_user_bookmarks(
 
     Order:
     1. Existing destination (never overwrite).
-    2. Copy/symlink from ``~/work/bunnify/bunnify.json`` or the checkout's
-       gitignored ``bunnify.json`` when present. Non-interactive: copy when found.
+    2. Copy/symlink from the checkout's gitignored ``bunnify.json``, then
+       ``~/work/bunnify/bunnify.json`` when present. Non-interactive: copy when found.
     3. Seed from ``bunnify.json.example`` / packaged example.
     """
     target = dest if dest is not None else default_bookmarks_path(environ=environ)
@@ -296,7 +296,7 @@ def ensure_user_bookmarks(
     should_prompt = allow_prompt if allow_prompt is not None else sys.stdin.isatty()
     log = print_fn or (lambda _msg: None)
 
-    for source in (legacy_path, checkout_path):
+    for source in (checkout_path, legacy_path):
         if not source.is_file():
             continue
         choice = "copy"

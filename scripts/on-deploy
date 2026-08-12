@@ -44,10 +44,16 @@ export BUNNIFY_DATA_DIR="${BUNNIFY_DATA_DIR:-${scratch_root}/data}"
 export BUNNIFY_LOG_FILE="${BUNNIFY_LOG_FILE:-${scratch_root}/bunnify.log}"
 mkdir -p "$BUNNIFY_DATA_DIR" "$(dirname "$BUNNIFY_LOG_FILE")"
 
-# One-time migration from the old repo-local database and bookmarks layout.
-if [[ -f "${repo_dir}/db.sqlite3" && ! -f "${BUNNIFY_DATA_DIR}/db.sqlite3" ]]; then
-    cp "${repo_dir}/db.sqlite3" "${BUNNIFY_DATA_DIR}/db.sqlite3"
-    echo "  Migrated database to ${BUNNIFY_DATA_DIR}/db.sqlite3"
+# One-time migration from prior database and bookmarks layouts.
+xdg_data_db="${XDG_DATA_HOME:-$HOME/.local/share}/bunnify/db.sqlite3"
+if [[ ! -f "${BUNNIFY_DATA_DIR}/db.sqlite3" ]]; then
+    if [[ -f "$xdg_data_db" ]]; then
+        cp "$xdg_data_db" "${BUNNIFY_DATA_DIR}/db.sqlite3"
+        echo "  Migrated database from ${xdg_data_db} to ${BUNNIFY_DATA_DIR}/db.sqlite3"
+    elif [[ -f "${repo_dir}/db.sqlite3" ]]; then
+        cp "${repo_dir}/db.sqlite3" "${BUNNIFY_DATA_DIR}/db.sqlite3"
+        echo "  Migrated database from ${repo_dir}/db.sqlite3 to ${BUNNIFY_DATA_DIR}/db.sqlite3"
+    fi
 fi
 config_bookmarks="${XDG_CONFIG_HOME:-$HOME/.config}/bunnify/bookmarks.json"
 if [[ ! -f "$config_bookmarks" ]]; then
