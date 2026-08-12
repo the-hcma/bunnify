@@ -21,6 +21,14 @@ dependencies = [
 bunnify = "app.cli:main"
 bunnify-server = "app.server_cli:main"
 
+[project.urls]
+Changelog = "https://github.com/the-hcma/bunnify/blob/main/CHANGELOG.md"
+"Chrome / Edge setup" = "https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md"
+Homepage = "https://github.com/the-hcma/bunnify"
+Issues = "https://github.com/the-hcma/bunnify/issues"
+Repository = "https://github.com/the-hcma/bunnify"
+"Server setup" = "https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -15,10 +15,21 @@ bunnify --version
 
 pipx installs `bunnify` and `bunnify-server` under **`~/.local/bin`** by default
 (or `$PIPX_BIN_DIR` when set). Ensure that directory is on your `PATH` before
-running either command.
+running either command. Prefer the pipx apps over any checkout
+`./scripts/bunnify` still on `PATH`.
 
 The wheel installs **`bunnify`** (CLI) and **`bunnify-server`** (Django
 server). No repository checkout or `uv` is required at runtime.
+
+### After install
+
+1. **Seed bookmarks and run setup** (starts or points at a server) — follow
+   [Quick start](#quick-start) below, or the full guide:
+   [Local and remote server setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md)
+2. **Configure Chrome or Edge** as a site search / OpenSearch engine:
+   [Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
+
+Source and docs: [github.com/the-hcma/bunnify](https://github.com/the-hcma/bunnify).
 
 ## Quick start
 
@@ -45,8 +56,9 @@ bunnify setup
 
 **Laptop / daily machine:** choose **local** (default). Setup starts a managed
 server, verifies `/health`, records the port, and saves settings to
-`~/.config/bunnify/config.env`. Point Chrome at the same `BUNNIFY_BASE_URL`
-([Chrome setup](CHROME_SETUP.md)).
+`~/.config/bunnify/config.env`. Point Chrome or Edge at the same
+`BUNNIFY_BASE_URL`
+([Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)).
 
 **Home server / always-on host:** choose **remote** on client devices and enter
 that host’s URL. Prefer a centralized remote install when several machines share
@@ -54,7 +66,8 @@ one server — not as a laptop’s only dependency if you often go offline.
 
 One-time override without saving: `bunnify --base-url https://… shortcut`.
 
-Details: [Local and remote setup](docs/LOCAL.md).
+Details:
+[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ### 3. Run shortcuts
 
@@ -72,7 +85,8 @@ Unknown keys exit non-zero in direct mode (no search-engine fallback).
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
-- **Chrome** — OpenSearch at `/opensearch.xml` ([setup guide](CHROME_SETUP.md))
+- **Chrome / Edge** — OpenSearch at `/opensearch.xml`
+  ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
 - **Parameters** — URLs with `#{name}` placeholders and optional defaults
 - **Copilot reviews** — `rpr` shortcut streams in-app PR reviews
 - **Validation** — JSON Schema on load; reserved keys `h` / `help`
@@ -92,7 +106,7 @@ curl --max-time 2 http://127.0.0.1:8000/health
 ```
 
 `bunnify setup` starts a managed local server for daily CLI use. Details:
-[Local and remote setup](docs/LOCAL.md).
+[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 **Linux production:** [systemd user service](docs/SYSTEMD.md) via
 `setup-service` from [repository-helpers](https://github.com/the-hcma/repository-helpers).
