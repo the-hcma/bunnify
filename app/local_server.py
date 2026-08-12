@@ -27,7 +27,7 @@ def ensure_local_server(
         default_url = "http://127.0.0.1:8000"
         if check_health(default_url):
             return default_url, 8000
-        selected_port = 8000 if _port_is_free(8000) else 0
+        selected_port = 8000 if port_is_free(8000) else 0
 
     if selected_port:
         base_url = f"http://127.0.0.1:{selected_port}"
@@ -115,7 +115,7 @@ def stop_local_server(pid_dir: Path) -> None:
         raise RuntimeError(f"Failed to stop the local Bunnify server{suffix}")
 
 
-def _port_is_free(port: int) -> bool:
+def port_is_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
         try:
             candidate.bind(("127.0.0.1", port))

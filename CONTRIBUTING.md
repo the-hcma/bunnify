@@ -1,78 +1,55 @@
-## Contributing to Bunnify
+# Contributing to Bunnify
 
-Thank you for your interest in contributing to Bunnify! This document provides guidelines for contributing to the project.
+Thank you for contributing. This document is for **development checkouts**;
+end users install with `pipx install bunnify` (see [README](README.md)).
 
-## Getting Started
+## Getting started
 
 1. Fork the repository on GitHub
-2. Clone your fork locally
-3. Create a new branch for your feature or bugfix
-4. Make your changes
-5. Test your changes
-6. Commit with clear, descriptive messages
-7. Push to your fork
-8. Submit a pull request
+2. Clone your fork and create a feature branch in a [stack worktree](AGENTS.md)
+3. Run `./scripts/checks` before opening a PR
+4. Follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
+   `fix:`, `docs:`, …)
 
-## Development Setup
+## Development setup
+
+Requires Python 3.14+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# Clone your fork
 git clone https://github.com/YOUR_USERNAME/bunnify.git
 cd bunnify
-
-# Install dependencies with uv
 uv sync
-
-# Run migrations
 uv run python manage.py migrate
 
-# Create test bookmarks
-mkdir -p ~/work/bunnify
-cp bunnify.json.example ~/work/bunnify/bunnify.json
+mkdir -p ~/.config/bunnify
+cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+# edit bookmarks as needed
 
-# Load bookmarks
-uv run python manage.py load_bookmarks
-
-# Start development server
-./scripts/bunnify-server --console --log-level DEBUG
+./scripts/bunnify setup
+./scripts/bunnify-server --console --log-level DEBUG   # optional
 ```
 
-> **Note:** Requires [uv](https://docs.astral.sh/uv/). Install with: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+Personal bookmarks belong in **`~/.config/bunnify/bookmarks.json`**, not in a
+tracked repo-root `bunnify.json`. See [docs/CONFIG.md](docs/CONFIG.md).
 
-## Code Style
+## Code quality
 
-- Follow PEP 8 guidelines for Python code
-- Use type hints where appropriate
-- Use pathlib for file operations
-- Add docstrings to functions and classes
-- Keep functions focused and modular
+Run before every PR:
 
-## Testing
+```bash
+./scripts/checks
+```
 
-Before submitting a PR:
+Individual gates: `uv run ruff check .`, `uv run ruff format --check .`,
+`uv run pyright --warnings`, `./test_bunnify`, `./test_integration`.
 
-1. Run the preflight script: `./scripts/checks`
-2. If needed for faster iteration, run: `./scripts/checks --skip-integration`
-3. Test your new feature/fix thoroughly
-4. Verify command palette and Chrome integration behavior still works
+## Pull requests
 
-## Pull Request Guidelines
+- One logical change per PR; use Graphite stacking when appropriate
+- Update user-facing docs when behavior or install paths change
+- Keep `./scripts/bunnify` and `./scripts/bunnify-server` as thin wrappers
+  around the installed entry points
 
-- Keep PRs focused on a single feature or fix
-- Update README.md if you add new features
-- Add comments for complex logic
-- Ensure code follows existing patterns
-- Test with both IPv4 and IPv6 if network-related
+## Questions
 
-## Areas for Contribution
-
-- Additional bookmark management features
-- UI/UX improvements
-- Performance optimizations
-- Documentation improvements
-- Bug fixes
-- New integrations (beyond GitHub)
-
-## Questions?
-
-Open an issue for questions or discussions about contributing.
+Open a GitHub issue for discussion.

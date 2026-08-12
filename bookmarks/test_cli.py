@@ -969,8 +969,9 @@ class ConfigUnitTests(TestCase):
                 patch(
                     "app.cli.ensure_local_server",
                     return_value=("http://127.0.0.1:8123", 8123),
-                ),
+                ) as ensure_server,
                 patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
@@ -980,6 +981,7 @@ class ConfigUnitTests(TestCase):
                 )
 
             self.assertEqual(result, "http://127.0.0.1:8123")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
             preferences = load_preferences(environ={}, env_path=path)
             self.assertIsNotNone(preferences)
             assert preferences is not None
@@ -1008,7 +1010,7 @@ class ConfigUnitTests(TestCase):
                 ),
                 env_path=path,
             )
-            responses = iter(["local", ""])
+            responses = iter(["local", "", ""])
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -1019,6 +1021,7 @@ class ConfigUnitTests(TestCase):
                     ],
                 ) as ensure_server,
                 patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
@@ -1036,6 +1039,182 @@ class ConfigUnitTests(TestCase):
             self.assertIsNotNone(preferences)
             assert preferences is not None
             self.assertEqual(preferences.local_port, 9123)
+
+    def test_setup_local_prompts_for_selected_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            responses = iter(["local", "8765"])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8765", 8765),
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8765")
+            ensure_server.assert_called_once()
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8765)
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8765)
+
+    def test_setup_local_reprompts_when_default_port_busy(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            responses = iter(["local", "", "8765"])
+            messages: list[str] = []
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8765", 8765),
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+                patch(
+                    "app.cli.check_health",
+                    side_effect=lambda url: ":8765" in url,
+                ),
+                patch(
+                    "app.cli.port_is_free",
+                    side_effect=[False, True],
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8765")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8765)
+            self.assertTrue(any("already in use" in message for message in messages))
+
+    def test_setup_local_accepts_port_with_healthy_server(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=False),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: "",
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8000)
+
+    def test_setup_local_normalizes_privileged_saved_port_default(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:700",
+                    local_port=700,
+                ),
+                env_path=path,
+            )
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: "",
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8000)
+
+    def test_read_persisted_local_port_from_config_and_run_file(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            read_persisted_local_port,
+            run_dir,
+            save_preferences,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            path = Path(tmp) / "bunnify" / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            self.assertEqual(read_persisted_local_port(environ=environ), 8123)
+
+            path.unlink()
+            port_file = run_dir(environ=environ) / LOCAL_PORT_FILE_NAME
+            self.assertEqual(port_file.read_text(encoding="utf-8"), "8123\n")
+            self.assertEqual(read_persisted_local_port(environ=environ), 8123)
 
     def test_setup_remote_persists_verified_url(self) -> None:
         import tempfile

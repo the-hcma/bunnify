@@ -169,10 +169,39 @@ def run_dir(*, environ: dict[str, str] | None = None) -> Path:
     return data_dir(environ=environ) / "run"
 
 
+LOCAL_PORT_FILE_NAME = ".bunnify.port"
+MIN_LOCAL_PORT = 1024
+
+
+def read_persisted_local_port(*, environ: dict[str, str] | None = None) -> int | None:
+    """Return a saved local port from config.env or the run-directory port file."""
+    preferences = load_preferences(environ=environ)
+    if preferences is not None and preferences.local_port is not None:
+        return preferences.local_port
+    port_file = run_dir(environ=environ) / LOCAL_PORT_FILE_NAME
+    try:
+        port = int(port_file.read_text(encoding="utf-8").strip())
+    except OSError, ValueError:
+        return None
+    if 0 <= port <= 65535:
+        return port
+    return None
+
+
+def persist_local_port(port: int, *, environ: dict[str, str] | None = None) -> None:
+    """Write ``port`` to the managed run directory for later rediscovery."""
+    if port <= 0:
+        return
+    directory = run_dir(environ=environ)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / LOCAL_PORT_FILE_NAME).write_text(f"{port}\n", encoding="utf-8")
+
+
 def save_preferences(
     preferences: ServerPreferences,
     *,
     env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
 ) -> None:
     """Persist a complete, verified server preference set."""
     path = env_path if env_path is not None else env_file_path()
@@ -183,6 +212,8 @@ def save_preferences(
         str(preferences.local_port) if preferences.local_port is not None else "",
     )
     write_env_value(path, MODE_ENV_VAR, preferences.mode)
+    if preferences.mode == "local" and preferences.local_port is not None:
+        persist_local_port(preferences.local_port, environ=environ)
 
 
 def write_env_value(path: Path, key: str, value: str) -> None:
@@ -235,7 +266,13 @@ def example_bookmarks_bytes() -> bytes | None:
     try:
         packaged = resources.files("app").joinpath("data", "bookmarks.example.json")
         return packaged.read_bytes()
-    except FileNotFoundError, ModuleNotFoundError, OSError, TypeError, AttributeError:
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        AttributeError,
+    ):
         pass
 
     repo_example = repo_root() / EXAMPLE_BOOKMARKS_NAME

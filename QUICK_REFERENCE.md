@@ -1,87 +1,70 @@
-# ⚡ Quick Reference Card
+# ⚡ Quick reference
 
-## Chrome Setup (One-time)
+Assumes `pipx install bunnify`, a seeded `~/.config/bunnify/bookmarks.json`,
+and a completed `bunnify --setup`. Your base URL is in
+`~/.config/bunnify/config.env` as `BUNNIFY_BASE_URL`.
 
-### Manual Method (2 minutes):
-1. Open `chrome://settings/searchEngines`
-2. Click "Add" under "Site search"
-3. Fill in:
-   - **Name:** `Bookmarks`
-   - **Keyword:** `b` (or your choice)
-   - **URL:** `http://127.0.0.1:8000/%s/`
-4. Click "Add"
+## Bookmarks file
 
-### Automatic Method:
-1. Visit `http://127.0.0.1:8000/` in Chrome
-2. Chrome auto-detects the search engine
-3. Check `chrome://settings/searchEngines` to verify
-
----
-
-## Daily Usage
-
-### In Chrome Address Bar:
-
-**Simple Bookmarks:**
-```
-b c           → Calendar
-b m           → Gmail
-b vault       → Vault
-b slack       → Slack
-b gpt         → ChatGPT
-```
-
-**With One Parameter:**
-Create these additional search engines:
-
-| Keyword | URL Pattern | Example |
-|---------|-------------|---------|
-| `pr` | `http://127.0.0.1:8000/pr/?pr_id=%s` | `pr 12345` |
-| `cm` | `http://127.0.0.1:8000/cw/?commit_id=%s` | `cm abc123` |
-| `bmg` | `http://127.0.0.1:8000/g/?search_terms=%s` | `bmg django` |
-
----
-
-## All Available Bookmarks (55 total)
-
-### Most Common:
-- `c` - Calendar
-- `m` - Gmail  
-- `slack` - Slack
-- `gpt` - ChatGPT
-- `vault` - Vault
-- `pr` - Pull Request (needs `?pr_id=`)
-- `w` - shop/world repo
-- `mq` - Merge Queue
-
-### View Full List:
-`http://127.0.0.1:8000/list/`
-
----
-
-## Server Management
-
-**Start server:**
 ```bash
-./scripts/bunnify-server
+mkdir -p ~/.config/bunnify
+curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
+  -o ~/.config/bunnify/bookmarks.json
 ```
 
-**Reload bookmarks:**
+## CLI
+
 ```bash
-uv run python manage.py load_bookmarks
+bunnify                         # interactive REPL
+bunnify --setup                 # configure local or remote server
+bunnify gh                      # open a shortcut (example key from bunnify.json.example)
+bunnify pr the-hcma/bunnify 272 # parameterized shortcut (repo + PR number)
+bunnify --fzf                   # fuzzy-pick a shortcut (requires fzf on PATH)
+bunnify --print-url gh          # print resolved URL instead of opening browser
+bunnify --list-keys             # list keys from the running server
 ```
 
-**Check if running:**
+## Server
+
 ```bash
-curl http://127.0.0.1:8000/c/
+bunnify-server --help
+bunnify-server --foreground --noninteractive --port 8000   # foreground (systemd/debug)
+bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run
+bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
+curl -sf "$(grep '^BUNNIFY_BASE_URL=' ~/.config/bunnify/config.env | cut -d= -f2-)/health"
 ```
 
----
+Development checkout: prefix with `./scripts/` (e.g. `./scripts/bunnify-server`).
 
-## Tips
+## Chrome
 
-✨ **Pro Tip:** Set up multiple Chrome search engines for your most-used parameterized bookmarks!
+Use `BUNNIFY_BASE_URL` from `~/.config/bunnify/config.env` (set by `bunnify setup`):
 
-🔍 **Search bookmarks:** Visit `/list/` and use the search box
+1. Server running → visit `<BUNNIFY_BASE_URL>/` (OpenSearch auto-detect)
+2. Or add manually: keyword `b`, URL `<BUNNIFY_BASE_URL>/search/?q=%s`
 
-⚡ **Lightning fast:** `b vault` is faster than typing the full URL or clicking bookmarks!
+Full guide: [CHROME_SETUP.md](CHROME_SETUP.md)
+
+## Web
+
+| Path | Use |
+|------|-----|
+| `/cmd/` | Command palette |
+| `/list/` | Browse bookmarks |
+| `/search/?q=…` | Smart search |
+| `/<key>/` | Redirect |
+
+## Config files
+
+| File | Purpose |
+|------|---------|
+| `~/.config/bunnify/bookmarks.json` | Shortcuts |
+| `~/.config/bunnify/config.env` | Mode, base URL, port |
+| `~/.local/share/bunnify/` | DB, logs, managed run state |
+
+More: [docs/CONFIG.md](docs/CONFIG.md), [docs/LOCAL.md](docs/LOCAL.md)
+
+## Linux service host
+
+Run `setup-service` from a [repository-helpers](https://github.com/the-hcma/repository-helpers)
+clone (see [docs/SYSTEMD.md](docs/SYSTEMD.md)).

@@ -12,16 +12,19 @@ to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
   `BUNNIFY_MODE`, `BUNNIFY_BASE_URL`, and `BUNNIFY_LOCAL_PORT`.
 - `run/` contains PID and selected-port files for the CLI-managed local server.
 
-Create `bookmarks.json` manually — the server does not auto-migrate from legacy
-paths or seed the example file. These files are user data and are not tracked
-by Git.
+Create `bookmarks.json` manually — the server does not seed the example file.
+These files are user data and are not tracked by Git.
 
 ## Setup
 
 ```bash
 mkdir -p ~/.config/bunnify
-cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
+  -o ~/.config/bunnify/bookmarks.json
 ```
+
+In a development checkout you can instead `cp bunnify.json.example` from the
+repo root.
 
 Run `bunnify setup` to write verified settings. Existing base-URL-only files
 remain supported; they are interpreted as remote mode.

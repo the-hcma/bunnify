@@ -25,6 +25,7 @@ from app.client import (
 )
 from app.config import (
     ENV_VAR,
+    MIN_LOCAL_PORT,
     ServerPreferences,
     ensure_user_bookmarks,
     env_file_path,
@@ -49,7 +50,7 @@ from app.interactive import (
     read_shortcut_query,
     repl_prompt_message,
 )
-from app.local_server import ensure_local_server
+from app.local_server import ensure_local_server, port_is_free
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
 from app.version import build_info
@@ -178,6 +179,7 @@ def ensure_ready_base_url(
                     local_port=actual_port,
                 ),
                 env_path=path,
+                environ=environ,
             )
         return base_url
 
@@ -262,10 +264,14 @@ def run_setup(
             allow_prompt=True,
             print_fn=log,
         )
-        preferred_port = (
-            existing.local_port
-            if existing is not None and existing.mode == "local"
-            else None
+        preferred_port = _prompt_local_port(
+            ask,
+            existing_port=(
+                existing.local_port
+                if existing is not None and existing.mode == "local"
+                else None
+            ),
+            print_fn=log,
         )
         while True:
             try:
@@ -285,7 +291,7 @@ def run_setup(
                     base_url=base_url,
                     local_port=actual_port,
                 )
-                save_preferences(preferences, env_path=path)
+                save_preferences(preferences, env_path=path, environ=environ)
                 log(f"Configured local Bunnify server at {base_url}")
                 return base_url
             if not _retry_requested(
@@ -314,7 +320,7 @@ def run_setup(
                 base_url=base_url,
                 local_port=None,
             )
-            save_preferences(preferences, env_path=path)
+            save_preferences(preferences, env_path=path, environ=environ)
             log(f"Configured remote Bunnify server at {base_url}")
             return base_url
         if not _retry_requested(
@@ -340,6 +346,51 @@ def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
     except EOFError:
         return False
     return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
+
+
+def _prompt_local_port(
+    prompt_fn: Callable[[str], str],
+    *,
+    existing_port: int | None,
+    print_fn: Callable[[str], None] | None = None,
+) -> int:
+    """Ask for a free non-privileged local server port."""
+    log = print_fn or (lambda _message: None)
+    default_port = existing_port if existing_port is not None else 8000
+    if default_port != 0 and not MIN_LOCAL_PORT <= default_port <= 65535:
+        default_port = 8000
+
+    while True:
+        try:
+            answer = prompt_fn(f"Local server port [{default_port}]: ")
+        except EOFError as exc:
+            raise ClientError("Setup aborted") from exc
+        stripped = answer.strip()
+        port = default_port if not stripped else None
+        if not stripped:
+            pass
+        else:
+            try:
+                port = int(stripped)
+            except ValueError:
+                log(f"Invalid port: {stripped!r}. Try again.")
+                continue
+        assert port is not None
+        if port == 0:
+            return 0
+        if not MIN_LOCAL_PORT <= port <= 65535:
+            log(
+                f"Port must be {MIN_LOCAL_PORT}-65535 "
+                "(or 0 for an OS-assigned port). Try again."
+            )
+            continue
+        if not port_is_free(port):
+            if check_health(f"http://127.0.0.1:{port}"):
+                return port
+            log(f"Port {port} is already in use. Choose another port.")
+            default_port = port
+            continue
+        return port
 
 
 def _wait_for_healthy_remote(
