@@ -348,8 +348,14 @@ def run_setup(
                 build_label = _format_running_build(health)
                 if build_label == "unknown build":
                     local_version, local_commit = get_build_info()
-                    build_label = f"{local_version} ({local_commit})"
-                log(colors.ok(f"✓ Local Bunnify is healthy ({build_label})"))
+                    log(
+                        colors.ok(
+                            "✓ Local Bunnify is healthy (unknown build; "
+                            f"this CLI is {local_version} ({local_commit}))"
+                        )
+                    )
+                else:
+                    log(colors.ok(f"✓ Local Bunnify is healthy ({build_label})"))
                 log(colors.ok(f"✓ Configured local Bunnify server at {base_url}"))
                 log("")
                 log(colors.header("Browser"))
@@ -465,7 +471,14 @@ def _offer_restart_mismatched_server(
     print_fn(theme.ok(f"✓ Port {port} is already serving Bunnify {running_label}"))
     if _builds_match(health):
         return port
-    print_fn(theme.warn(f"Running build differs from this CLI ({local_label})."))
+    if health.version is None or health.commit is None:
+        print_fn(
+            theme.warn(
+                f"Could not determine the running build (this CLI is {local_label})."
+            )
+        )
+    else:
+        print_fn(theme.warn(f"Running build differs from this CLI ({local_label})."))
     if not _retry_requested(
         prompt_fn,
         "Restart the local server with this CLI? [Y/n]: ",

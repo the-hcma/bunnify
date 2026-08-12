@@ -382,7 +382,7 @@ def health_check(request: HttpRequest) -> HttpResponse:
     Health check for systemd and the CLI.
 
     Plain ``ok`` for text clients; JSON with version/commit when ``Accept``
-    prefers ``application/json``.
+    contains ``application/json`` (q-values are not consulted).
     """
     package, commit = get_build_info()
     accept = request.headers.get("Accept", "")

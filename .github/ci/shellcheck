@@ -15,7 +15,7 @@ targets=(
 
 if [ -d scripts ]; then
   # Portable (no mapfile / assoc arrays): collect shell script paths.
-  # Skip Python (and other non-shell) helpers that live under scripts/.
+  # Skip helpers whose shebang mentions python (for example embed_build_metadata).
   while IFS= read -r path; do
     shebang="$(head -n 1 "$path" 2>/dev/null || true)"
     case "${shebang}" in

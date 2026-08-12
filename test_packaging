@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly repo_root
+
 temp_root="$(mktemp -d)"
 build_dir="$temp_root/dist"
 venv_dir="$temp_root/venv"
@@ -19,9 +22,15 @@ trap cleanup EXIT
 
 mkdir -p "$build_dir" "$home_dir" "$outside_dir" "$pid_dir"
 
+embed_build_metadata="${repo_root}/scripts/embed_build_metadata"
+readonly embed_build_metadata
+
 restore_build_metadata() {
-    env -u BUNNIFY_EMBED_VERSION -u BUNNIFY_EMBED_COMMIT \
-        uv run python scripts/embed_build_metadata >/dev/null 2>&1 || true
+    (
+        cd "${repo_root}"
+        env -u BUNNIFY_EMBED_VERSION -u BUNNIFY_EMBED_COMMIT \
+            uv run python "${embed_build_metadata}"
+    ) >/dev/null 2>&1 || true
 }
 trap 'restore_build_metadata; cleanup' EXIT
 
@@ -32,7 +41,7 @@ version="$(
 commit="$(git rev-parse HEAD)"
 export BUNNIFY_EMBED_VERSION="${version}"
 export BUNNIFY_EMBED_COMMIT="${commit}"
-uv run python scripts/embed_build_metadata
+uv run python "${embed_build_metadata}"
 
 echo "📦 Building wheel..."
 timeout 120 uv build --wheel --out-dir "$build_dir"
