@@ -174,6 +174,22 @@ class LocalServerTests(SimpleTestCase):
 
         wait_for_port.assert_called_once_with(8123, timeout_s=1)
 
+    @mock.patch("app.local_server.wait_for_port_free", return_value=True)
+    @mock.patch(
+        "app.local_server.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["bunnify-server"], timeout=60),
+    )
+    def test_stop_maps_timeout_to_runtime_error(
+        self,
+        _run: mock.Mock,
+        _wait_for_port: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            with self.assertRaisesRegex(RuntimeError, "Timed out stopping"):
+                stop_local_server(pid_dir, port=8123, port_timeout_s=1)
+
     @mock.patch("app.local_server.wait_for_port_free", return_value=False)
     @mock.patch("app.local_server.subprocess.run")
     def test_stop_raises_when_port_stays_busy(
@@ -247,7 +263,23 @@ class ServerStopTests(SimpleTestCase):
                         return_value=False,
                     ),
                 ):
-                    self.assertEqual(_stop_managed_server(pid_dir, quiet=True), 1)
+                    self.assertEqual(_stop_managed_server(pid_dir, quiet=False), 1)
+
+    def test_quiet_stop_skips_wait_when_nothing_signaled(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+            (pid_dir / ".bunnify.port").write_text("8123\n", encoding="utf-8")
+
+            with (
+                mock.patch("app.server_cli._port_is_free", return_value=False),
+                mock.patch("app.server_cli._listener_pids", return_value=[]),
+                mock.patch("app.server_cli._wait_for_port_free") as wait_for_port,
+            ):
+                self.assertEqual(_stop_managed_server(pid_dir, quiet=True), 0)
+
+            wait_for_port.assert_not_called()
 
     def test_stop_terminates_listener_when_pid_file_stale(self) -> None:
         from app.server_cli import _stop_managed_server

@@ -120,20 +120,27 @@ def stop_local_server(
     When ``port`` is set, wait until that port can be bound again before
     returning so callers can restart on the same port.
     """
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "app.server_cli",
-            "--stop",
-            "--pid-dir",
-            str(pid_dir),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=max(30.0, port_timeout_s + 5),
-    )
+    # Worst case: SIGTERM+SIGKILL waits for pid and listener, then port wait.
+    stop_timeout_s = max(60.0, port_timeout_s + 35)
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "app.server_cli",
+                "--stop",
+                "--pid-dir",
+                str(pid_dir),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=stop_timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Timed out stopping the local Bunnify server after {stop_timeout_s:g}s"
+        ) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         suffix = f": {detail}" if detail else ""
