@@ -357,6 +357,8 @@ def _prompt_local_port(
     """Ask for a free non-privileged local server port."""
     log = print_fn or (lambda _message: None)
     default_port = existing_port if existing_port is not None else 8000
+    if default_port != 0 and not MIN_LOCAL_PORT <= default_port <= 65535:
+        default_port = 8000
 
     while True:
         try:

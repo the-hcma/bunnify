@@ -1145,6 +1145,46 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.local_port, 8000)
 
+    def test_setup_local_normalizes_privileged_saved_port_default(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:700",
+                    local_port=700,
+                ),
+                env_path=path,
+            )
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: "",
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8000)
+
     def test_read_persisted_local_port_from_config_and_run_file(self) -> None:
         import tempfile
         from pathlib import Path
