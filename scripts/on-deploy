@@ -41,29 +41,32 @@ fi
 # Service host runtime paths (match etc/systemd/bunnify.service).
 scratch_root="$HOME/scratch/bunnify"
 export BUNNIFY_DATA_DIR="${BUNNIFY_DATA_DIR:-${scratch_root}/data}"
-export BUNNIFY_LOG_FILE="${BUNNIFY_LOG_FILE:-${scratch_root}/bunnify.log}"
+export BUNNIFY_LOG_FILE="${BUNNIFY_LOG_FILE:-${BUNNIFY_DATA_DIR}/bunnify.log}"
 mkdir -p "$BUNNIFY_DATA_DIR" "$(dirname "$BUNNIFY_LOG_FILE")"
 
-# One-time migration from prior database and bookmarks layouts.
+_on_deploy_backup_sqlite() {
+    local source_db="$1"
+    local dest_db="$2"
+    uv run python - "$source_db" "$dest_db" <<'PY'
+import sqlite3
+import sys
+
+source_path, dest_path = sys.argv[1], sys.argv[2]
+with sqlite3.connect(f"file:{source_path}?mode=ro", uri=True) as source:
+    with sqlite3.connect(dest_path) as destination:
+        source.backup(destination)
+PY
+}
+
+# One-time migration from prior database layouts (service is stopped before on-deploy).
 xdg_data_db="${XDG_DATA_HOME:-$HOME/.local/share}/bunnify/db.sqlite3"
 if [[ ! -f "${BUNNIFY_DATA_DIR}/db.sqlite3" ]]; then
     if [[ -f "$xdg_data_db" ]]; then
-        cp "$xdg_data_db" "${BUNNIFY_DATA_DIR}/db.sqlite3"
+        _on_deploy_backup_sqlite "$xdg_data_db" "${BUNNIFY_DATA_DIR}/db.sqlite3"
         echo "  Migrated database from ${xdg_data_db} to ${BUNNIFY_DATA_DIR}/db.sqlite3"
     elif [[ -f "${repo_dir}/db.sqlite3" ]]; then
-        cp "${repo_dir}/db.sqlite3" "${BUNNIFY_DATA_DIR}/db.sqlite3"
+        _on_deploy_backup_sqlite "${repo_dir}/db.sqlite3" "${BUNNIFY_DATA_DIR}/db.sqlite3"
         echo "  Migrated database from ${repo_dir}/db.sqlite3 to ${BUNNIFY_DATA_DIR}/db.sqlite3"
-    fi
-fi
-config_bookmarks="${XDG_CONFIG_HOME:-$HOME/.config}/bunnify/bookmarks.json"
-if [[ ! -f "$config_bookmarks" ]]; then
-    mkdir -p "$(dirname "$config_bookmarks")"
-    if [[ -f "${repo_dir}/bunnify.json" ]]; then
-        cp "${repo_dir}/bunnify.json" "$config_bookmarks"
-        echo "  Migrated bookmarks to ${config_bookmarks}"
-    elif [[ -f "${HOME}/work/bunnify/bunnify.json" ]]; then
-        cp "${HOME}/work/bunnify/bunnify.json" "$config_bookmarks"
-        echo "  Migrated legacy bookmarks to ${config_bookmarks}"
     fi
 fi
 

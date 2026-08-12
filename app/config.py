@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,11 +35,6 @@ class ServerPreferences:
 def repo_root() -> Path:
     """Return the repository root (parent of the ``app`` package) when developing."""
     return Path(__file__).resolve().parent.parent
-
-
-def checkout_bookmarks_path() -> Path:
-    """Repository-local ``bunnify.json`` (legacy checkout layout, gitignored)."""
-    return repo_root() / "bunnify.json"
 
 
 def xdg_config_home(*, environ: dict[str, str] | None = None) -> Path:
@@ -278,60 +272,19 @@ def ensure_user_bookmarks(
     allow_prompt: bool | None = None,
     print_fn: Callable[[str], None] | None = None,
 ) -> Path:
-    """
-    Ensure a user bookmarks file exists; return its path.
-
-    Order:
-    1. Existing destination (never overwrite).
-    2. Copy/symlink from the checkout's gitignored ``bunnify.json``, then
-       ``~/work/bunnify/bunnify.json`` when present. Non-interactive: copy when found.
-    3. Seed from ``bunnify.json.example`` / packaged example.
-    """
+    """Return the user bookmarks file path, or raise when it is missing."""
+    _ = legacy, prompt_fn, allow_prompt, print_fn
     target = dest if dest is not None else default_bookmarks_path(environ=environ)
-    if target.exists():
+    if target.is_file():
         return target
-
-    legacy_path = legacy if legacy is not None else legacy_bookmarks_path()
-    checkout_path = checkout_bookmarks_path()
-    should_prompt = allow_prompt if allow_prompt is not None else sys.stdin.isatty()
-    log = print_fn or (lambda _msg: None)
-
-    for source in (checkout_path, legacy_path):
-        if not source.is_file():
-            continue
-        choice = "copy"
-        if should_prompt:
-            ask = prompt_fn or input
-            try:
-                answer = ask(
-                    f"Found bookmarks at {source}.\n"
-                    f"Migrate to {target}? [c]opy / [s]ymlink / [e]xample seed: "
-                )
-            except EOFError:
-                answer = "c"
-            normalized = answer.strip().lower()
-            if normalized.startswith("s"):
-                choice = "symlink"
-            elif normalized.startswith("e"):
-                choice = "example"
-            else:
-                choice = "copy"
-
-        if choice == "example":
-            break
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if choice == "symlink":
-            target.symlink_to(source.resolve())
-            log(f"Symlinked bookmarks: {target} → {source}")
-            return target
-        shutil.copyfile(source, target)
-        log(f"Copied bookmarks to {target} from {source}")
-        return target
-
-    seeded = seed_bookmarks_from_example(target)
-    log(f"Seeded bookmarks from example at {seeded}")
-    return seeded
+    raise FileNotFoundError(
+        "Bookmarks file not found: "
+        f"{target}\n"
+        "Create it manually before starting the server, for example:\n"
+        f"  mkdir -p {target.parent}\n"
+        f"  cp bunnify.json.example {target}\n"
+        "Or set BUNNIFY_BOOKMARKS to an existing file path."
+    )
 
 
 def resolve_base_url(

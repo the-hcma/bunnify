@@ -175,10 +175,13 @@ def _configure_environment(options: ServerOptions) -> None:
 
 def _ensure_bookmarks(options: ServerOptions) -> Path:
     if options.bookmarks is None:
-        return ensure_user_bookmarks(
-            allow_prompt=not options.noninteractive,
-            print_fn=print,
-        ).resolve()
+        try:
+            return ensure_user_bookmarks(
+                allow_prompt=not options.noninteractive,
+                print_fn=print,
+            ).resolve()
+        except FileNotFoundError as exc:
+            raise RuntimeError(str(exc)) from exc
     bookmarks = options.bookmarks.expanduser().resolve()
     if not bookmarks.is_file():
         raise RuntimeError(f"bookmarks file not found: {bookmarks}")

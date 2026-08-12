@@ -19,8 +19,7 @@ The unit **template** (with `@@REPO_DIR@@`) lives in this repo at
 - systemd user session available (`systemctl --user status` returns output)
 - `~/work/ai/repository-helpers` cloned locally
 - Bunnify dependencies installed (`uv sync`)
-- Bookmarks under `~/.config/bunnify/bookmarks.json` (seed from `bunnify.json.example`
-  or let `on-deploy` migrate from a repo-local `bunnify.json` when present)
+- Bookmarks at `~/.config/bunnify/bookmarks.json` (create from `bunnify.json.example` before first start)
 - `~/.config/user-services-host` — short hostname label for the service host (or pass
   `--condition-host` on first `setup-service` run)
 - `~/.config/user-services-host-fqdn` — FQDN captured on the service host (or
@@ -61,10 +60,12 @@ systemctl --user status bunnify
 
 ## View Logs
 
-Logs are written to `~/scratch/bunnify/bunnify.log`:
+- **Service stdout/stderr:** `~/scratch/bunnify/bunnify.log` (systemd capture; HTTP access lines)
+- **Application log:** `~/scratch/bunnify/data/bunnify.log` (Django rotating handler)
 
 ```bash
 tail -f ~/scratch/bunnify/bunnify.log
+tail -f ~/scratch/bunnify/data/bunnify.log
 journalctl --user -u bunnify -f
 ```
 
