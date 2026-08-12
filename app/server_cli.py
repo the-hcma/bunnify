@@ -488,7 +488,12 @@ def _stop_managed_server(pid_dir: Path, *, quiet: bool = False) -> int:
             _terminate_pid(listener_pid)
             signaled_pids.append(listener_pid)
 
-    if port is not None and not _wait_for_port_free(port, timeout_s=15):
+    should_wait_for_port = bool(signaled_pids) or not quiet
+    if (
+        port is not None
+        and should_wait_for_port
+        and not _wait_for_port_free(port, timeout_s=15)
+    ):
         _cleanup_files(pid_dir)
         if not quiet:
             print(f"Port {port} is still busy after stop.", file=sys.stderr)
