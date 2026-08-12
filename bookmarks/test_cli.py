@@ -784,28 +784,7 @@ class ConfigUnitTests(TestCase):
 
             self.assertEqual(result, "http://legacy.example:9000")
 
-    def test_ensure_user_bookmarks_copies_legacy_noninteractive(self) -> None:
-        import tempfile
-        from pathlib import Path
-
-        from app.config import ensure_user_bookmarks
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            legacy = root / "legacy.json"
-            target = root / "config" / "bookmarks.json"
-            legacy.write_text('{"legacy": true}\n', encoding="utf-8")
-
-            result = ensure_user_bookmarks(
-                dest=target,
-                legacy=legacy,
-                allow_prompt=False,
-            )
-
-            self.assertEqual(result, target)
-            self.assertEqual(target.read_bytes(), legacy.read_bytes())
-
-    def test_ensure_user_bookmarks_seeds_without_legacy(self) -> None:
+    def test_ensure_user_bookmarks_returns_existing(self) -> None:
         import tempfile
         from pathlib import Path
 
@@ -814,18 +793,25 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "config" / "bookmarks.json"
-            with patch(
-                "app.config.example_bookmarks_bytes",
-                return_value=b'{"example": true}\n',
-            ):
-                result = ensure_user_bookmarks(
-                    dest=target,
-                    legacy=root / "missing.json",
-                    allow_prompt=False,
-                )
+            target.parent.mkdir(parents=True)
+            target.write_text('{"existing": true}\n', encoding="utf-8")
+
+            result = ensure_user_bookmarks(dest=target, allow_prompt=False)
 
             self.assertEqual(result, target)
-            self.assertEqual(target.read_bytes(), b'{"example": true}\n')
+
+    def test_ensure_user_bookmarks_raises_when_missing(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with self.assertRaises(FileNotFoundError) as context:
+                ensure_user_bookmarks(dest=target, allow_prompt=False)
+
+            self.assertIn("Create it manually", str(context.exception))
 
     def test_seed_bookmarks_does_not_overwrite(self) -> None:
         import tempfile

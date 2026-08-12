@@ -890,7 +890,7 @@ def main(
             theme=theme,
             editing_mode=editing_mode_enum(mode_name),
         )
-    except (ClientError, ValueError, OSError, RuntimeError) as exc:
+    except (ClientError, FileNotFoundError, ValueError, OSError, RuntimeError) as exc:
         click.echo(theme.err(f"error: {exc}"), err=True)
         sys.exit(1)
 

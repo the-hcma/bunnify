@@ -1,27 +1,27 @@
 # Bunnify configuration
 
-`bunnify.json.example` is the seed used when no existing bookmarks can be migrated.
+`bunnify.json.example` is the template for creating your personal bookmarks file.
 
 ## XDG layout
 
 Bunnify stores user configuration under `$XDG_CONFIG_HOME/bunnify`, defaulting
 to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
 
-- `bookmarks.json` contains personal shortcuts.
+- `bookmarks.json` contains personal shortcuts (required before server start).
 - `config.env` contains persistent CLI server preferences:
   `BUNNIFY_MODE`, `BUNNIFY_BASE_URL`, and `BUNNIFY_LOCAL_PORT`.
 - `run/` contains PID and selected-port files for the CLI-managed local server.
 
-The server creates `bookmarks.json` from the packaged example on first use.
-These files are user data and are not tracked by Git.
+Create `bookmarks.json` manually — the server does not auto-migrate from legacy
+paths or seed the example file. These files are user data and are not tracked
+by Git.
 
-## Migration
+## Setup
 
-When the XDG bookmarks file does not exist, non-interactive startup copies
-`~/work/bunnify/bunnify.json` if that legacy file exists. Interactive callers
-may instead copy it, symlink it, or seed the example. The previously tracked
-repository-root `bunnify.json` has been removed; copy any personal version to
-`~/.config/bunnify/bookmarks.json` or set `BUNNIFY_BOOKMARKS`.
+```bash
+mkdir -p ~/.config/bunnify
+cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+```
 
 Run `bunnify setup` to write verified settings. Existing base-URL-only files
 remain supported; they are interpreted as remote mode.

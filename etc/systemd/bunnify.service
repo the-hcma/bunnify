@@ -9,7 +9,9 @@ Type=simple
 # Assumes Bunnify is located in ~/work/ai/bunnify
 # Adjust the path below if your repository is in a different location
 WorkingDirectory=@@REPO_DIR@@
-ExecStart=@@REPO_DIR@@/scripts/bunnify-server --foreground --listen-all --port 8001 --bookmarks @@REPO_DIR@@/bunnify.json
+Environment=BUNNIFY_DATA_DIR=%h/scratch/bunnify/data
+Environment=BUNNIFY_LOG_FILE=%h/scratch/bunnify/data/bunnify.log
+ExecStart=@@REPO_DIR@@/scripts/bunnify-server --foreground --listen-all --port 8001 --noninteractive --pid-dir %h/scratch/bunnify/run
 Restart=always
 RestartSec=5
 StandardOutput=append:%h/scratch/bunnify/bunnify.log

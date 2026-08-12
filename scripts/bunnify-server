@@ -2,6 +2,23 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
+cd "$repo_root" || exit 1
 
-exec uv run bunnify-server "$@"
+server_module="app.server_cli"
+
+if command -v uv >/dev/null 2>&1; then
+  exec uv run bunnify-server "$@"
+fi
+
+venv_server="${repo_root}/.venv/bin/bunnify-server"
+if [[ -x "$venv_server" ]]; then
+  exec "$venv_server" "$@"
+fi
+
+venv_python="${repo_root}/.venv/bin/python"
+if [[ -x "$venv_python" ]]; then
+  exec "$venv_python" -m "$server_module" "$@"
+fi
+
+echo "bunnify-server: install uv (https://docs.astral.sh/uv/) or run 'uv sync' in ${repo_root}" >&2
+exit 1

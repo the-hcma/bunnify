@@ -8,8 +8,8 @@ bunnify setup
 ```
 
 In a development checkout, `./scripts/bunnify` and
-`./scripts/bunnify-server` are thin `uv` wrappers around the same installed
-entry points.
+`./scripts/bunnify-server` prefer `uv run` when `uv` is on ``PATH``, otherwise
+they fall back to the checkout ``.venv`` (same entry points systemd uses).
 
 Setup defaults to **local** mode. It creates the user bookmarks file when
 needed, starts a managed server, verifies `/health`, and records the selected
