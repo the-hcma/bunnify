@@ -9,8 +9,13 @@ palette, Chrome OpenSearch integration, and parameterized redirects.
 
 ```bash
 pipx install bunnify
+pipx ensurepath   # adds ~/.local/bin to PATH if needed (restart the shell)
 bunnify --version
 ```
+
+pipx installs `bunnify` and `bunnify-server` under **`~/.local/bin`** by default
+(or `$PIPX_BIN_DIR` when set). Ensure that directory is on your `PATH` before
+running either command.
 
 The wheel installs **`bunnify`** (CLI) and **`bunnify-server`** (Django
 server). No repository checkout or `uv` is required at runtime.
@@ -38,11 +43,18 @@ See [Configuration](docs/CONFIG.md) for overrides (`BUNNIFY_BOOKMARKS`,
 bunnify setup
 ```
 
-Setup defaults to a **local** managed server: it verifies `/health`, records
-the port, and saves settings to `~/.config/bunnify/config.env`. Choose
-**remote** to point at an existing server URL instead.
+**Laptop / daily machine:** choose **local** (default). Setup starts a managed
+server, verifies `/health`, records the port, and saves settings to
+`~/.config/bunnify/config.env`. Point Chrome at the same `BUNNIFY_BASE_URL`
+([Chrome setup](CHROME_SETUP.md)).
+
+**Home server / always-on host:** choose **remote** on client devices and enter
+that host’s URL. Prefer a centralized remote install when several machines share
+one server — not as a laptop’s only dependency if you often go offline.
 
 One-time override without saving: `bunnify --base-url https://… shortcut`.
+
+Details: [Local and remote setup](docs/LOCAL.md).
 
 ### 3. Run shortcuts
 
