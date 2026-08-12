@@ -262,10 +262,13 @@ def run_setup(
             allow_prompt=True,
             print_fn=log,
         )
-        preferred_port = (
-            existing.local_port
-            if existing is not None and existing.mode == "local"
-            else None
+        preferred_port = _prompt_local_port(
+            ask,
+            existing_port=(
+                existing.local_port
+                if existing is not None and existing.mode == "local"
+                else None
+            ),
         )
         while True:
             try:
@@ -340,6 +343,29 @@ def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
     except EOFError:
         return False
     return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
+
+
+def _prompt_local_port(
+    prompt_fn: Callable[[str], str],
+    *,
+    existing_port: int | None,
+) -> int | None:
+    """Ask for a local server port; empty input keeps ``existing_port``."""
+    default_label = str(existing_port) if existing_port is not None else "8000"
+    try:
+        answer = prompt_fn(f"Local server port [{default_label}]: ")
+    except EOFError as exc:
+        raise ClientError("Setup aborted") from exc
+    stripped = answer.strip()
+    if not stripped:
+        return existing_port
+    try:
+        port = int(stripped)
+    except ValueError as exc:
+        raise ClientError(f"Invalid port: {stripped!r}") from exc
+    if not 0 <= port <= 65535:
+        raise ClientError("Local server port must be between 0 and 65535")
+    return port
 
 
 def _wait_for_healthy_remote(

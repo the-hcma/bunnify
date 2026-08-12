@@ -12,7 +12,8 @@ In a development checkout, `./scripts/bunnify` and
 they fall back to the checkout ``.venv`` (same entry points systemd uses).
 
 Setup defaults to **local** mode. It requires an existing bookmarks file (see
-[Configuration](CONFIG.md)), starts a managed server, verifies `/health`, and
+[Configuration](CONFIG.md)), prompts for a listening port (default `8000`, or `0`
+for an OS-assigned port), starts a managed server, verifies `/health`, and
 records the selected port. Remote mode prompts for a URL and saves it only
 after its `/health` response is HTTP 200 with body `ok`. If a configured remote
 server later becomes unavailable, the interactive CLI offers to use the managed

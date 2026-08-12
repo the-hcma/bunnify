@@ -38,8 +38,10 @@ Development checkout: prefix with `./scripts/` (e.g. `./scripts/bunnify-server`)
 
 ## Chrome
 
-1. Server running → visit `http://127.0.0.1:8000/` (OpenSearch auto-detect)
-2. Or add manually: keyword `b`, URL `http://127.0.0.1:8000/search/?q=%s`
+Use `BUNNIFY_BASE_URL` from `~/.config/bunnify/config.env` (set by `bunnify setup`):
+
+1. Server running → visit `<BUNNIFY_BASE_URL>/` (OpenSearch auto-detect)
+2. Or add manually: keyword `b`, URL `<BUNNIFY_BASE_URL>/search/?q=%s`
 
 Full guide: [CHROME_SETUP.md](CHROME_SETUP.md)
 

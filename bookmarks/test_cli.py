@@ -1008,7 +1008,7 @@ class ConfigUnitTests(TestCase):
                 ),
                 env_path=path,
             )
-            responses = iter(["local", ""])
+            responses = iter(["local", "", ""])
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -1036,6 +1036,40 @@ class ConfigUnitTests(TestCase):
             self.assertIsNotNone(preferences)
             assert preferences is not None
             self.assertEqual(preferences.local_port, 9123)
+
+    def test_setup_local_prompts_for_selected_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            responses = iter(["local", "8765"])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8765", 8765),
+                ) as ensure_server,
+                patch("app.cli.check_health", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8765")
+            ensure_server.assert_called_once()
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8765)
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8765)
 
     def test_setup_remote_persists_verified_url(self) -> None:
         import tempfile
