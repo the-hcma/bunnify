@@ -308,6 +308,27 @@ def _pid_paths(pid_dir: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def _port_from_command(command: str) -> int | None:
+    """Return ``--port`` from a process command line when it is a fixed port."""
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return None
+    try:
+        index = arguments.index("--port")
+    except ValueError:
+        return None
+    if index + 1 >= len(arguments):
+        return None
+    try:
+        port = int(arguments[index + 1])
+    except ValueError:
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return port
+
+
 def _port_is_free(port: int) -> bool:
     """Return whether ``port`` can be bound with ``SO_REUSEADDR``.
 
@@ -504,14 +525,24 @@ def _stop_managed_server(pid_dir: Path, *, quiet: bool = False) -> int:
 
     signaled_pids: list[int] = []
     if pid is not None and _is_process_running(pid):
-        if not _is_bunnify_process(pid):
+        if not _process_managed_by_pid_dir(pid, pid_dir):
             _cleanup_files(pid_dir)
             if not quiet:
-                print(
-                    f"Refusing to stop unrelated process {pid}; "
-                    "removed stale PID files."
-                )
+                if _is_bunnify_process(pid):
+                    print(
+                        f"Refusing to stop process {pid} "
+                        "(different --pid-dir); removed stale PID files."
+                    )
+                else:
+                    print(
+                        f"Refusing to stop unrelated process {pid}; "
+                        "removed stale PID files."
+                    )
             return 0
+        if port is None:
+            command = _process_command(pid)
+            if command is not None:
+                port = _port_from_command(command)
         _terminate_pid(pid)
         signaled_pids.append(pid)
 
