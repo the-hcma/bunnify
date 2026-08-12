@@ -23,11 +23,47 @@ server). No repository checkout or `uv` is required at runtime.
 
 ### After install
 
-1. **Seed bookmarks and run setup** (starts or points at a server) — follow
-   [Quick start](#quick-start) below, or the full guide:
+Do these once so the CLI, server, and browser all work together:
+
+1. **Create your bookmarks file** at
+   `~/.config/bunnify/bookmarks.json` (required before the server starts):
+
+   ```bash
+   mkdir -p ~/.config/bunnify
+   curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
+     -o ~/.config/bunnify/bookmarks.json
+   # edit ~/.config/bunnify/bookmarks.json with your shortcuts
+   ```
+
+   Override path with `BUNNIFY_BOOKMARKS` or `XDG_CONFIG_HOME` — see
+   [Configuration](https://github.com/the-hcma/bunnify/blob/main/docs/CONFIG.md).
+
+2. **Configure and start the server** (local on a laptop; remote only for a
+   home/always-on host):
+
+   ```bash
+   bunnify setup
+   ```
+
+   Full guide:
    [Local and remote server setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md)
-2. **Configure Chrome or Edge** as a site search / OpenSearch engine:
+
+3. **Configure Chrome or Edge** as a site search engine using the same
+   `BUNNIFY_BASE_URL` from `~/.config/bunnify/config.env`:
    [Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
+
+4. **Try it:** `bunnify gh` or type `b gh` in the address bar (if keyword is `b`).
+
+### Upgrade
+
+```bash
+pipx upgrade bunnify
+bunnify --version
+```
+
+Bookmarks and `~/.config/bunnify/config.env` are user data — upgrades do not
+overwrite them. After a major server change, re-run `bunnify setup` only if
+docs or release notes say so.
 
 Source and docs: [github.com/the-hcma/bunnify](https://github.com/the-hcma/bunnify).
 
