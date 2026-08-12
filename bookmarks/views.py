@@ -15,7 +15,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
-from app.version import build_info
+from app.version import get_build_info
 
 from .keys_catalog import catalog_payload
 from .models import Bookmark
@@ -23,8 +23,6 @@ from .resolve import PLACEHOLDER_PATTERN, resolve_query, substitute_placeholder_
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
-
-BUILD_INFO = build_info()
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -51,7 +49,11 @@ def _absolute_resolve_url(request: HttpRequest, url: str) -> str:
 
 def _build_info_context() -> dict[str, str]:
     """Return template context describing this Bunnify build."""
-    return {"build_info": BUILD_INFO}
+    package, commit = get_build_info()
+    return {
+        "git_commit": commit,
+        "package_version": package,
+    }
 
 
 @require_http_methods(["GET"])
@@ -190,7 +192,12 @@ def cmd_palette(request: HttpRequest) -> HttpResponse:
         )
 
     return render(
-        request, "bookmarks/cmd.html", {"bookmarks_json": json.dumps(bookmarks_data)}
+        request,
+        "bookmarks/cmd.html",
+        {
+            **_build_info_context(),
+            "bookmarks_json": json.dumps(bookmarks_data),
+        },
     )
 
 

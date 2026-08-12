@@ -6,6 +6,7 @@ import os
 import subprocess
 import tomllib
 from collections.abc import Mapping
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -14,12 +15,25 @@ PACKAGE_NAME = "bunnify"
 
 def build_info() -> str:
     """Return a human-readable package version and source revision."""
-    return f"{PACKAGE_NAME} {build_version()}"
+    return format_cli_version_line(prog=PACKAGE_NAME)
 
 
 def build_version() -> str:
     """Return the package version and source revision without a program name."""
-    return f"{package_version()} (commit {git_commit()})"
+    package, commit = get_build_info()
+    return f"{package} ({commit})"
+
+
+def format_cli_version_line(*, prog: str) -> str:
+    """One-line version string for ``--version`` on console entry points."""
+    package, commit = get_build_info()
+    return f"{prog} {package} ({commit})"
+
+
+@lru_cache(maxsize=1)
+def get_build_info() -> tuple[str, str]:
+    """Return ``(package_version, commit_short_or_unknown)`` once per process."""
+    return (package_version(), git_commit())
 
 
 def git_commit(
@@ -29,14 +43,15 @@ def git_commit(
 ) -> str:
     """Return the configured or checkout Git commit, shortened for display."""
     environment = os.environ if environ is None else environ
-    configured_sha = environment.get("BUNNIFY_GIT_SHA", "").strip()
-    if configured_sha:
-        return configured_sha[:7]
+    for key in ("BUNNIFY_GIT_SHA", "GITHUB_SHA"):
+        configured_sha = environment.get(key, "").strip()
+        if configured_sha:
+            return configured_sha[:12] if len(configured_sha) > 12 else configured_sha
 
     checkout = repository or Path(__file__).resolve().parents[1]
     try:
         result = subprocess.run(
-            ["git", "-C", str(checkout), "rev-parse", "--short=7", "HEAD"],
+            ["git", "-C", str(checkout), "rev-parse", "--short=12", "HEAD"],
             capture_output=True,
             check=True,
             text=True,

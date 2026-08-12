@@ -1,6 +1,6 @@
 from django.test import Client, TestCase
 
-from app.version import build_info
+from app.version import get_build_info
 
 from .models import Bookmark
 
@@ -11,6 +11,7 @@ class SmokeTests(TestCase):
     def setUp(self):
         """Set up test fixtures"""
         self.client = Client()
+        get_build_info.cache_clear()
 
         # Create test bookmarks
         Bookmark.objects.create(
@@ -32,7 +33,11 @@ class SmokeTests(TestCase):
         """Test that the index page loads successfully"""
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, build_info())
+        package, commit = get_build_info()
+        self.assertContains(response, package)
+        self.assertContains(response, f'title="commit {commit}"')
+        self.assertContains(response, "Chrome or Edge")
+        self.assertContains(response, "bunnylol")
 
     def test_list_page_loads(self):
         """Test that the list page loads and shows bookmarks"""

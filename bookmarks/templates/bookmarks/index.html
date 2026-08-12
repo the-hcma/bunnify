@@ -5,17 +5,22 @@
 {% block content %}
 <h2>🐰 Welcome to Bunnify</h2>
 
-<p>Smart bookmark manager with instant Chrome integration.</p>
+<p>
+    Smart bookmark manager with instant Chrome and Edge integration.
+    Inspired by Meta’s internal <em>bunnylol</em> address-bar shortcuts —
+    same idea, for your own bookmarks.
+</p>
 
 <div style="background-color: #f0f8ff; border-left: 4px solid #3498db; padding: 1.5rem; margin: 2rem 0; border-radius: 4px;">
-    <h3 style="margin-top: 0;">⚡ Quick Setup for Chrome</h3>
-    
+    <h3 style="margin-top: 0;">⚡ Quick Setup for Chrome or Edge</h3>
+
     <p><strong>Make Bunnify your default search engine in 3 steps:</strong></p>
-    
+
     <ol>
         <li>
-            <strong>Go to Chrome settings:</strong><br>
-            Visit <code>chrome://settings/searchEngines</code>
+            <strong>Open search-engine settings:</strong><br>
+            Chrome → <code>chrome://settings/searchEngines</code><br>
+            Edge → <code>edge://settings/searchEngines</code>
         </li>
         <li>
             <strong>Add Bunnify:</strong><br>
@@ -31,15 +36,15 @@
             Click the three dots (⋮) next to Bunnify and select "Make default"
         </li>
     </ol>
-    
-    <p><strong>Now you can use it from Chrome's address bar:</strong></p>
+
+    <p><strong>Now you can use it from the address bar:</strong></p>
     <ul>
         <li>Type <code>c</code> → Opens Calendar</li>
         <li>Type <code>gh</code> → Opens GitHub</li>
         <li>Type <code>g django</code> → Google search for "django"</li>
         <li>Type <code>pr 12345</code> → Opens PR #12345</li>
     </ul>
-    
+
     <p style="margin-bottom: 0;"><em>This single URL handles all your bookmarks automatically!</em></p>
 </div>
 
@@ -65,7 +70,7 @@
 <h4>3. View All Bookmarks</h4>
 <p>Visit <a href="/list/">/list/</a> to see all available bookmarks and their keys.</p>
 
-<h3>Manual Redirect (Without Chrome Setup)</h3>
+<h3>Manual Redirect (Without Browser Setup)</h3>
 <p>You can also access bookmarks directly via query parameters:</p>
 <ul>
     <li><code>/pr/?pr_number=12345</code> → Opens PR #12345</li>
