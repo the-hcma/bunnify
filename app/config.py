@@ -181,7 +181,7 @@ def read_persisted_local_port(*, environ: dict[str, str] | None = None) -> int |
     port_file = run_dir(environ=environ) / LOCAL_PORT_FILE_NAME
     try:
         port = int(port_file.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     if 0 <= port <= 65535:
         return port
