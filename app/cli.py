@@ -27,6 +27,7 @@ from app.client import (
 )
 from app.config import (
     ENV_VAR,
+    LOCAL_PORT_FILE_NAME,
     MIN_LOCAL_PORT,
     ServerPreferences,
     default_bookmarks_path,
@@ -428,6 +429,15 @@ def _builds_match(health: HealthStatus) -> bool:
     return health.version == local_version and health.commit == local_commit
 
 
+def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool:
+    """Return True only for an explicit yes (empty input is no)."""
+    try:
+        answer = prompt_fn(message)
+    except EOFError:
+        return False
+    return answer.strip().lower() in {"y", "yes"}
+
+
 def _find_usable_local_port(start: int) -> int:
     """Return the next free port or healthy Bunnify at or above ``start``."""
     candidate = max(start, MIN_LOCAL_PORT)
@@ -451,6 +461,14 @@ def _format_running_build(health: HealthStatus) -> str:
     return "unknown build"
 
 
+def _managed_local_port(pid_dir: Path) -> int | None:
+    """Return the port recorded for this CLI run dir, if any."""
+    try:
+        return int((pid_dir / LOCAL_PORT_FILE_NAME).read_text(encoding="utf-8").strip())
+    except OSError, ValueError:
+        return None
+
+
 def _offer_restart_mismatched_server(
     prompt_fn: Callable[[str], str],
     *,
@@ -464,6 +482,9 @@ def _offer_restart_mismatched_server(
 
     Returns the port when the caller should reuse or restart into it, or
     ``None`` when the prompt loop should continue (stop failed / still busy).
+
+    Restart is only offered when ``pid_dir`` records this same ``port``, so we
+    do not SIGTERM an unrelated managed server or loop when stop is a no-op.
     """
     local_version, local_commit = get_build_info()
     local_label = f"{local_version} ({local_commit})"
@@ -479,9 +500,17 @@ def _offer_restart_mismatched_server(
         )
     else:
         print_fn(theme.warn(f"Running build differs from this CLI ({local_label})."))
-    if not _retry_requested(
+    if _managed_local_port(pid_dir) != port:
+        print_fn(
+            theme.warn(
+                "Not managed by this CLI run directory; reusing the running server. "
+                "Stop it yourself (or choose another port) to start a fresh build."
+            )
+        )
+        return port
+    if not _confirm_explicit_yes(
         prompt_fn,
-        "Restart the local server with this CLI? [Y/n]: ",
+        "Restart the managed local server with this CLI? [y/N]: ",
     ):
         return port
     try:
