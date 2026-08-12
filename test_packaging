@@ -38,6 +38,18 @@ export BUNNIFY_DATA_DIR="$temp_root/data"
 export HOME="$home_dir"
 export XDG_CONFIG_HOME="$temp_root/config"
 
+bookmarks_file="$XDG_CONFIG_HOME/bunnify/bookmarks.json"
+mkdir -p "$(dirname "$bookmarks_file")"
+"$venv_dir/bin/python" - <<'PY'
+import os
+from pathlib import Path
+
+from app.config import seed_bookmarks_from_example
+
+dest = Path(os.environ["XDG_CONFIG_HOME"]) / "bunnify" / "bookmarks.json"
+seed_bookmarks_from_example(dest)
+PY
+
 "$bin_dir/bunnify" --help >/dev/null
 "$bin_dir/bunnify" --version
 "$bin_dir/bunnify-server" --help >/dev/null
@@ -50,12 +62,11 @@ echo "🐰 Starting installed server outside the repository..."
     --pid-dir "$pid_dir" \
     --port 0
 
-if [[ ! -s "$XDG_CONFIG_HOME/bunnify/bookmarks.json" ]]; then
-    echo "Installed server did not seed the packaged bookmarks example" >&2
+if [[ ! -s "$bookmarks_file" ]]; then
+    echo "Bookmarks file missing before server start: $bookmarks_file" >&2
     exit 1
 fi
-"$venv_dir/bin/python" -m json.tool \
-    "$XDG_CONFIG_HOME/bunnify/bookmarks.json" >/dev/null
+"$venv_dir/bin/python" -m json.tool "$bookmarks_file" >/dev/null
 
 port_file="$pid_dir/.bunnify.port"
 for _ in {1..100}; do
