@@ -16,8 +16,10 @@ from prompt_toolkit.shortcuts import CompleteStyle
 from app.client import (
     DEFAULT_BASE_URL,
     ClientError,
+    HealthStatus,
     KeyEntry,
     check_health,
+    fetch_health,
     fetch_key_entries,
     fetch_keys,
     fetch_suggestions,
@@ -25,6 +27,7 @@ from app.client import (
 )
 from app.config import (
     ENV_VAR,
+    LOCAL_PORT_FILE_NAME,
     MIN_LOCAL_PORT,
     ServerPreferences,
     default_bookmarks_path,
@@ -51,10 +54,10 @@ from app.interactive import (
     read_shortcut_query,
     repl_prompt_message,
 )
-from app.local_server import ensure_local_server, port_is_free
+from app.local_server import ensure_local_server, port_is_free, stop_local_server
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
-from app.version import build_info
+from app.version import build_info, get_build_info
 
 BUILD_INFO = build_info()
 
@@ -308,6 +311,7 @@ def run_setup(
             allow_prompt=True,
             print_fn=log,
         )
+        pid_dir = run_dir(environ=environ)
         preferred_port = _prompt_local_port(
             ask,
             existing_port=(
@@ -315,6 +319,7 @@ def run_setup(
                 if existing is not None and existing.mode == "local"
                 else None
             ),
+            pid_dir=pid_dir,
             print_fn=log,
             theme=colors,
         )
@@ -322,7 +327,7 @@ def run_setup(
             try:
                 base_url, actual_port = ensure_local_server(
                     port=preferred_port,
-                    pid_dir=run_dir(environ=environ),
+                    pid_dir=pid_dir,
                     bookmarks=bookmarks,
                 )
             except (OSError, RuntimeError, ValueError) as exc:
@@ -333,19 +338,25 @@ def run_setup(
                     preferred_port = None
                     continue
                 raise ClientError("Setup aborted; settings were not changed") from exc
-            if check_health(base_url):
+            health = fetch_health(base_url)
+            if health.ok:
                 preferences = ServerPreferences(
                     mode="local",
                     base_url=base_url,
                     local_port=actual_port,
                 )
                 save_preferences(preferences, env_path=path, environ=environ)
-                log(
-                    colors.ok(
-                        f"✓ Port {actual_port} is free (or already running "
-                        "Bunnify) and /health returned ok"
+                build_label = _format_running_build(health)
+                if build_label == "unknown build":
+                    local_version, local_commit = get_build_info()
+                    log(
+                        colors.ok(
+                            "✓ Local Bunnify is healthy (unknown build; "
+                            f"this CLI is {local_version} ({local_commit}))"
+                        )
                     )
-                )
+                else:
+                    log(colors.ok(f"✓ Local Bunnify is healthy ({build_label})"))
                 log(colors.ok(f"✓ Configured local Bunnify server at {base_url}"))
                 log("")
                 log(colors.header("Browser"))
@@ -410,6 +421,23 @@ def build_query_from_args(args: tuple[str, ...]) -> str:
     return " ".join(args).strip()
 
 
+def _builds_match(health: HealthStatus) -> bool:
+    """Return whether a healthy remote build matches this CLI install."""
+    if health.version is None or health.commit is None:
+        return False
+    local_version, local_commit = get_build_info()
+    return health.version == local_version and health.commit == local_commit
+
+
+def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool:
+    """Return True only for an explicit yes (empty input is no)."""
+    try:
+        answer = prompt_fn(message)
+    except EOFError:
+        return False
+    return answer.strip().lower() in {"y", "yes"}
+
+
 def _find_usable_local_port(start: int) -> int:
     """Return the next free port or healthy Bunnify at or above ``start``."""
     candidate = max(start, MIN_LOCAL_PORT)
@@ -422,10 +450,91 @@ def _find_usable_local_port(start: int) -> int:
     raise ClientError(f"No free local port found between {MIN_LOCAL_PORT} and 65535")
 
 
+def _format_running_build(health: HealthStatus) -> str:
+    """Human-readable version/commit from a health probe."""
+    if health.version and health.commit:
+        return f"{health.version} ({health.commit})"
+    if health.version:
+        return health.version
+    if health.commit:
+        return f"commit {health.commit}"
+    return "unknown build"
+
+
+def _managed_local_port(pid_dir: Path) -> int | None:
+    """Return the port recorded for this CLI run dir, if any."""
+    try:
+        return int((pid_dir / LOCAL_PORT_FILE_NAME).read_text(encoding="utf-8").strip())
+    except OSError, ValueError:
+        return None
+
+
+def _offer_restart_mismatched_server(
+    prompt_fn: Callable[[str], str],
+    *,
+    port: int,
+    health: HealthStatus,
+    pid_dir: Path,
+    print_fn: Callable[[str], None],
+    theme: Theme,
+) -> int | None:
+    """Offer a restart when a busy port serves a different Bunnify build.
+
+    Returns the port when the caller should reuse or restart into it, or
+    ``None`` when the prompt loop should continue (stop failed / still busy).
+
+    Restart is only offered when ``pid_dir`` records this same ``port``, so we
+    do not SIGTERM an unrelated managed server or loop when stop is a no-op.
+    """
+    local_version, local_commit = get_build_info()
+    local_label = f"{local_version} ({local_commit})"
+    running_label = _format_running_build(health)
+    print_fn(theme.ok(f"✓ Port {port} is already serving Bunnify {running_label}"))
+    if _builds_match(health):
+        return port
+    if health.version is None or health.commit is None:
+        print_fn(
+            theme.warn(
+                f"Could not determine the running build (this CLI is {local_label})."
+            )
+        )
+    else:
+        print_fn(theme.warn(f"Running build differs from this CLI ({local_label})."))
+    if _managed_local_port(pid_dir) != port:
+        print_fn(
+            theme.warn(
+                "Not managed by this CLI run directory; reusing the running server. "
+                "Stop it yourself (or choose another port) to start a fresh build."
+            )
+        )
+        return port
+    if not _confirm_explicit_yes(
+        prompt_fn,
+        "Restart the managed local server with this CLI? [y/N]: ",
+    ):
+        return port
+    try:
+        stop_local_server(pid_dir)
+    except RuntimeError as exc:
+        print_fn(theme.warn(f"Could not stop the managed server: {exc}"))
+        return None
+    if port_is_free(port):
+        print_fn(theme.ok(f"✓ Stopped previous server; port {port} is free"))
+        return port
+    print_fn(
+        theme.warn(
+            f"Port {port} is still busy after stop. "
+            "Choose another port, or stop the other process."
+        )
+    )
+    return None
+
+
 def _prompt_local_port(
     prompt_fn: Callable[[str], str],
     *,
     existing_port: int | None,
+    pid_dir: Path,
     print_fn: Callable[[str], None] | None = None,
     theme: Theme | None = None,
 ) -> int:
@@ -471,15 +580,31 @@ def _prompt_local_port(
         if port_is_free(port):
             log(colors.ok(f"✓ Port {port} is free"))
             return port
-        if check_health(f"http://127.0.0.1:{port}"):
-            log(colors.ok(f"✓ Port {port} is already serving a healthy Bunnify"))
-            return port
+        health = fetch_health(f"http://127.0.0.1:{port}")
+        if health.ok:
+            chosen = _offer_restart_mismatched_server(
+                prompt_fn,
+                port=port,
+                health=health,
+                pid_dir=pid_dir,
+                print_fn=log,
+                theme=colors,
+            )
+            if chosen is not None:
+                return chosen
+            continue
         log(colors.warn(f"Port {port} is already in use. Searching for a free port…"))
         found = _find_usable_local_port(port + 1)
         if port_is_free(found):
             log(colors.ok(f"✓ Found free port {found}"))
         else:
-            log(colors.ok(f"✓ Found healthy Bunnify on port {found}"))
+            found_health = fetch_health(f"http://127.0.0.1:{found}")
+            log(
+                colors.ok(
+                    f"✓ Found healthy Bunnify on port {found} "
+                    f"({_format_running_build(found_health)})"
+                )
+            )
         return found
 
 

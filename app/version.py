@@ -10,6 +10,8 @@ from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from app import _build_metadata
+
 PACKAGE_NAME = "bunnify"
 
 
@@ -46,9 +48,16 @@ def git_commit(
     for key in ("BUNNIFY_GIT_SHA", "GITHUB_SHA"):
         configured_sha = environment.get(key, "").strip()
         if configured_sha:
-            return configured_sha[:12] if len(configured_sha) > 12 else configured_sha
+            return _normalize_commit(configured_sha)
+
+    embedded = getattr(_build_metadata, "EMBEDDED_COMMIT", "")
+    if isinstance(embedded, str) and embedded.strip():
+        return _normalize_commit(embedded)
 
     checkout = repository or Path(__file__).resolve().parents[1]
+    if not (checkout / ".git").exists():
+        return "unknown"
+
     try:
         result = subprocess.run(
             ["git", "-C", str(checkout), "rev-parse", "--short=12", "HEAD"],
@@ -64,11 +73,23 @@ def git_commit(
 
 def package_version(*, pyproject_path: Path | None = None) -> str:
     """Return the distribution version, with a source-checkout fallback."""
+    embedded = getattr(_build_metadata, "EMBEDDED_VERSION", "")
+    if isinstance(embedded, str) and embedded.strip():
+        return embedded.strip()
     try:
         return version(PACKAGE_NAME)
     except PackageNotFoundError:
         path = pyproject_path or Path(__file__).resolve().parents[1] / "pyproject.toml"
         return _pyproject_version(path)
+
+
+def _normalize_commit(token: str) -> str:
+    stripped = token.strip()
+    if not stripped:
+        return "unknown"
+    if len(stripped) > 12:
+        return stripped[:12]
+    return stripped
 
 
 def _pyproject_version(path: Path) -> str:

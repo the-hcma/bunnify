@@ -35,7 +35,7 @@ class SmokeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         package, commit = get_build_info()
         self.assertContains(response, package)
-        self.assertContains(response, f'title="commit {commit}"')
+        self.assertContains(response, f'data-commit="commit {commit}"')
         self.assertContains(response, "Chrome or Edge")
         self.assertContains(response, "bunnylol")
 
@@ -271,6 +271,16 @@ class SmokeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content.decode(), "ok")
         self.assertEqual(response["Content-Type"], "text/plain")
+
+    def test_health_check_json_includes_version_and_commit(self):
+        """JSON clients receive version/commit alongside status."""
+        package, commit = get_build_info()
+        response = self.client.get("/health", HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["version"], package)
+        self.assertEqual(payload["commit"], commit)
 
     def test_same_placeholder_path_and_query_encoding(self):
         """Same placeholder in path vs query uses per-occurrence encoding."""

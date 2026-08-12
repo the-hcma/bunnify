@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly repo_root
+
 temp_root="$(mktemp -d)"
 build_dir="$temp_root/dist"
 venv_dir="$temp_root/venv"
@@ -19,8 +22,30 @@ trap cleanup EXIT
 
 mkdir -p "$build_dir" "$home_dir" "$outside_dir" "$pid_dir"
 
+embed_build_metadata="${repo_root}/scripts/embed_build_metadata"
+readonly embed_build_metadata
+
+restore_build_metadata() {
+    (
+        cd "${repo_root}"
+        env -u BUNNIFY_EMBED_VERSION -u BUNNIFY_EMBED_COMMIT \
+            uv run python "${embed_build_metadata}"
+    ) >/dev/null 2>&1 || true
+}
+trap 'restore_build_metadata; cleanup' EXIT
+
+echo "📦 Embedding build metadata for the wheel..."
+version="$(
+    uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
+)"
+commit="$(git rev-parse HEAD)"
+export BUNNIFY_EMBED_VERSION="${version}"
+export BUNNIFY_EMBED_COMMIT="${commit}"
+uv run python "${embed_build_metadata}"
+
 echo "📦 Building wheel..."
 timeout 120 uv build --wheel --out-dir "$build_dir"
+restore_build_metadata
 wheels=("$build_dir"/*.whl)
 wheel_path="${wheels[0]}"
 if [[ ! -f "$wheel_path" ]]; then
@@ -51,7 +76,12 @@ seed_bookmarks_from_example(dest)
 PY
 
 "$bin_dir/bunnify" --help >/dev/null
-"$bin_dir/bunnify" --version
+version_line="$("$bin_dir/bunnify" --version)"
+printf '%s\n' "$version_line"
+if [[ "$version_line" == *"(unknown)"* ]]; then
+    echo "Installed --version still reports unknown commit: $version_line" >&2
+    exit 1
+fi
 "$bin_dir/bunnify-server" --help >/dev/null
 "$bin_dir/bunnify-server" --version
 
@@ -87,6 +117,26 @@ if [[ "${health:-}" != "ok" ]]; then
     fi
     exit 1
 fi
+
+health_json="$(
+    curl --fail --silent --max-time 2 \
+        --header "Accept: application/json" \
+        "http://127.0.0.1:$port/health"
+)"
+"$venv_dir/bin/python" - "$health_json" "$version" "$commit" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+version = sys.argv[2]
+commit = sys.argv[3][:12]
+if payload.get("status") != "ok":
+    raise SystemExit(f"/health JSON missing ok status: {payload!r}")
+if payload.get("version") != version:
+    raise SystemExit(f"/health version mismatch: {payload!r} vs {version}")
+if payload.get("commit") != commit:
+    raise SystemExit(f"/health commit mismatch: {payload!r} vs {commit}")
+PY
 
 "$bin_dir/bunnify-server" --stop --pid-dir "$pid_dir"
 echo "✅ Installed wheel packaging smoke passed"
