@@ -8,7 +8,7 @@ base URL is usually `http://127.0.0.1:8000` — check
 
 ```bash
 mkdir -p ~/.config/bunnify
-curl -fsSL https://raw.githubusercontent.com/thehcma/bunnify/main/bunnify.json.example \
+curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
   -o ~/.config/bunnify/bookmarks.json
 ```
 

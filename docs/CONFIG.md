@@ -19,7 +19,7 @@ These files are user data and are not tracked by Git.
 
 ```bash
 mkdir -p ~/.config/bunnify
-curl -fsSL https://raw.githubusercontent.com/thehcma/bunnify/main/bunnify.json.example \
+curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
   -o ~/.config/bunnify/bookmarks.json
 ```
 

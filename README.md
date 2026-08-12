@@ -19,12 +19,12 @@ server). No repository checkout or `uv` is required at runtime.
 
 ### 1. Create your bookmarks file
 
-Download the [documented example](https://github.com/thehcma/bunnify/blob/main/bunnify.json.example)
+Download the [documented example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
 into XDG config (required before the server starts):
 
 ```bash
 mkdir -p ~/.config/bunnify
-curl -fsSL https://raw.githubusercontent.com/thehcma/bunnify/main/bunnify.json.example \
+curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
   -o ~/.config/bunnify/bookmarks.json
 # edit ~/.config/bunnify/bookmarks.json with your shortcuts
 ```
