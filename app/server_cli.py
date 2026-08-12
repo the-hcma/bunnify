@@ -373,17 +373,22 @@ def _process_command(pid: int) -> str | None:
 
 
 def _process_managed_by_pid_dir(pid: int, pid_dir: Path) -> bool:
-    """Return whether ``pid`` is a Bunnify server for this ``pid_dir``."""
+    """Return whether ``pid`` is a Bunnify server for this ``pid_dir``.
+
+    Processes started without an explicit ``--pid-dir`` use the default
+    :func:`run_dir` (same as ``_parse_options``), so treat a missing flag as
+    that default rather than as a mismatch.
+    """
     command = _process_command(pid)
     if command is None or not _is_bunnify_command(command):
         return False
     recorded = _pid_dir_from_command(command)
     if recorded is None:
-        return False
+        recorded = run_dir()
     try:
         return recorded.resolve() == pid_dir.expanduser().resolve()
     except OSError:
-        return recorded == pid_dir.expanduser()
+        return recorded.expanduser() == pid_dir.expanduser()
 
 
 def _read_pid(path: Path) -> int | None:
