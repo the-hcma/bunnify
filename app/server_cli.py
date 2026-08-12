@@ -227,19 +227,8 @@ def _is_bunnify_command(command: str) -> bool:
 
 
 def _is_bunnify_process(pid: int) -> bool:
-    if not _is_process_running(pid):
-        return False
-    try:
-        completed = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=5,
-        )
-    except OSError, subprocess.TimeoutExpired:
-        return False
-    return _is_bunnify_command(completed.stdout)
+    command = _process_command(pid)
+    return command is not None and _is_bunnify_command(command)
 
 
 def _is_process_running(pid: int) -> bool:
@@ -296,6 +285,21 @@ def _parse_options(argv: list[str] | None) -> ServerOptions:
     )
 
 
+def _pid_dir_from_command(command: str) -> Path | None:
+    """Return ``--pid-dir`` from a process command line, if present."""
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return None
+    try:
+        index = arguments.index("--pid-dir")
+    except ValueError:
+        return None
+    if index + 1 >= len(arguments):
+        return None
+    return Path(arguments[index + 1]).expanduser()
+
+
 def _pid_paths(pid_dir: Path) -> tuple[Path, Path, Path]:
     return (
         pid_dir / ".bunnify.pid",
@@ -327,6 +331,38 @@ def _port_value(raw: str) -> int:
     if not 0 <= port <= 65535:
         raise argparse.ArgumentTypeError("must be between 0 and 65535")
     return port
+
+
+def _process_command(pid: int) -> str | None:
+    """Return the ``ps`` command line for ``pid``, or ``None`` on failure."""
+    if not _is_process_running(pid):
+        return None
+    try:
+        completed = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    command = completed.stdout.strip()
+    return command or None
+
+
+def _process_managed_by_pid_dir(pid: int, pid_dir: Path) -> bool:
+    """Return whether ``pid`` is a Bunnify server for this ``pid_dir``."""
+    command = _process_command(pid)
+    if command is None or not _is_bunnify_command(command):
+        return False
+    recorded = _pid_dir_from_command(command)
+    if recorded is None:
+        return False
+    try:
+        return recorded.resolve() == pid_dir.expanduser().resolve()
+    except OSError:
+        return recorded == pid_dir.expanduser()
 
 
 def _read_pid(path: Path) -> int | None:
@@ -483,7 +519,7 @@ def _stop_managed_server(pid_dir: Path, *, quiet: bool = False) -> int:
         for listener_pid in _listener_pids(port):
             if listener_pid == os.getpid() or listener_pid in signaled_pids:
                 continue
-            if not _is_bunnify_process(listener_pid):
+            if not _process_managed_by_pid_dir(listener_pid, pid_dir):
                 continue
             _terminate_pid(listener_pid)
             signaled_pids.append(listener_pid)
