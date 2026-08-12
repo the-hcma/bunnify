@@ -805,6 +805,31 @@ class ConfigUnitTests(TestCase):
             self.assertEqual(result, target)
             self.assertEqual(target.read_bytes(), legacy.read_bytes())
 
+    def test_ensure_user_bookmarks_copies_checkout_noninteractive(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "bunnify.json"
+            target = root / "config" / "bookmarks.json"
+            checkout.write_text('{"checkout": true}\n', encoding="utf-8")
+
+            with patch(
+                "app.config.checkout_bookmarks_path",
+                return_value=checkout,
+            ):
+                result = ensure_user_bookmarks(
+                    dest=target,
+                    legacy=root / "missing-legacy.json",
+                    allow_prompt=False,
+                )
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.read_bytes(), checkout.read_bytes())
+
     def test_ensure_user_bookmarks_seeds_without_legacy(self) -> None:
         import tempfile
         from pathlib import Path

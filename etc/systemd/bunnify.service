@@ -11,7 +11,7 @@ Type=simple
 WorkingDirectory=@@REPO_DIR@@
 Environment=BUNNIFY_DATA_DIR=%h/scratch/bunnify/data
 Environment=BUNNIFY_LOG_FILE=%h/scratch/bunnify/bunnify.log
-ExecStart=@@REPO_DIR@@/scripts/bunnify-server --foreground --listen-all --port 8001 --noninteractive --log-file %h/scratch/bunnify/bunnify.log --pid-dir %h/scratch/bunnify/run
+ExecStart=@@REPO_DIR@@/scripts/bunnify-server --foreground --listen-all --port 8001 --noninteractive --pid-dir %h/scratch/bunnify/run
 Restart=always
 RestartSec=5
 StandardOutput=append:%h/scratch/bunnify/bunnify.log

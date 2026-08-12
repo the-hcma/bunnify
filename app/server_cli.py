@@ -254,12 +254,16 @@ def _is_process_running(pid: int) -> bool:
 def _parse_options(argv: list[str] | None) -> ServerOptions:
     namespace = build_parser().parse_args(argv)
     console = bool(namespace.console)
+    default_log_file = (os.environ.get("BUNNIFY_LOG_FILE") or "").strip()
+    log_file = namespace.log_file or (
+        Path(default_log_file) if default_log_file else data_dir() / "bunnify.log"
+    )
     return ServerOptions(
         bookmarks=namespace.bookmarks,
         console=console,
         foreground=bool(namespace.foreground) or console,
         listen_all=bool(namespace.listen_all),
-        log_file=(namespace.log_file or data_dir() / "bunnify.log").expanduser(),
+        log_file=log_file.expanduser(),
         log_level=namespace.log_level,
         noninteractive=bool(namespace.noninteractive),
         pid_dir=(namespace.pid_dir or run_dir()).expanduser(),
