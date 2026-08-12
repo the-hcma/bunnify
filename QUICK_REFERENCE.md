@@ -1,7 +1,5 @@
 # ⚡ Quick reference
 
-# ⚡ Quick reference
-
 Assumes `pipx install bunnify`, `pipx ensurepath` (so `~/.local/bin` is on
 `PATH`), a seeded `~/.config/bunnify/bookmarks.json`, and a completed
 `bunnify --setup`. Prefer **local** mode on a laptop; use **remote** for a
