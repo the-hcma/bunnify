@@ -254,6 +254,27 @@ def _is_process_running(pid: int) -> bool:
     return True
 
 
+def _listener_pids(port: int) -> list[int]:
+    """Return PIDs listening on TCP ``port`` (best-effort via ``lsof``)."""
+    try:
+        completed = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return []
+    pids: list[int] = []
+    for line in completed.stdout.splitlines():
+        try:
+            pids.append(int(line.strip()))
+        except ValueError:
+            continue
+    return pids
+
+
 def _parse_options(argv: list[str] | None) -> ServerOptions:
     namespace = build_parser().parse_args(argv)
     console = bool(namespace.console)
@@ -283,6 +304,21 @@ def _pid_paths(pid_dir: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def _port_is_free(port: int) -> bool:
+    """Return whether ``port`` can be bound with ``SO_REUSEADDR``.
+
+    Matches Django's runserver reuse behavior so a draining listen socket after
+    SIGTERM is not mistaken for an active occupant.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
+        candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            candidate.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
 def _port_value(raw: str) -> int:
     try:
         port = int(raw)
@@ -300,9 +336,20 @@ def _read_pid(path: Path) -> int | None:
         return None
 
 
+def _read_port(path: Path) -> int | None:
+    try:
+        port = int(path.read_text(encoding="utf-8").strip())
+    except OSError, ValueError:
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return port
+
+
 def _resolve_port(requested_port: int) -> int:
     if requested_port:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
+            candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 candidate.bind(("127.0.0.1", requested_port))
             except OSError as exc:
@@ -412,29 +459,64 @@ def _start_watcher(bookmarks: Path) -> None:
 
 
 def _stop_managed_server(pid_dir: Path, *, quiet: bool = False) -> int:
-    pid_file, _port_file, _watcher_pid_file = _pid_paths(pid_dir)
+    """SIGTERM the managed server, wait for exit, then confirm its port is free."""
+    pid_file, port_file, _watcher_pid_file = _pid_paths(pid_dir)
     pid = _read_pid(pid_file)
+    port = _read_port(port_file)
     if pid == os.getpid():
         return 0
-    if pid is None or not _is_process_running(pid):
-        _cleanup_files(pid_dir)
-        if not quiet:
-            print("Bunnify was not running.")
-        return 0
-    if not _is_bunnify_process(pid):
-        _cleanup_files(pid_dir)
-        if not quiet:
-            print(f"Refusing to stop unrelated process {pid}; removed stale PID files.")
-        return 0
 
-    os.kill(pid, signal.SIGTERM)
-    if not _wait_for_exit(pid, timeout_s=10):
-        os.kill(pid, signal.SIGKILL)
-        _wait_for_exit(pid, timeout_s=2)
+    signaled_pids: list[int] = []
+    if pid is not None and _is_process_running(pid):
+        if not _is_bunnify_process(pid):
+            _cleanup_files(pid_dir)
+            if not quiet:
+                print(
+                    f"Refusing to stop unrelated process {pid}; "
+                    "removed stale PID files."
+                )
+            return 0
+        _terminate_pid(pid)
+        signaled_pids.append(pid)
+
+    if port is not None and not _port_is_free(port):
+        for listener_pid in _listener_pids(port):
+            if listener_pid == os.getpid() or listener_pid in signaled_pids:
+                continue
+            if not _is_bunnify_process(listener_pid):
+                continue
+            _terminate_pid(listener_pid)
+            signaled_pids.append(listener_pid)
+
+    if port is not None and not _wait_for_port_free(port, timeout_s=15):
+        _cleanup_files(pid_dir)
+        if not quiet:
+            print(f"Port {port} is still busy after stop.", file=sys.stderr)
+        return 1
+
     _cleanup_files(pid_dir)
     if not quiet:
-        print(f"Stopped Bunnify server (PID {pid}).")
+        if signaled_pids:
+            stopped = ", ".join(str(value) for value in signaled_pids)
+            print(f"Stopped Bunnify server (PID {stopped}).")
+        else:
+            print("Bunnify was not running.")
     return 0
+
+
+def _terminate_pid(pid: int) -> None:
+    """Send SIGTERM, escalate to SIGKILL if the process does not exit."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    if _wait_for_exit(pid, timeout_s=10):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    _wait_for_exit(pid, timeout_s=2)
 
 
 def _wait_for_exit(pid: int, *, timeout_s: float) -> bool:
@@ -444,6 +526,15 @@ def _wait_for_exit(pid: int, *, timeout_s: float) -> bool:
             return True
         time.sleep(0.1)
     return not _is_process_running(pid)
+
+
+def _wait_for_port_free(port: int, *, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _port_is_free(port):
+            return True
+        time.sleep(0.05)
+    return _port_is_free(port)
 
 
 def _write_runtime_files(pid_dir: Path, port: int, *, pid: int | None = None) -> None:

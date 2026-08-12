@@ -1336,7 +1336,9 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.port_is_free", side_effect=port_free),
                 patch(
                     "app.cli.stop_local_server",
-                    side_effect=lambda _pid_dir: port_state.__setitem__("free", True),
+                    side_effect=lambda _pid_dir, **_kwargs: port_state.__setitem__(
+                        "free", True
+                    ),
                 ) as stop_server,
             ):
                 result = run_setup(
@@ -1348,11 +1350,60 @@ class ConfigUnitTests(TestCase):
 
             self.assertEqual(result, "http://127.0.0.1:8000")
             stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 8000)
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
             joined = "\n".join(messages)
             self.assertIn("already serving Bunnify 0.2.0 (oldoldoldold)", joined)
             self.assertIn("differs from this CLI", joined)
             self.assertIn("Stopped previous server", joined)
+
+    def test_setup_local_reports_stop_failure_when_port_stays_busy(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import LOCAL_PORT_FILE_NAME, run_dir
+
+        remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
+        responses = iter(["local", "", "y"])
+        messages: list[str] = []
+
+        def prompt(_message: str) -> str:
+            try:
+                return next(responses)
+            except StopIteration as exc:
+                raise EOFError from exc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            managed = run_dir(environ=environ)
+            managed.mkdir(parents=True, exist_ok=True)
+            (managed / LOCAL_PORT_FILE_NAME).write_text("8000\n", encoding="utf-8")
+
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=False),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=RuntimeError("Port 8000 is still busy after stop"),
+                ),
+                self.assertRaises(ClientError),
+            ):
+                run_setup(
+                    prompt_fn=prompt,
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            joined = "\n".join(messages)
+            self.assertIn("Could not stop the managed server", joined)
+            self.assertIn("still busy after stop", joined)
 
     def test_setup_local_reuses_unmanaged_mismatched_server(self) -> None:
         import tempfile
