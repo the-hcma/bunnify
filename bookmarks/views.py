@@ -379,7 +379,19 @@ def command_history(request: HttpRequest) -> JsonResponse:
 @require_http_methods(["GET"])
 def health_check(request: HttpRequest) -> HttpResponse:
     """
-    Simple health check endpoint that returns 'ok'
-    Used by systemd and monitoring tools to verify the service is alive.
+    Health check for systemd and the CLI.
+
+    Plain ``ok`` for text clients; JSON with version/commit when ``Accept``
+    prefers ``application/json``.
     """
+    package, commit = get_build_info()
+    accept = request.headers.get("Accept", "")
+    if "application/json" in accept:
+        return JsonResponse(
+            {
+                "commit": commit,
+                "status": "ok",
+                "version": package,
+            }
+        )
     return HttpResponse("ok", content_type="text/plain")

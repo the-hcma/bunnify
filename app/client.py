@@ -18,10 +18,12 @@ class ClientError(Exception):
 
 
 @dataclass(frozen=True)
-class ResolvedShortcut:
-    url: str
-    kind: str | None
-    key: str | None
+class HealthStatus:
+    """Result of probing a Bunnify ``/health`` endpoint."""
+
+    ok: bool
+    commit: str | None = None
+    version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,11 +37,26 @@ class KeyEntry:
     optional_params: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True)
+class ResolvedShortcut:
+    url: str
+    kind: str | None
+    key: str | None
+
+
 def check_health(base_url: str, *, timeout: float = 2.0) -> bool:
     """Return whether ``base_url`` serves Bunnify's healthy ``/health`` response."""
+    return fetch_health(base_url, timeout=timeout).ok
+
+
+def fetch_health(base_url: str, *, timeout: float = 2.0) -> HealthStatus:
+    """Probe ``/health``, preferring JSON so version/commit are available."""
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/health",
-        headers={"Accept": "text/plain", "User-Agent": "bunnify-cli"},
+        headers={
+            "Accept": "application/json, text/plain;q=0.9",
+            "User-Agent": "bunnify-cli",
+        },
         method="GET",
     )
     try:
@@ -48,7 +65,7 @@ def check_health(base_url: str, *, timeout: float = 2.0) -> bool:
             if status is None:
                 status = response.getcode()
             body = response.read().decode("utf-8")
-            return status == 200 and body.strip().lower() == "ok"
+            content_type = response.headers.get("Content-Type", "")
     except (
         OSError,
         TimeoutError,
@@ -56,7 +73,32 @@ def check_health(base_url: str, *, timeout: float = 2.0) -> bool:
         urllib.error.HTTPError,
         urllib.error.URLError,
     ):
-        return False
+        return HealthStatus(ok=False)
+
+    if status != 200:
+        return HealthStatus(ok=False)
+
+    if "application/json" in content_type:
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return HealthStatus(ok=False)
+        if not isinstance(payload, dict):
+            return HealthStatus(ok=False)
+        status_value = payload.get("status")
+        if not isinstance(status_value, str) or status_value.strip().lower() != "ok":
+            return HealthStatus(ok=False)
+        version = payload.get("version")
+        commit = payload.get("commit")
+        return HealthStatus(
+            ok=True,
+            version=version if isinstance(version, str) else None,
+            commit=commit if isinstance(commit, str) else None,
+        )
+
+    if body.strip().lower() == "ok":
+        return HealthStatus(ok=True)
+    return HealthStatus(ok=False)
 
 
 def _request_json(

@@ -221,6 +221,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
+      - name: Embed build metadata
+        run: |
+          version="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          export BUNNIFY_EMBED_VERSION="${version}"
+          export BUNNIFY_EMBED_COMMIT="${GITHUB_SHA}"
+          uv run python scripts/embed_build_metadata
+
       - name: Build distributions
         run: uv build
 

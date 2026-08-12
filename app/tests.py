@@ -53,6 +53,20 @@ class BuildInfoTests(SimpleTestCase):
             "abcdef123456",
         )
 
+    def test_git_commit_uses_embedded_metadata(self) -> None:
+        with mock.patch(
+            "app.version._build_metadata.EMBEDDED_COMMIT",
+            "fedcba9876543210",
+        ):
+            self.assertEqual(git_commit(environ={}), "fedcba987654")
+
+    def test_package_version_prefers_embedded(self) -> None:
+        with mock.patch(
+            "app.version._build_metadata.EMBEDDED_VERSION",
+            "9.9.9",
+        ):
+            self.assertEqual(package_version(), "9.9.9")
+
     def test_package_version_falls_back_to_pyproject(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             pyproject_path = Path(temporary_directory) / "pyproject.toml"
@@ -60,9 +74,15 @@ class BuildInfoTests(SimpleTestCase):
                 '[project]\nname = "bunnify"\nversion = "1.2.3"\n'
             )
 
-            with mock.patch(
-                "app.version.version",
-                side_effect=PackageNotFoundError,
+            with (
+                mock.patch(
+                    "app.version._build_metadata.EMBEDDED_VERSION",
+                    "",
+                ),
+                mock.patch(
+                    "app.version.version",
+                    side_effect=PackageNotFoundError,
+                ),
             ):
                 self.assertEqual(
                     package_version(pyproject_path=pyproject_path),

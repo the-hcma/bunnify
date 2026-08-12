@@ -14,8 +14,15 @@ targets=(
 )
 
 if [ -d scripts ]; then
-  # Portable (no mapfile / assoc arrays): collect script paths.
+  # Portable (no mapfile / assoc arrays): collect shell script paths.
+  # Skip Python (and other non-shell) helpers that live under scripts/.
   while IFS= read -r path; do
+    shebang="$(head -n 1 "$path" 2>/dev/null || true)"
+    case "${shebang}" in
+      *python*)
+        continue
+        ;;
+    esac
     targets+=("$path")
   done < <(find scripts -type f | LC_ALL=C sort)
 fi
