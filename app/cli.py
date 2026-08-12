@@ -383,6 +383,8 @@ def _prompt_local_port(
             )
             continue
         if not port_is_free(port):
+            if check_health(f"http://127.0.0.1:{port}"):
+                return port
             log(f"Port {port} is already in use. Choose another port.")
             default_port = port
             continue

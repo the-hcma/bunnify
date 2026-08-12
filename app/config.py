@@ -181,7 +181,7 @@ def read_persisted_local_port(*, environ: dict[str, str] | None = None) -> int |
     port_file = run_dir(environ=environ) / LOCAL_PORT_FILE_NAME
     try:
         port = int(port_file.read_text(encoding="utf-8").strip())
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
     if 0 <= port <= 65535:
         return port
@@ -266,7 +266,13 @@ def example_bookmarks_bytes() -> bytes | None:
     try:
         packaged = resources.files("app").joinpath("data", "bookmarks.example.json")
         return packaged.read_bytes()
-    except FileNotFoundError, ModuleNotFoundError, OSError, TypeError, AttributeError:
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        AttributeError,
+    ):
         pass
 
     repo_example = repo_root() / EXAMPLE_BOOKMARKS_NAME
