@@ -71,5 +71,5 @@ git clone https://github.com/thehcma/bunnify.git
 Your repository is now ready at:
 https://github.com/thehcma/bunnify
 
-Remember to update the `pr` bookmark URL in your personal `~/work/bunnify/bunnify.json` 
-to point to your actual repositories.
+Remember to update bookmark URLs in your personal
+`~/.config/bunnify/bookmarks.json` to point to your repositories.

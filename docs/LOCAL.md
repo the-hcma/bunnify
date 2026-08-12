@@ -11,12 +11,12 @@ In a development checkout, `./scripts/bunnify` and
 `./scripts/bunnify-server` prefer `uv run` when `uv` is on ``PATH``, otherwise
 they fall back to the checkout ``.venv`` (same entry points systemd uses).
 
-Setup defaults to **local** mode. It creates the user bookmarks file when
-needed, starts a managed server, verifies `/health`, and records the selected
-port. Remote mode prompts for a URL and saves it only after its `/health`
-response is HTTP 200 with body `ok`. If a configured remote server later
-becomes unavailable, the interactive CLI offers to use the managed local
-server for that run without replacing the saved remote preference.
+Setup defaults to **local** mode. It requires an existing bookmarks file (see
+[Configuration](CONFIG.md)), starts a managed server, verifies `/health`, and
+records the selected port. Remote mode prompts for a URL and saves it only
+after its `/health` response is HTTP 200 with body `ok`. If a configured remote
+server later becomes unavailable, the interactive CLI offers to use the managed
+local server for that run without replacing the saved remote preference.
 
 Verified settings are stored in `~/.config/bunnify/config.env` (or
 `$XDG_CONFIG_HOME/bunnify/config.env`):
@@ -72,9 +72,9 @@ launchctl kickstart -k "gui/$(id -u)/com.thehcma.bunnify"
 launchctl bootout "gui/$(id -u)/com.thehcma.bunnify"
 ```
 
-The template runs the server in the foreground with `KeepAlive` enabled. It
-uses the default user bookmarks path, seeding the file from the packaged
-example when needed. Confirm that port 8000 is free before loading the agent.
+The template runs the server in the foreground with `KeepAlive` enabled. Ensure
+`~/.config/bunnify/bookmarks.json` exists before loading the agent. Confirm that
+port 8000 is free unless you override `--port`.
 
 ## Troubleshooting
 

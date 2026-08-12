@@ -1,520 +1,197 @@
 # Bunnify 🐰
 
-A powerful Python-based bookmark manager and URL shortcut system with advanced command palette, Chrome integration, and real-time GitHub Copilot code reviews.
+A Python bookmark manager and URL shortcut system: terminal CLI, web command
+palette, Chrome OpenSearch integration, and parameterized redirects.
 
 ## Install
 
-[pipx](https://pipx.pypa.io/) is the recommended installation path:
+[pipx](https://pipx.pypa.io/) is the recommended path for end users:
 
 ```bash
 pipx install bunnify
 bunnify --version
+```
+
+The wheel installs **`bunnify`** (CLI) and **`bunnify-server`** (Django
+server). No repository checkout or `uv` is required at runtime.
+
+Optional: `python -m pip install bunnify` in a Python 3.14+ environment.
+Homebrew packaging is intentionally deferred.
+
+## Quick start
+
+### 1. Create your bookmarks file
+
+Copy the [documented example](bunnify.json.example) into XDG config (required
+before the server starts):
+
+```bash
+mkdir -p ~/.config/bunnify
+cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+# edit ~/.config/bunnify/bookmarks.json with your shortcuts
+```
+
+See [Configuration](docs/CONFIG.md) for overrides (`BUNNIFY_BOOKMARKS`,
+`XDG_CONFIG_HOME`).
+
+### 2. Configure local or remote mode
+
+```bash
 bunnify setup
 ```
 
-As an optional alternative, install into your own Python 3.14+ environment with
-`python -m pip install bunnify`. Homebrew packaging is intentionally deferred:
-pipx provides isolated installation for this pure-Python application without a
-second release path to maintain.
+Setup defaults to a **local** managed server: it verifies `/health`, records
+the port, and saves settings to `~/.config/bunnify/config.env`. Choose
+**remote** to point at an existing server URL instead.
 
-The wheel installs both `bunnify` and `bunnify-server`; neither command needs a
-repository checkout or `uv` at runtime. See
-[Local and remote setup](docs/LOCAL.md) for server setup and lifecycle commands.
+One-time override without saving: `bunnify --base-url https://… shortcut`.
+
+### 3. Run shortcuts
+
+```bash
+bunnify              # interactive REPL (Tab completion, history)
+bunnify gh           # open a shortcut in the browser
+bunnify pr 12345     # parameterized shortcut
+bunnify --fzf        # fuzzy picker
+bunnify --print-url vault
+```
+
+Unknown keys exit non-zero in direct mode (no search-engine fallback).
 
 ## Features
 
-### Core Functionality
-- **CLI**: Terminal client (`bunnify`) with interactive Tab completion and fzf-backed argv completion
-- **Smart Search**: Type "pr 12345" or "g search terms" directly in your browser
-- **Dynamic URL Redirects**: Navigate to `/<key>/` to be redirected to the bookmark's URL
-- **Parameter Substitution**: Supports URLs with placeholders (e.g., `#{pr_number}`, `#{search_terms}`)
-- **Multi-Parameter Support**: Bookmarks can accept multiple parameters with optional defaults
-- **JSON Schema Validation**: Validates the bookmark JSON file before loading
-- **Web Interface**: Browse all bookmarks with search and filtering
+- **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
+- **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
+- **Chrome** — OpenSearch at `/opensearch.xml` ([setup guide](CHROME_SETUP.md))
+- **Parameters** — URLs with `#{name}` placeholders and optional defaults
+- **Copilot reviews** — `rpr` shortcut streams in-app PR reviews
+- **Validation** — JSON Schema on load; reserved keys `h` / `help`
 
-### Command Palette (`/cmd/`)
-- **Tab Completion**: Auto-complete shortcuts and commands
-- **Command History**: Navigate previous commands with ↑/↓ arrows
-- **Filtered History**: Type a prefix and use arrows to filter history
-- **Reverse Search (Ctrl-R)**: Bash-style interactive history search
-- **Special Commands**: Built-in shortcuts like `h` (help) to list all bookmarks
-- **Autocomplete Suggestions**: Real-time suggestions as you type
-- **Opens in New Tab**: All commands open in new tabs for quick workflows
+## Server lifecycle
 
-### Chrome Integration
-- **OpenSearch API**: Add Bunnify as a search engine in Chrome
-- **Address Bar Suggestions**: Auto-complete suggestions in Chrome's omnibox
-- **Seamless Navigation**: Type shortcuts directly in the address bar
+Installed users manage the server with **`bunnify-server`**:
 
-### GitHub Copilot Integration
-- **PR Code Reviews**: Use the `rpr` shortcut to request Copilot reviews on PRs
-- **Streaming Responses**: Real-time progress updates during review generation
-- **Private Reviews**: Reviews displayed in-app without public PR comments
+```bash
+bunnify-server --help
+bunnify-server --port 8000 --noninteractive    # foreground (systemd/LaunchAgent)
+bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
+curl --max-time 2 http://127.0.0.1:8000/health
+```
 
-### Infrastructure
-- **Dual-Stack Networking**: IPv4 and IPv6 support (accessible via 127.0.0.1, [::1], or localhost)
-- **Comprehensive Logging**: Detailed rotating logs under the XDG data directory
-- **File Watching**: Auto-reload bookmarks when JSON file changes
-- **Daemonization**: Background process management with proper cleanup
+`bunnify setup` starts a managed local server for daily CLI use. Details:
+[Local and remote setup](docs/LOCAL.md).
+
+**Linux production:** [systemd user service](docs/SYSTEMD.md) via
+`setup-service` from [repository-helpers](https://github.com/the-hcma/repository-helpers).
+
+**macOS:** [LaunchAgent example](etc/launchd/com.thehcma.bunnify.plist.example).
+
+## Web usage
+
+With the server running (default `http://127.0.0.1:8000` after setup):
+
+| URL | Purpose |
+|-----|---------|
+| `/cmd/` | Command palette (recommended) |
+| `/search/?q=pr+12345` | Smart search |
+| `/list/` | Browse all bookmarks |
+| `/<key>/` | Direct redirect |
+| `/opensearch.xml` | Chrome search engine descriptor |
+
+## Bookmarks format
+
+```json
+{
+  "gh": {
+    "description": "GitHub",
+    "url": "https://github.com/"
+  },
+  "pr": {
+    "description": "Pull request",
+    "url": "https://github.com/org/repo/pull/#{pr_number}",
+    "defaults": { "repo": "org/repo" }
+  }
+}
+```
+
+Required fields: `description`, `url`. Placeholders use `#{parameter_name}`.
+Reload after edits: the server watches the JSON file, or run
+`load_bookmarks` in a development checkout.
+
+## Migrating from a git checkout
+
+If you previously used a repo-local `bunnify.json` or `~/work/bunnify/`,
+see [Migrating from a git checkout](docs/MIGRATING.md).
 
 ## Development checkout
 
-Development requires Python 3.14+ and
-[uv](https://docs.astral.sh/uv/). Clone and set up the checkout:
+Contributors clone the repo and use `uv` — separate from the pipx path above.
 
 ```bash
-# Clone the repository
 git clone https://github.com/thehcma/bunnify.git
 cd bunnify
-
-# Install dependencies with uv
 uv sync
-
-# Run migrations
 uv run python manage.py migrate
 
-# Create your bookmarks file from the example
 mkdir -p ~/.config/bunnify
 cp bunnify.json.example ~/.config/bunnify/bookmarks.json
-# Edit ~/.config/bunnify/bookmarks.json with your bookmarks
 
-# Load bookmarks
-uv run python manage.py load_bookmarks
-```
-
-Personal bookmarks live in `~/.config/bunnify` (or `$XDG_CONFIG_HOME/bunnify`);
-the repository-root `bunnify.json` is no longer tracked. See
-[Configuration](docs/CONFIG.md) for migration and environment overrides, and
-[Local and remote setup](docs/LOCAL.md) for managed startup and macOS launchd.
-
-### 2. Start the Server
-
-**Always use the bunnify-server script** to ensure proper setup:
-```bash
-./scripts/bunnify-server
-```
-
-This will:
-- Start the server on port 8000 (dual-stack IPv4/IPv6 binding)
-- Start the bookmark file watcher for auto-reload
-- Daemonize both processes
-- Show URLs for access
-
-**Logging options:**
-```bash
-./scripts/bunnify-server --console          # Log to console instead of file
-./scripts/bunnify-server --log-level DEBUG  # Change log level
-./scripts/bunnify-server --help            # Show all options
-```
-
-**Note:** The bunnify-server script uses dual-stack binding (`[::]:8000`), making the server accessible via IPv4, IPv6, and localhost.
-
-### 3. Access Bunnify
-
-The server is accessible at:
-- `http://127.0.0.1:8000/` (IPv4)
-- `http://[::1]:8000/` (IPv6)
-- `http://localhost:8000/` (auto)
-
-### 4. Chrome Browser Integration
-
-**Set up Bunnify as a search engine in Chrome:**
-
-1. Visit `http://127.0.0.1:8000/` (or `http://[::1]:8000/` for IPv6) while the server is running
-2. Go to Chrome Settings → Search engine → Manage search engines
-3. Find "Bunnify" (added automatically via OpenSearch) or add manually:
-   - **Search engine:** Bunnify
-   - **Shortcut:** `s` (or any letter you prefer)
-   - **URL (IPv4):** `http://127.0.0.1:8000/search/?q=%s`
-   - **URL (IPv6):** `http://[::1]:8000/search/?q=%s`
-   - **URL (localhost):** `http://localhost:8000/search/?q=%s`
-4. Save
-
-**Note:** Choose the URL that matches how you're running the server:
-- Use IPv4 (`127.0.0.1`) if running with `127.0.0.1:8000`
-- Use IPv6 (`[::1]`) if you prefer IPv6-only access
-- Use `localhost` if running with `[::]:8000` (dual-stack) - Chrome will auto-select
-
-**Optional: Set as Default Search Engine**
-- Click the three dots next to "Bunnify" and select "Make default"
-- Now you can type bookmarks directly without any prefix!
-
-### 5. Persistent Bunnify Service (Linux)
-
-Use the provided setup script instead of manual systemd steps:
-
-```bash
-./scripts/setup-service
-```
-
-To verify configuration and service health:
-
-```bash
-./scripts/setup-service --status
-```
-
-For live logs:
-
-```bash
-journalctl --user -u bunnify.service -f
-```
-
-## Usage
-
-### CLI (terminal)
-
-With the server running (`./scripts/bunnify-server`) and dependencies synced (`uv sync`),
-run the CLI via the repo wrapper (no manual `uv run` needed):
-
-```bash
-# Configure a managed local server (default) or a remote server
 ./scripts/bunnify setup
-
-# Interactive REPL with Tab completion (loops until quit/exit)
-./scripts/bunnify
-
-# Direct open
-./scripts/bunnify vault
-./scripts/bunnify pr 12345
-
-# Fuzzy pick via fzf
-./scripts/bunnify --fzf
-./scripts/bunnify --fzf 12345
-./scripts/bunnify --fzf --query pr 12345
-./scripts/bunnify --list-keys | fzf
-
-# Print URL without opening a browser
-./scripts/bunnify --print-url gh
-```
-
-On first interactive use, setup defaults to a managed local server; remote
-servers can be selected with `bunnify setup`. Only health-verified preferences
-are persisted in `~/.config/bunnify/config.env`. `--base-url` is a one-time
-override. The REPL defaults to **Vim** keys
-(`--edit-mode emacs` or `BUNNIFY_EDIT_MODE=emacs`; switch mid-session with
-`edit-mode`). Tab uses fuzzy completion with colored meta vs shortcut matches,
-persistent history, and history auto-suggest. Unknown shortcuts exit non-zero in
-direct mode (no Google fallback). Exact keys short-circuit (e.g. `pr` opens `pr`
-even if `printer` exists); only non-exact prefixes invoke `fzf` when multiple
-keys match. In `--fzf` mode, positional arguments are passed through as shortcut
-parameters; use `--query` to pre-seed the fzf picker.
-
-**Shell completion (bash, fzf-backed):**
-
-```bash
-source /path/to/bunnify/etc/bunnify-completion
-# then: bunnify <Tab> or bunnify --print-url <Tab>  → fzf over keys
-# (falls back to COMPREPLY without fzf)
-```
-
-### Command Palette (Recommended)
-
-Visit `http://127.0.0.1:8000/cmd/` for the enhanced command palette:
-
-**Features:**
-- **Type** to filter shortcuts with auto-complete
-- **Tab** to complete suggestions
-- **↑/↓** to navigate command history (with prefix filtering)
-- **Ctrl-R** for bash-style reverse search through history
-- **Enter** to execute (opens in new tab)
-- **Esc** to cancel
-
-**Examples:**
-- Type `pr` then ↑ to see recent PR commands
-- Type `pr` and ↑ to cycle through filtered history
-- Press Ctrl-R and type `12345` to find commands with that PR number
-
-### Browser Address Bar (with Chrome Integration)
-
-Type in Chrome's address bar:
-- `s pr 12345` → Opens PR #12345
-- `s g python tutorial` → Google search for "python tutorial"
-- `s vault` → Opens Vault
-- `s h` → Shows all bookmarks
-
-### Direct URL Access
-
-**Simple redirects:**
-- `http://127.0.0.1:8000/c/` → Google Calendar
-- `http://127.0.0.1:8000/vault/` → Vault
-
-**Parameterized redirects:**
-- `http://127.0.0.1:8000/pr/?pr_id=12345` → PR #12345
-- `http://127.0.0.1:8000/g/?search_terms=python+tutorial` → Google search
-
-**Special endpoints:**
-- `http://127.0.0.1:8000/list/` → Browse all bookmarks
-- `http://127.0.0.1:8000/cmd/` → Command palette
-- `http://127.0.0.1:8000/review-pr/?pr=12345` → Request Copilot review
-
-## JSON File Format
-
-The application expects a JSON file with the following structure:
-
-```json
-{
-    "key": {
-        "description": "Description of the bookmark",
-        "url": "https://example.com/path",
-        "old-url": "https://old-url.com/path"  // optional
-    }
-}
-```
-
-### Parameterized URLs
-
-URLs can contain placeholders in the format `#{parameter_name}`:
-
-**Single Parameter:**
-```json
-{
-    "g": {
-        "description": "Google search",
-        "url": "https://www.google.com/search?q=#{search_terms}"
-    }
-}
-```
-Usage: `g python tutorial` → `https://www.google.com/search?q=python+tutorial`
-
-**Multiple Parameters with Defaults:**
-```json
-{
-    "pr": {
-        "description": "GitHub Pull Request",
-        "url": "https://github.com/#{repo}/pull/#{pr_number}",
-        "defaults": {
-            "repo": "your-org/your-repo"
-        }
-    }
-}
-```
-Usage:
-- `pr 12345` → Uses default repo → `https://github.com/your-org/your-repo/pull/12345`
-- `pr 12345 Shopify/shopify-build` → Overrides default → `https://github.com/Shopify/shopify-build/pull/12345`
-
-**Parameter Order:** Required parameters (no defaults) are mapped first, then optional parameters (with defaults).
-
-## Project Structure
-
-```
-bunnify/
-├── app/                             # Django project + terminal CLI (Python)
-│   ├── cli.py                       # Click CLI / REPL
-│   ├── client.py                    # HTTP client for /api/*
-│   ├── settings.py                  # Application settings
-│   └── urls.py                      # Main URL config
-├── bookmarks/                       # Django app
-│   ├── management/commands/
-│   ├── models.py
-│   ├── views.py
-│   └── urls.py
-├── scripts/
-│   ├── bunnify                      # Directly executable CLI wrapper
-│   ├── bunnify-server               # Server startup + watcher
-│   ├── checks
-│   └── on-deploy
-├── bunnify.env.example              # Example CLI base URL (copy → bunnify.env)
-├── manage.py
-└── pyproject.toml
-```
-
-## Schema Validation
-
-The `load_bookmarks` command validates the JSON file against a schema that ensures:
-- All keys match the pattern `^[a-zA-Z0-9_]+$`
-- Each bookmark has required fields: `description` and `url`
-- Optional fields: `old-url` or `oldurl`
-- **Reserved keywords** "h" and "help" are blocked and will cause an error
-
-## API Endpoints
-
-- `GET /` - Home page with usage instructions
-- `GET /search/?q=<query>` - Smart search endpoint (e.g., "pr 12345")
-- `GET /list/` - List all bookmarks with search
-- `GET /<key>/` - Redirect to bookmark URL
-  - With parameters: `GET /<key>/?param1=value1&param2=value2`
-- `GET /opensearch.xml` - OpenSearch descriptor for browser integration
-
-## Reserved Keywords
-
-The following keywords are reserved and cannot be used as bookmark keys:
-- `h` - Shows all bookmarks (help shortcut)
-- `help` - Shows all bookmarks (help shortcut)
-
-## Development
-
-### Running Tests
-
-The project includes comprehensive smoke tests that verify core functionality.
-
-**Run all tests:**
-```bash
+./scripts/bunnify-server --console --log-level DEBUG   # optional
 ./test_bunnify
 ```
 
-**Run specific test suite:**
-```bash
-# Run only smoke tests
-./test_bunnify bookmarks.tests.SmokeTests
+Full guidelines: [CONTRIBUTING.md](CONTRIBUTING.md). Quality gates:
+`./scripts/checks`.
 
-# Run with verbose output
-./test_bunnify -v 2
+Wrappers under `./scripts/` prefer `uv run` when `uv` is on `PATH`, otherwise
+the checkout `.venv` (same entry points systemd uses on service hosts).
 
-# Run a specific test
-./test_bunnify bookmarks.tests.SmokeTests.test_search_with_parameter
-```
+## Documentation
 
-**Test coverage includes:**
-- Page loading (index, list, command palette, OpenSearch XML)
-- Search redirects with/without parameters
-- Parameter substitution in URLs
-- Direct bookmark redirects
-- Help command functionality
-- API suggestions endpoint
-- Model methods and ordering
-- Error handling (404, 400)
-
-### Creating a Superuser
-
-```bash
-uv run python manage.py createsuperuser
-```
-
-Then access the admin interface at `http://127.0.0.1:8000/admin/`
-
-### Reloading Bookmarks
-
-To reload bookmarks after updating your JSON file:
-
-```bash
-uv run python manage.py load_bookmarks
-```
-
-This will clear existing bookmarks and load fresh data.
-
-## Technologies Used
-
-- **Python web stack**: ASGI/WSGI app with URL routing and templates
-- **jsonschema**: JSON validation
-- **SQLite**: Database (default storage)
-- **Python 3.14**: Programming language with type hints
-- **uv**: Fast Python package manager
-- **pathlib**: Modern file path handling
-- **OpenSearch**: Browser integration protocol
-- **localStorage**: Client-side command history
-- **Streaming responses**: Real-time progress updates
-
-## Project Structure
-
-```
-bunnify/
-├── app/                             # Django project + terminal CLI (Python)
-│   ├── cli.py                       # Click CLI / REPL
-│   ├── client.py                    # HTTP client for /api/*
-│   ├── settings.py                  # Application settings
-│   └── urls.py                      # Main URL config
-├── bookmarks/                       # Django app
-│   ├── management/commands/
-│   ├── models.py
-│   ├── views.py
-│   └── urls.py
-├── scripts/
-│   ├── bunnify                      # Directly executable CLI wrapper
-│   ├── bunnify-server               # Server startup + watcher
-│   ├── checks
-│   └── on-deploy
-├── bunnify.env.example              # Example CLI base URL (copy → bunnify.env)
-├── manage.py
-└── pyproject.toml
-```
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Releasing
-
-Maintainers should follow the automated [release process](docs/RELEASING.md).
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Author
-
-**thehcma** - [GitHub](https://github.com/thehcma)
-
-## Acknowledgments
-
-- Built with modern Python features
-- Inspired by browser bookmark management needs
-- Enhanced with GitHub Copilot integration for code reviews
-
-## Tips & Tricks
-
-1. **Quick Access**: Set Bunnify as your default search engine for the fastest access
-2. **Discover Bookmarks**: Type `h` to quickly see all available shortcuts
-3. **Parameterized Shortcuts**: For frequently used parameterized bookmarks (like `pr`), you can create individual Chrome search engines for even faster access
-4. **Auto-start**: Run `scripts/setup-service` to configure Bunnify as a persistent systemd service.
-
-
-## Persistent Background Service
-
-For production-like use, you should run Bunnify as a systemd user service. This ensures it starts on boot and restarts automatically if it crashes.
-
-### Automated Setup
-
-We provide a script to automate the systemd configuration and enable lingering:
-
-```bash
-./scripts/setup-service
-```
-
-### Verifying Configuration
-
-You can verify that everything is correctly configured using the `--status` flag:
-
-```bash
-./scripts/setup-service --status
-```
-
-### Manual Verification
-
-You can check the service status with:
-
-```bash
-systemctl --user status bunnify.service
-```
-
-### Lingering
-
-To ensure the service runs even when you are not logged in, lingering must be enabled (the setup script does this for you):
-
-```bash
-loginctl enable-linger $(whoami)
-```
+| Doc | Audience |
+|-----|----------|
+| [CONFIG.md](docs/CONFIG.md) | XDG paths and environment variables |
+| [LOCAL.md](docs/LOCAL.md) | Local vs remote setup, ports, LaunchAgent |
+| [SYSTEMD.md](docs/SYSTEMD.md) | Linux user service |
+| [MIGRATING.md](docs/MIGRATING.md) | Move off a git checkout |
+| [CHROME_SETUP.md](CHROME_SETUP.md) | Browser search engine |
+| [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | Cheat sheet |
+| [RELEASING.md](docs/RELEASING.md) | Maintainers: PyPI releases |
 
 ## Troubleshooting
 
-### Server won't start
-```bash
-# Make sure you're in the right directory
-cd ~/work/ai/bunnify
+**Server won't start**
 
-# Use the bunnify-server script
-./scripts/bunnify-server
+```bash
+bunnify-server --console --log-level DEBUG
+# or in a checkout: ./scripts/bunnify-server --console
 ```
 
-### Bookmarks not loading
-```bash
-# Check if the JSON file exists and is valid
-cat ~/work/bunnify/bunnify.json
+**Bookmarks missing**
 
-# Reload bookmarks
-uv run python manage.py load_bookmarks
+```bash
+ls -l ~/.config/bunnify/bookmarks.json
+# create from bunnify.json.example if absent — see Quick start
 ```
 
-### Chrome not detecting Bunnify
-1. Make sure the server is running at `http://127.0.0.1:8000/`
-2. Visit the homepage to trigger OpenSearch detection
-3. Manually add the search engine with URL: `http://127.0.0.1:8000/search/?q=%s`
+**CLI can't reach server**
+
+```bash
+bunnify setup
+curl -sf "$(grep BUNNIFY_BASE_URL ~/.config/bunnify/config.env | cut -d= -f2-)/health"
+```
+
+**Stale managed process**
+
+```bash
+bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
+```
+
+## Releasing
+
+Maintainers: [docs/RELEASING.md](docs/RELEASING.md) (Release Please + PyPI).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -26,6 +26,10 @@ cp bunnify.json.example ~/.config/bunnify/bookmarks.json
 Run `bunnify setup` to write verified settings. Existing base-URL-only files
 remain supported; they are interpreted as remote mode.
 
+## Migrating from a git checkout
+
+See [MIGRATING.md](MIGRATING.md).
+
 ## Environment variables
 
 - `XDG_CONFIG_HOME` changes the configuration root.

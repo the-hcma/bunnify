@@ -1,87 +1,69 @@
-# ⚡ Quick Reference Card
+# ⚡ Quick reference
 
-## Chrome Setup (One-time)
+Assumes `pipx install bunnify` and a completed `bunnify setup`. Default local
+base URL is usually `http://127.0.0.1:8000` — check
+`~/.config/bunnify/config.env`.
 
-### Manual Method (2 minutes):
-1. Open `chrome://settings/searchEngines`
-2. Click "Add" under "Site search"
-3. Fill in:
-   - **Name:** `Bookmarks`
-   - **Keyword:** `b` (or your choice)
-   - **URL:** `http://127.0.0.1:8000/%s/`
-4. Click "Add"
+## Bookmarks file
 
-### Automatic Method:
-1. Visit `http://127.0.0.1:8000/` in Chrome
-2. Chrome auto-detects the search engine
-3. Check `chrome://settings/searchEngines` to verify
-
----
-
-## Daily Usage
-
-### In Chrome Address Bar:
-
-**Simple Bookmarks:**
-```
-b c           → Calendar
-b m           → Gmail
-b vault       → Vault
-b slack       → Slack
-b gpt         → ChatGPT
-```
-
-**With One Parameter:**
-Create these additional search engines:
-
-| Keyword | URL Pattern | Example |
-|---------|-------------|---------|
-| `pr` | `http://127.0.0.1:8000/pr/?pr_id=%s` | `pr 12345` |
-| `cm` | `http://127.0.0.1:8000/cw/?commit_id=%s` | `cm abc123` |
-| `bmg` | `http://127.0.0.1:8000/g/?search_terms=%s` | `bmg django` |
-
----
-
-## All Available Bookmarks (55 total)
-
-### Most Common:
-- `c` - Calendar
-- `m` - Gmail  
-- `slack` - Slack
-- `gpt` - ChatGPT
-- `vault` - Vault
-- `pr` - Pull Request (needs `?pr_id=`)
-- `w` - shop/world repo
-- `mq` - Merge Queue
-
-### View Full List:
-`http://127.0.0.1:8000/list/`
-
----
-
-## Server Management
-
-**Start server:**
 ```bash
-./scripts/bunnify-server
+~/.config/bunnify/bookmarks.json   # required; seed from bunnify.json.example
 ```
 
-**Reload bookmarks:**
+## CLI
+
 ```bash
-uv run python manage.py load_bookmarks
+bunnify                    # REPL
+bunnify setup              # reconfigure local/remote
+bunnify gh                 # open shortcut
+bunnify pr 12345           # parameterized
+bunnify --fzf              # fuzzy pick
+bunnify --print-url vault  # print URL only
+bunnify --list-keys        # all keys
 ```
 
-**Check if running:**
+## Server
+
 ```bash
-curl http://127.0.0.1:8000/c/
+bunnify-server --help
+bunnify-server --port 8000 --noninteractive
+bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
+curl -sf http://127.0.0.1:8000/health
 ```
 
----
+Development checkout: prefix with `./scripts/` (e.g. `./scripts/bunnify-server`).
 
-## Tips
+## Chrome
 
-✨ **Pro Tip:** Set up multiple Chrome search engines for your most-used parameterized bookmarks!
+1. Server running → visit `http://127.0.0.1:8000/` (OpenSearch auto-detect)
+2. Or add manually: keyword `b`, URL `http://127.0.0.1:8000/search/?q=%s`
 
-🔍 **Search bookmarks:** Visit `/list/` and use the search box
+Full guide: [CHROME_SETUP.md](CHROME_SETUP.md)
 
-⚡ **Lightning fast:** `b vault` is faster than typing the full URL or clicking bookmarks!
+## Web
+
+| Path | Use |
+|------|-----|
+| `/cmd/` | Command palette |
+| `/list/` | Browse bookmarks |
+| `/search/?q=…` | Smart search |
+| `/<key>/` | Redirect |
+
+## Config files
+
+| File | Purpose |
+|------|---------|
+| `~/.config/bunnify/bookmarks.json` | Shortcuts |
+| `~/.config/bunnify/config.env` | Mode, base URL, port |
+| `~/.local/share/bunnify/` | DB, logs, managed run state |
+
+More: [docs/CONFIG.md](docs/CONFIG.md), [docs/LOCAL.md](docs/LOCAL.md)
+
+## Linux service host
+
+```bash
+~/work/ai/repository-helpers/scripts/setup-service
+journalctl --user -u bunnify -f
+```
+
+See [docs/SYSTEMD.md](docs/SYSTEMD.md).
