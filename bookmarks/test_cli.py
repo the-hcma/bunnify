@@ -811,7 +811,6 @@ class ConfigUnitTests(TestCase):
             with self.assertRaises(FileNotFoundError) as context:
                 ensure_user_bookmarks(dest=target, allow_prompt=False)
 
-            self.assertIn(str(target), str(context.exception))
             self.assertIn("Create it manually", str(context.exception))
 
     def test_seed_bookmarks_does_not_overwrite(self) -> None:

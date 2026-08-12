@@ -282,7 +282,7 @@ def ensure_user_bookmarks(
         f"{target}\n"
         "Create it manually before starting the server, for example:\n"
         f"  mkdir -p {target.parent}\n"
-        f"  cp bunnify.json.example {target}\n"
+        f"  cp /path/to/your/bookmarks.json {target}\n"
         "Or set BUNNIFY_BOOKMARKS to an existing file path."
     )
 
