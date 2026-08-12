@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.2.0...bunnify-v0.3.0) (2026-08-12)
+
+
+### Features
+
+* bunnify onboard + PyPI next-step docs ([#277](https://github.com/the-hcma/bunnify/issues/277)) ([dca2a1f](https://github.com/the-hcma/bunnify/commit/dca2a1fbac6a46208e9dcf05e471bc1460b2d991))
+* web UI version under logo + Edge/bunnylol welcome ([#279](https://github.com/the-hcma/bunnify/issues/279)) ([dfd2fc1](https://github.com/the-hcma/bunnify/commit/dfd2fc1f58082b188f6cbe4c3024eea069cf8fd5))
+
 ## [0.2.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.1.1...bunnify-v0.2.0) (2026-08-12)
 
 
