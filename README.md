@@ -73,7 +73,10 @@ Installed users manage the server with **`bunnify-server`**:
 
 ```bash
 bunnify-server --help
-bunnify-server --port 8000 --noninteractive    # foreground (systemd/LaunchAgent)
+# Foreground (systemd, LaunchAgent, debugging):
+bunnify-server --foreground --noninteractive --port 8000
+# Background managed daemon (returns after fork):
+bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run
 bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 curl --max-time 2 http://127.0.0.1:8000/health
 ```

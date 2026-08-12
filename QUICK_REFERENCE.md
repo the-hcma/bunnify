@@ -26,7 +26,8 @@ bunnify --list-keys        # all keys
 
 ```bash
 bunnify-server --help
-bunnify-server --port 8000 --noninteractive
+bunnify-server --foreground --noninteractive --port 8000   # stay in foreground
+bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run
 bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 curl -sf http://127.0.0.1:8000/health
 ```
