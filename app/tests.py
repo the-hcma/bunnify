@@ -18,10 +18,20 @@ from app.config import data_dir
 from app.local_server import ensure_local_server, stop_local_server
 from app.server_cli import _is_bunnify_command
 from app.server_cli import main as server_main
-from app.version import build_info, build_version, git_commit, package_version
+from app.version import (
+    build_info,
+    build_version,
+    format_cli_version_line,
+    get_build_info,
+    git_commit,
+    package_version,
+)
 
 
 class BuildInfoTests(SimpleTestCase):
+    def tearDown(self) -> None:
+        get_build_info.cache_clear()
+
     @mock.patch("app.version.git_commit", return_value="abcdef1")
     @mock.patch("app.version.package_version", return_value="0.2.3")
     def test_build_info_formats_version_and_commit(
@@ -29,13 +39,18 @@ class BuildInfoTests(SimpleTestCase):
         _package_version: mock.Mock,
         _git_commit: mock.Mock,
     ) -> None:
-        self.assertEqual(build_info(), "bunnify 0.2.3 (commit abcdef1)")
-        self.assertEqual(build_version(), "0.2.3 (commit abcdef1)")
+        get_build_info.cache_clear()
+        self.assertEqual(build_info(), "bunnify 0.2.3 (abcdef1)")
+        self.assertEqual(build_version(), "0.2.3 (abcdef1)")
+        self.assertEqual(
+            format_cli_version_line(prog="bunnify-server"),
+            "bunnify-server 0.2.3 (abcdef1)",
+        )
 
     def test_git_commit_prefers_environment(self) -> None:
         self.assertEqual(
             git_commit(environ={"BUNNIFY_GIT_SHA": "abcdef1234567890"}),
-            "abcdef1",
+            "abcdef123456",
         )
 
     def test_package_version_falls_back_to_pyproject(self) -> None:

@@ -36,6 +36,12 @@
             margin: 0;
             font-size: 1.5rem;
         }
+        .build-version {
+            color: #aeb6bf;
+            font-size: 0.8rem;
+            margin: 0.35rem 0 0;
+            cursor: default;
+        }
         nav {
             display: flex;
             flex-direction: column;
@@ -51,11 +57,6 @@
         }
         nav a:hover {
             background-color: #ecf0f1;
-        }
-        .build-info {
-            color: #aeb6bf;
-            font-size: 0.75rem;
-            margin-top: auto;
         }
         .content {
             margin-left: 200px;
@@ -80,14 +81,16 @@
 </head>
 <body>
     <header>
-        <h1>🐰 Bunnify</h1>
+        <div class="brand">
+            <h1>🐰 Bunnify</h1>
+            {% if package_version %}
+                <p class="build-version" title="commit {{ git_commit }}">{{ package_version }}</p>
+            {% endif %}
+        </div>
         <nav>
             <a href="/">Home</a>
             <a href="/list/">All Bookmarks</a>
         </nav>
-        {% if build_info %}
-            <footer class="build-info">{{ build_info }}</footer>
-        {% endif %}
     </header>
     <div class="content">
         {% block content %}{% endblock %}
