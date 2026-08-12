@@ -324,7 +324,20 @@ class ServerStopTests(SimpleTestCase):
             terminate.assert_not_called()
             wait_for_port.assert_not_called()
 
-    def test_pid_dir_from_command_reads_flag(self) -> None:
+    def test_process_managed_by_pid_dir_defaults_missing_flag(self) -> None:
+        from app.server_cli import _process_managed_by_pid_dir
+
+        default = Path("/tmp/default-run")
+        with (
+            mock.patch(
+                "app.server_cli._process_command",
+                return_value="python -m app.server_cli --port 8000 --foreground",
+            ),
+            mock.patch("app.server_cli.run_dir", return_value=default),
+        ):
+            self.assertTrue(_process_managed_by_pid_dir(1, default))
+            self.assertFalse(_process_managed_by_pid_dir(1, Path("/tmp/other-run")))
+
         from app.server_cli import _pid_dir_from_command, _port_from_command
 
         self.assertEqual(
