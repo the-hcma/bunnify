@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -95,9 +96,14 @@ def running_command_path() -> Path:
 
     The path is made absolute without following console-script symlinks so a
     pipx or uv-tool install prints the PATH entry (``~/.local/bin/bunnify``)
-    rather than the venv target.
+    rather than the venv target. Bare names such as ``bunnify`` are looked up
+    with ``shutil.which`` so PATH launches do not report ``$PWD/bunnify``.
     """
     argv0 = Path(sys.argv[0]).expanduser()
+    if not argv0.is_absolute() and not argv0.exists():
+        located = shutil.which(os.fspath(argv0))
+        if located:
+            argv0 = Path(located)
     try:
         return argv0.absolute()
     except OSError:

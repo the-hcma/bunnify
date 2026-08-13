@@ -114,6 +114,16 @@ class BuildInfoTests(SimpleTestCase):
             self.assertEqual(shown, shim.absolute())
             self.assertNotEqual(shown, venv_binary.resolve())
 
+    def test_running_command_path_looks_up_bare_command_on_path(self) -> None:
+        located = Path("/Users/me/.local/bin/bunnify")
+        with (
+            mock.patch("app.version.sys.argv", ["bunnify-on-path"]),
+            mock.patch("app.version.shutil.which", return_value=str(located)) as which,
+        ):
+            shown = running_command_path()
+        which.assert_called_once_with("bunnify-on-path")
+        self.assertEqual(shown, located)
+
 
 class CliVersionTests(SimpleTestCase):
     def test_version_uses_distribution_metadata(self) -> None:
