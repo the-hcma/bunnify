@@ -2315,6 +2315,53 @@ class ConfigUnitTests(TestCase):
         self.assertEqual(texts[0], "tr")
         self.assertIn("gtre", texts)
 
+    def test_fuzzy_completer_requires_contiguous_substring(self) -> None:
+        from prompt_toolkit.document import Document
+
+        from app.interactive import FirstTokenFuzzyCompleter, ShortcutCompleter
+        from app.theme import Theme
+
+        entries = [
+            KeyEntry(
+                key="gtrp",
+                description="Google Translate - Portuguese to English",
+                url="https://translate.google.com/?sl=pt&tl=en&text=#{phrase}",
+                params=("phrase",),
+            ),
+            KeyEntry(
+                key="hgpr",
+                description=(
+                    "Graphite PR review for the-hcma org "
+                    "(Usage: hgpr <repo> <pr_number>)"
+                ),
+                url="https://app.graphite.com/github/pr/the-hcma/#{repo}/#{pr_number}",
+                params=("repo", "pr_number"),
+            ),
+        ]
+        completer = FirstTokenFuzzyCompleter(
+            ShortcutCompleter(
+                [entry.key for entry in entries],
+                theme=Theme(enabled=False),
+                include_meta=False,
+                entries=entries,
+            )
+        )
+        completions = list(
+            completer.get_completions(Document("portu"), complete_event=None)  # type: ignore[arg-type]
+        )
+        self.assertEqual([c.text for c in completions], ["gtrp"])
+
+    def test_fuzzy_match_indices_use_original_haystack(self) -> None:
+        from app.interactive import _best_fuzzy_match
+
+        matched = _best_fuzzy_match("PORTU", "…Portuguese…")
+        self.assertIsNotNone(matched)
+        assert matched is not None
+        match_length, start_pos = matched
+        self.assertEqual(start_pos, 1)
+        self.assertEqual(match_length, 5)
+        self.assertEqual("…Portuguese…"[start_pos : start_pos + match_length], "Portu")
+
     @patch("app.cli.fetch_key_entries")
     def test_interactive_refresh_updates_keys(self, mock_fetch_entries) -> None:
         mock_fetch_entries.side_effect = [

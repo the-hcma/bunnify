@@ -19,7 +19,7 @@ from prompt_toolkit.completion import (
 )
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import EditingMode
-from prompt_toolkit.formatted_text import AnyFormattedText, StyleAndTextTuples
+from prompt_toolkit.formatted_text import AnyFormattedText
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 
 from app.client import ClientError, KeyEntry
@@ -361,27 +361,21 @@ class _FuzzyMatch(NamedTuple):
 
 
 def _best_fuzzy_match(needle: str, haystack: str) -> tuple[int, int] | None:
-    """Best prompt_toolkit-style subsequence match: ``(match_length, start_pos)``.
+    """Best case-insensitive contiguous substring: ``(match_length, start_pos)``.
 
-    Matching is case-insensitive (``str.casefold``); positions refer to the
-    original ``haystack`` (ASCII-safe; same approach as prompt_toolkit's
-    ``re.IGNORECASE`` fuzzy completer).
+    Positions and length refer to the original ``haystack`` (via ``re.IGNORECASE``
+    match spans), so Unicode case folding cannot shift indices. Scattered
+    subsequence matches such as ``p…o…r…t…u`` across a long description are
+    not accepted.
     """
     if not needle:
         return 0, 0
     if not haystack:
         return None
-    # Casefold both sides so "Translate" matches "Google Translate …".
-    folded_needle = needle.casefold()
-    folded_haystack = haystack.casefold()
-    pat = ".*?".join(map(re.escape, folded_needle))
-    pat = f"(?=({pat}))"
-    regex = re.compile(pat)
-    matches = list(regex.finditer(folded_haystack))
-    if not matches:
+    match = re.search(re.escape(needle), haystack, flags=re.IGNORECASE)
+    if match is None:
         return None
-    best = min(matches, key=lambda match: (match.start(), len(match.group(1))))
-    return len(best.group(1)), best.start()
+    return match.end() - match.start(), match.start()
 
 
 def _fuzzy_highlight_display(
@@ -391,29 +385,25 @@ def _fuzzy_highlight_display(
     start_pos: int,
     needle: str,
 ) -> AnyFormattedText:
-    """Highlight subsequence matches on a completion label (prompt_toolkit parity)."""
+    """Highlight a contiguous substring match on a completion label."""
+    del needle
     if match_length == 0:
         return word
 
-    result: StyleAndTextTuples = []
-    result.append(("class:fuzzymatch.outside", word[:start_pos]))
-    characters = list(needle.casefold())
-    for char in word[start_pos : start_pos + match_length]:
-        classname = "class:fuzzymatch.inside"
-        if characters and char.casefold() == characters[0]:
-            classname += ".character"
-            del characters[0]
-        result.append((classname, char))
-    result.append(("class:fuzzymatch.outside", word[start_pos + match_length :]))
-    return result
+    end = start_pos + match_length
+    return [
+        ("class:fuzzymatch.outside", word[:start_pos]),
+        ("class:fuzzymatch.inside.character", word[start_pos:end]),
+        ("class:fuzzymatch.outside", word[end:]),
+    ]
 
 
 class FirstTokenFuzzyCompleter(Completer):
-    """Fuzzy-match the first token against shortcut keys *and* descriptions.
+    """Match the first token as a substring of shortcut keys *and* descriptions.
 
-    Matching is case-insensitive. Offered completions always insert/display the
-    command key (or meta name); descriptions are used only for matching and
-    ranking.
+    Matching is case-insensitive and contiguous (the typed text must appear as
+    a single span). Offered completions always insert/display the command key
+    (or meta name); descriptions are used only for matching and ranking.
     """
 
     def __init__(self, inner: ShortcutCompleter) -> None:
