@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import socket
 import subprocess
 import sys
@@ -120,6 +121,8 @@ def stop_local_server(
     When ``port`` is set, wait until that port can be bound again before
     returning so callers can restart on the same port.
     """
+    _validate_stop_port(port)
+    _validate_port_timeout_s(port_timeout_s)
     # Worst case: SIGTERM+SIGKILL waits for pid and listener, then port wait.
     stop_timeout_s = max(60.0, port_timeout_s + 35)
     try:
@@ -165,3 +168,15 @@ def wait_for_port_free(port: int, *, timeout_s: float = 15) -> bool:
             return True
         time.sleep(0.05)
     return port_is_free(port)
+
+
+def _validate_port_timeout_s(port_timeout_s: float) -> None:
+    if not math.isfinite(port_timeout_s) or port_timeout_s <= 0:
+        raise ValueError("port_timeout_s must be a positive finite number")
+
+
+def _validate_stop_port(port: int | None) -> None:
+    if port is None:
+        return
+    if port < 1 or port > 65535:
+        raise ValueError("Stop wait port must be between 1 and 65535")

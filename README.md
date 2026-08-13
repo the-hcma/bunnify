@@ -154,7 +154,13 @@ bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 curl --max-time 2 http://127.0.0.1:8000/health
 ```
 
-`bunnify setup` starts a managed local server for daily CLI use. Details:
+`bunnify setup` starts a managed local server for daily CLI use. Stop it with:
+
+```bash
+bunnify stop
+```
+
+That prints the URL and runtime directory before stopping. Details:
 [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 **Linux production:**

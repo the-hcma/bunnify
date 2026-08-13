@@ -1847,6 +1847,70 @@ class ConfigUnitTests(TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("pipx not found", result.output)
 
+    def test_stop_prints_url_and_stops_managed_server(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import main
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_home = Path(tmp)
+            env_path = config_home / "bunnify" / "config.env"
+            env_path.parent.mkdir(parents=True)
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=env_path,
+            )
+            healthy = _healthy_status(version="0.5.0", commit="abc123456789")
+            with (
+                patch("app.cli.fetch_health", return_value=healthy),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch(
+                    "app.cli.run_dir",
+                    return_value=Path(tmp) / "run",
+                ),
+            ):
+                result = CliRunner().invoke(
+                    main,
+                    ["stop", "--env-file", str(env_path)],
+                    env={"XDG_CONFIG_HOME": str(config_home)},
+                )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("http://127.0.0.1:8123", result.output)
+        self.assertIn("0.5.0 (abc123456789)", result.output)
+        self.assertIn("Stopped local Bunnify", result.output)
+        stop_server.assert_called_once()
+        self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+
+    def test_stop_refuses_remote_mode(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import main
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://bunnify.example",
+                    local_port=None,
+                ),
+                env_path=env_path,
+            )
+            result = CliRunner().invoke(main, ["--stop", "--env-file", str(env_path)])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("remote", result.output.lower())
+
     def test_base_url_prepends_http_scheme(self) -> None:
         from app.config import resolve_base_url
 

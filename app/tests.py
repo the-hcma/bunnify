@@ -304,6 +304,33 @@ class LocalServerTests(SimpleTestCase):
         # match Django's runserver and treat the port as usable.
         self.assertTrue(port_is_free(port))
 
+    def test_port_is_free_enables_reuseaddr_on_probe_socket(self) -> None:
+        from app.local_server import port_is_free
+
+        with mock.patch("app.local_server.socket.socket") as socket_cls:
+            probe = socket_cls.return_value.__enter__.return_value
+            probe.bind.return_value = None
+            self.assertTrue(port_is_free(8123))
+            probe.setsockopt.assert_called_with(
+                socket.SOL_SOCKET,
+                socket.SO_REUSEADDR,
+                1,
+            )
+
+    def test_stop_rejects_ephemeral_wait_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with self.assertRaisesRegex(ValueError, "1 and 65535"):
+                stop_local_server(Path(temporary_directory), port=0)
+
+    def test_stop_rejects_non_positive_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with self.assertRaisesRegex(ValueError, "positive"):
+                stop_local_server(Path(temporary_directory), port_timeout_s=0)
+            with self.assertRaisesRegex(ValueError, "positive"):
+                stop_local_server(
+                    Path(temporary_directory), port_timeout_s=float("nan")
+                )
+
 
 class ServerCliVersionTests(SimpleTestCase):
     def test_version_uses_distribution_metadata(self) -> None:
