@@ -19,7 +19,7 @@ The unit **template** (with `@@REPO_DIR@@`) lives in this repo at
 - systemd user session available (`systemctl --user status` returns output)
 - `~/work/ai/repository-helpers` cloned locally
 - Bunnify dependencies installed (`uv sync`)
-- Bookmarks at `~/.config/bunnify/bookmarks.json` (create from `bunnify.json.example` before first start)
+- Bookmarks at `~/.config/bunnify/bookmarks.json` (from `bunnify setup` or `bunnify.json.example` before first start)
 - `~/.config/user-services-host` — short hostname label for the service host (or pass
   `--condition-host` on first `setup-service` run)
 - `~/.config/user-services-host-fqdn` — FQDN captured on the service host (or

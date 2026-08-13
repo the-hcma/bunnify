@@ -1,42 +1,70 @@
 {
+  "bun": {
+    "description": "Bunnify source code",
+    "url": "https://github.com/the-hcma/bunnify"
+  },
   "c": {
     "description": "Google Calendar",
     "url": "https://calendar.google.com"
+  },
+  "docs": {
+    "description": "Google Docs",
+    "url": "https://docs.google.com/document/u/0/"
+  },
+  "drive": {
+    "description": "Google Drive",
+    "url": "https://drive.google.com"
   },
   "g": {
     "description": "Google Search",
     "url": "https://www.google.com/search?q=#{search_terms}"
   },
-  "gm": {
-    "description": "Gmail",
-    "url": "https://mail.google.com"
-  },
   "gh": {
     "description": "GitHub",
     "url": "https://github.com"
   },
-  "gtcl": {
-    "description": "Graphite CLI changelog",
-    "url": "https://graphite.com/docs/cli-changelog"
-  },
-  "pr": {
-    "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
-    "url": "https://github.com/#{repo}/pull/#{pr_number}"
+  "gm": {
+    "description": "Gmail",
+    "url": "https://mail.google.com"
   },
   "i": {
     "description": "GitHub Issue (Usage: i <org/repo> <issue_number>)",
     "url": "https://github.com/#{repo}/issues/#{issue_number}"
   },
-  "ih": {
-    "description": "the-hcma GitHub Issues (Usage: ih <repo>)",
-    "url": "https://github.com/the-hcma/#{repo}/issues"
+  "keep": {
+    "description": "Google Keep",
+    "url": "https://keep.google.com"
   },
-  "ihh": {
-    "description": "thehcma GitHub Issues (Usage: ihh <repo>)",
-    "url": "https://github.com/thehcma/#{repo}/issues"
+  "maps": {
+    "description": "Google Maps",
+    "url": "https://maps.google.com"
   },
-  "rpr": {
-    "description": "Request Copilot review for PR",
-    "url": "http://127.0.0.1:8000/review-pr/?pr=#{pr_id}"
+  "meet": {
+    "description": "Google Meet",
+    "url": "https://meet.google.com"
+  },
+  "photos": {
+    "description": "Google Photos",
+    "url": "https://photos.google.com"
+  },
+  "pr": {
+    "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
+    "url": "https://github.com/#{repo}/pull/#{pr_number}"
+  },
+  "sheets": {
+    "description": "Google Sheets",
+    "url": "https://docs.google.com/spreadsheets/u/0/"
+  },
+  "slides": {
+    "description": "Google Slides",
+    "url": "https://docs.google.com/presentation/u/0/"
+  },
+  "translate": {
+    "description": "Google Translate",
+    "url": "https://translate.google.com"
+  },
+  "yt": {
+    "description": "YouTube",
+    "url": "https://www.youtube.com"
   }
 }

@@ -1,6 +1,9 @@
 # Bunnify configuration
 
-`bunnify.json.example` is the template for creating your personal bookmarks file.
+`bunnify.json.example` (and the packaged `app/data/bookmarks.example.json`) is
+the template for creating your personal bookmarks file. It ships Google
+properties (Search, Gmail, Calendar, YouTube, Drive, Docs, and related),
+generic GitHub shortcuts, and a `bun` key for this repository’s source.
 
 ## XDG layout
 
@@ -12,10 +15,13 @@ to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
   `BUNNIFY_MODE`, `BUNNIFY_BASE_URL`, and `BUNNIFY_LOCAL_PORT`.
 - `run/` contains PID and selected-port files for the CLI-managed local server.
 
-Create `bookmarks.json` manually — the server does not seed the example file.
 These files are user data and are not tracked by Git.
 
 ## Setup
+
+When `bookmarks.json` is missing, interactive `bunnify setup` (and other
+prompting CLI paths) offer to install the example bookmarks in the correct
+location. Decline that prompt if you prefer to create the file yourself:
 
 ```bash
 mkdir -p ~/.config/bunnify
@@ -25,6 +31,9 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 
 In a development checkout you can instead `cp bunnify.json.example` from the
 repo root.
+
+Non-interactive starts (`bunnify-server --noninteractive`, CI, etc.) never
+seed automatically — create the file first.
 
 Run `bunnify setup` to write verified settings. Existing base-URL-only files
 remain supported; they are interpreted as remote mode.
