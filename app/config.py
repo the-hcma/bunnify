@@ -441,7 +441,12 @@ def _offer_example_bookmarks(
     prompt_fn: Callable[[str], str] | None,
     print_fn: Callable[[str], None] | None,
 ) -> bool:
-    """Prompt whether to install example bookmarks at ``target``. Default yes."""
+    """Prompt whether to install example bookmarks at ``target``.
+
+    On a TTY, Enter accepts (default yes). On non-TTY stdin (pipes / closed
+    stdin), click may turn EOF into ``""`` — require an explicit ``y``/``yes``
+    so closed stdin does not silently seed while piped answers still work.
+    """
     log = print_fn if print_fn is not None else print
     ask = prompt_fn or input
     log(f"No bookmarks found at {target}.")
@@ -449,4 +454,9 @@ def _offer_example_bookmarks(
         answer = ask("Install the example bookmarks there? [Y/n]: ")
     except EOFError:
         return False
-    return answer.strip().lower() in {"", "y", "yes"}
+    normalized = answer.strip().lower()
+    if normalized in {"y", "yes"}:
+        return True
+    if normalized == "" and sys.stdin.isatty():
+        return True
+    return False
