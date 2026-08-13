@@ -33,6 +33,7 @@ class ServerOptions:
     noninteractive: bool
     pid_dir: Path
     port: int
+    port_timeout_s: float
     stop: bool
 
 
@@ -98,6 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="TCP port, or 0 for an OS-selected ephemeral port (default: 8000).",
     )
     parser.add_argument(
+        "--port-timeout",
+        type=_port_timeout_value,
+        default=15.0,
+        help=(
+            "Seconds to wait for the managed port to free after --stop (default: 15)."
+        ),
+    )
+    parser.add_argument(
         "--stop",
         action="store_true",
         help="Stop the server identified by files under --pid-dir.",
@@ -115,7 +124,10 @@ def main(argv: list[str] | None = None) -> int:
     options = _parse_options(argv)
     options.pid_dir.mkdir(parents=True, exist_ok=True)
     if options.stop:
-        return _stop_managed_server(options.pid_dir)
+        return _stop_managed_server(
+            options.pid_dir,
+            port_timeout_s=options.port_timeout_s,
+        )
 
     try:
         bookmarks = _ensure_bookmarks(options)
@@ -281,6 +293,7 @@ def _parse_options(argv: list[str] | None) -> ServerOptions:
         noninteractive=bool(namespace.noninteractive),
         pid_dir=(namespace.pid_dir or run_dir()).expanduser(),
         port=namespace.port,
+        port_timeout_s=float(namespace.port_timeout),
         stop=bool(namespace.stop),
     )
 
@@ -342,6 +355,16 @@ def _port_is_free(port: int) -> bool:
         except OSError:
             return False
     return True
+
+
+def _port_timeout_value(raw: str) -> float:
+    try:
+        timeout_s = float(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a number") from exc
+    if timeout_s <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
+    return timeout_s
 
 
 def _port_value(raw: str) -> int:
@@ -520,7 +543,12 @@ def _start_watcher(bookmarks: Path) -> None:
     ).start()
 
 
-def _stop_managed_server(pid_dir: Path, *, quiet: bool = False) -> int:
+def _stop_managed_server(
+    pid_dir: Path,
+    *,
+    quiet: bool = False,
+    port_timeout_s: float = 15,
+) -> int:
     """SIGTERM the managed server, wait for exit, then confirm its port is free."""
     pid_file, port_file, _watcher_pid_file = _pid_paths(pid_dir)
     pid = _read_pid(pid_file)
@@ -564,7 +592,7 @@ def _stop_managed_server(pid_dir: Path, *, quiet: bool = False) -> int:
     if (
         port is not None
         and should_wait_for_port
-        and not _wait_for_port_free(port, timeout_s=15)
+        and not _wait_for_port_free(port, timeout_s=port_timeout_s)
     ):
         _cleanup_files(pid_dir)
         if not quiet:
