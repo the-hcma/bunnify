@@ -42,7 +42,7 @@ packages = ["app", "bookmarks"]
 [dependency-groups]
 dev = [
     "pyright>=1.1.411",
-    "ruff>=0.16.0",
+    "ruff>=0.16.1",
 ]
 
 [tool.pyright]
