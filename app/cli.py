@@ -291,8 +291,7 @@ def run_setup(
     path = env_path if env_path is not None else env_file_path(environ=environ)
     existing = load_preferences(environ=environ, env_path=path)
 
-    log(colors.header("Bunnify setup"))
-    log(colors.dim(build_version()))
+    log(colors.header(_command_banner("setup")))
     log(colors.dim(f"running from {running_command_path()}"))
     log(colors.dim("Press Enter to accept the value in [brackets]."))
 
@@ -471,12 +470,15 @@ def run_upgrade(
     print_fn: Callable[[str], None] | None = None,
     pipx_bin: str | None = None,
     run_fn: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    theme: Theme | None = None,
 ) -> None:
     """Upgrade the pipx install and report from/to versions with commits."""
     log = print_fn or click.echo
+    colors = theme if theme is not None else Theme(enabled=False)
     package, commit = get_build_info()
     from_label = f"{package} ({commit})"
     command_path = running_command_path()
+    log(colors.header(_command_banner("upgrade")))
     log(f"From: {from_label}")
     log(f"      {command_path}")
     if is_source_checkout():
@@ -559,6 +561,11 @@ def _cli_is_newer_than(health: HealthStatus) -> bool:
         return Version(health.version) < Version(local_version)
     except InvalidVersion:
         return False
+
+
+def _command_banner(action: str) -> str:
+    """Return ``Bunnify version X.Y.Z (commit) - action`` for CLI headers."""
+    return f"Bunnify version {build_version()} - {action}"
 
 
 def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool:
@@ -1402,7 +1409,7 @@ def main(
             )
             return
         if upgrade_requested or shortcut_args == ("upgrade",):
-            run_upgrade()
+            run_upgrade(print_fn=click.echo, theme=theme)
             return
         if setup_requested or shortcut_args == ("setup",):
             run_setup(

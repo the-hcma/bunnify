@@ -1247,7 +1247,8 @@ class ConfigUnitTests(TestCase):
             self.assertEqual(result, "http://127.0.0.1:8123")
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
             joined = "\n".join(messages)
-            self.assertIn("Bunnify setup", joined)
+            self.assertIn("Bunnify version", joined)
+            self.assertIn("- setup", joined)
             self.assertIn("running from", joined)
             self.assertIn("Port 8000 is free", joined)
             self.assertIn("Local Bunnify is healthy", joined)
@@ -1891,6 +1892,8 @@ class ConfigUnitTests(TestCase):
             result = CliRunner().invoke(main, ["upgrade"])
 
         self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Bunnify version", result.output)
+        self.assertIn("- upgrade", result.output)
         self.assertIn("From: ", result.output)
         self.assertIn("To:   0.5.0 (PyPI latest", result.output)
         self.assertIn("To:   0.5.0 (newnewnewnew)", result.output)
