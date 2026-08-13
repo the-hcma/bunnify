@@ -39,7 +39,7 @@ Go to repository → About section → Settings (⚙️) → Add topics:
 ### Branch Protection (Optional)
 Settings → Branches → Add branch protection rule for `main`:
 - ✅ Require status checks to pass before merging
-- ❌ DO NOT check "Require branches to be up to date before merging" (Graphite handles rebasing)
+- ❌ DO NOT check "Require branches to be up to date before merging" (stacked PRs rebase via `gh stack sync`)
 - Select: `test (3.14)`
 
 ### Repository Description
