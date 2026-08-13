@@ -514,20 +514,12 @@ def _offer_restart_mismatched_server(
     ):
         return port
     try:
-        stop_local_server(pid_dir)
+        stop_local_server(pid_dir, port=port)
     except RuntimeError as exc:
         print_fn(theme.warn(f"Could not stop the managed server: {exc}"))
         return None
-    if port_is_free(port):
-        print_fn(theme.ok(f"✓ Stopped previous server; port {port} is free"))
-        return port
-    print_fn(
-        theme.warn(
-            f"Port {port} is still busy after stop. "
-            "Choose another port, or stop the other process."
-        )
-    )
-    return None
+    print_fn(theme.ok(f"✓ Stopped previous server; port {port} is free"))
+    return port
 
 
 def _prompt_local_port(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import socket
 import subprocess
 import sys
 import tempfile
@@ -158,6 +159,97 @@ class LocalServerTests(SimpleTestCase):
         self.assertEqual(command[:3], [sys.executable, "-m", "app.server_cli"])
         self.assertIn("--stop", command)
 
+    @mock.patch("app.local_server.wait_for_port_free", return_value=True)
+    @mock.patch("app.local_server.subprocess.run")
+    def test_stop_passes_port_timeout_to_server_cli(
+        self,
+        run: mock.Mock,
+        wait_for_port: mock.Mock,
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            stop_local_server(pid_dir, port=8123, port_timeout_s=1.5)
+
+        command = run.call_args.args[0]
+        self.assertIn("--port-timeout", command)
+        self.assertEqual(command[command.index("--port-timeout") + 1], "1.5")
+        wait_for_port.assert_called_once_with(8123, timeout_s=1.5)
+
+    @mock.patch("app.local_server.wait_for_port_free", return_value=True)
+    @mock.patch("app.local_server.subprocess.run")
+    def test_stop_waits_for_requested_port(
+        self,
+        run: mock.Mock,
+        wait_for_port: mock.Mock,
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            stop_local_server(pid_dir, port=8123, port_timeout_s=1)
+
+        wait_for_port.assert_called_once_with(8123, timeout_s=1)
+
+    @mock.patch("app.local_server.wait_for_port_free", return_value=True)
+    @mock.patch(
+        "app.local_server.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["bunnify-server"], timeout=60),
+    )
+    def test_stop_maps_timeout_to_runtime_error(
+        self,
+        _run: mock.Mock,
+        _wait_for_port: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            with self.assertRaisesRegex(RuntimeError, "Timed out stopping"):
+                stop_local_server(pid_dir, port=8123, port_timeout_s=1)
+
+    @mock.patch("app.local_server.wait_for_port_free", return_value=False)
+    @mock.patch("app.local_server.subprocess.run")
+    def test_stop_raises_when_port_stays_busy(
+        self,
+        run: mock.Mock,
+        _wait_for_port: mock.Mock,
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            with self.assertRaisesRegex(RuntimeError, "still busy after stop"):
+                stop_local_server(pid_dir, port=8123, port_timeout_s=0.1)
+
+    def test_wait_for_port_free_returns_true_when_bindable(self) -> None:
+        from app.local_server import wait_for_port_free
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+            holder.bind(("127.0.0.1", 0))
+            port = int(holder.getsockname()[1])
+
+        self.assertTrue(wait_for_port_free(port, timeout_s=1))
+
+    def test_wait_for_port_free_times_out_while_held(self) -> None:
+        from app.local_server import wait_for_port_free
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+            holder.bind(("127.0.0.1", 0))
+            holder.listen()
+            port = int(holder.getsockname()[1])
+            self.assertFalse(wait_for_port_free(port, timeout_s=0.2))
+
+    def test_port_is_free_uses_reuseaddr(self) -> None:
+        from app.local_server import port_is_free
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+            holder.bind(("127.0.0.1", 0))
+            port = int(holder.getsockname()[1])
+        # Closed socket may still look busy without SO_REUSEADDR; our check must
+        # match Django's runserver and treat the port as usable.
+        self.assertTrue(port_is_free(port))
+
 
 class ServerCliVersionTests(SimpleTestCase):
     def test_version_uses_distribution_metadata(self) -> None:
@@ -168,6 +260,194 @@ class ServerCliVersionTests(SimpleTestCase):
 
         self.assertEqual(raised.exception.code, 0)
         self.assertEqual(output.getvalue(), f"bunnify-server {build_version()}\n")
+
+
+class ServerStopTests(SimpleTestCase):
+    def test_stop_returns_error_when_port_stays_busy(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+                holder.bind(("127.0.0.1", 0))
+                holder.listen()
+                port = int(holder.getsockname()[1])
+                (pid_dir / ".bunnify.port").write_text(f"{port}\n", encoding="utf-8")
+
+                with (
+                    mock.patch("app.server_cli._listener_pids", return_value=[]),
+                    mock.patch(
+                        "app.server_cli._wait_for_port_free",
+                        return_value=False,
+                    ) as wait_for_port,
+                ):
+                    self.assertEqual(
+                        _stop_managed_server(
+                            pid_dir,
+                            quiet=False,
+                            port_timeout_s=0.25,
+                        ),
+                        1,
+                    )
+                wait_for_port.assert_called_once_with(port, timeout_s=0.25)
+
+    def test_quiet_stop_skips_wait_when_nothing_signaled(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+            (pid_dir / ".bunnify.port").write_text("8123\n", encoding="utf-8")
+
+            with (
+                mock.patch("app.server_cli._port_is_free", return_value=False),
+                mock.patch("app.server_cli._listener_pids", return_value=[]),
+                mock.patch("app.server_cli._wait_for_port_free") as wait_for_port,
+            ):
+                self.assertEqual(_stop_managed_server(pid_dir, quiet=True), 0)
+
+            wait_for_port.assert_not_called()
+
+    def test_stop_terminates_listener_when_pid_file_stale(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+            (pid_dir / ".bunnify.port").write_text("8123\n", encoding="utf-8")
+
+            with (
+                mock.patch("app.server_cli._port_is_free", side_effect=[False, True]),
+                mock.patch("app.server_cli._listener_pids", return_value=[4242]),
+                mock.patch(
+                    "app.server_cli._process_managed_by_pid_dir",
+                    return_value=True,
+                ),
+                mock.patch("app.server_cli._terminate_pid") as terminate,
+                mock.patch("app.server_cli._wait_for_port_free", return_value=True),
+            ):
+                self.assertEqual(_stop_managed_server(pid_dir, quiet=True), 0)
+
+            terminate.assert_called_once_with(4242)
+
+    def test_stop_skips_listener_for_other_pid_dir(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+            (pid_dir / ".bunnify.port").write_text("8123\n", encoding="utf-8")
+
+            with (
+                mock.patch("app.server_cli._port_is_free", return_value=False),
+                mock.patch("app.server_cli._listener_pids", return_value=[4242]),
+                mock.patch(
+                    "app.server_cli._process_managed_by_pid_dir",
+                    return_value=False,
+                ),
+                mock.patch("app.server_cli._terminate_pid") as terminate,
+                mock.patch("app.server_cli._wait_for_port_free") as wait_for_port,
+            ):
+                self.assertEqual(_stop_managed_server(pid_dir, quiet=True), 0)
+
+            terminate.assert_not_called()
+            wait_for_port.assert_not_called()
+
+    def test_process_managed_by_pid_dir_defaults_missing_flag(self) -> None:
+        from app.server_cli import _process_managed_by_pid_dir
+
+        default = Path("/tmp/default-run")
+        with (
+            mock.patch(
+                "app.server_cli._process_command",
+                return_value="python -m app.server_cli --port 8000 --foreground",
+            ),
+            mock.patch("app.server_cli.run_dir", return_value=default),
+        ):
+            self.assertTrue(_process_managed_by_pid_dir(1, default))
+            self.assertFalse(_process_managed_by_pid_dir(1, Path("/tmp/other-run")))
+
+        from app.server_cli import _pid_dir_from_command, _port_from_command
+
+        self.assertEqual(
+            _pid_dir_from_command(
+                "python -m app.server_cli --pid-dir /tmp/bunnify-run --port 8000"
+            ),
+            Path("/tmp/bunnify-run"),
+        )
+        self.assertEqual(
+            _pid_dir_from_command(
+                "python -m app.server_cli --pid-dir=/tmp/bunnify-run --port=8000"
+            ),
+            Path("/tmp/bunnify-run"),
+        )
+        self.assertIsNone(_pid_dir_from_command("python -m app.server_cli --port 8000"))
+        self.assertEqual(
+            _port_from_command(
+                "python -m app.server_cli --pid-dir /tmp/run --port 8123"
+            ),
+            8123,
+        )
+        self.assertEqual(
+            _port_from_command(
+                "python -m app.server_cli --pid-dir=/tmp/run --port=8123"
+            ),
+            8123,
+        )
+        self.assertIsNone(
+            _port_from_command("python -m app.server_cli --pid-dir /tmp/run --port 0")
+        )
+
+    def test_stop_scopes_recorded_pid_to_pid_dir(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+            (pid_dir / ".bunnify.pid").write_text("4242\n", encoding="utf-8")
+            (pid_dir / ".bunnify.port").write_text("8123\n", encoding="utf-8")
+
+            with (
+                mock.patch("app.server_cli._is_process_running", return_value=True),
+                mock.patch(
+                    "app.server_cli._process_managed_by_pid_dir",
+                    return_value=False,
+                ),
+                mock.patch("app.server_cli._is_bunnify_process", return_value=True),
+                mock.patch("app.server_cli._terminate_pid") as terminate,
+            ):
+                self.assertEqual(_stop_managed_server(pid_dir, quiet=True), 0)
+
+            terminate.assert_not_called()
+            self.assertFalse((pid_dir / ".bunnify.pid").exists())
+
+    def test_stop_recovers_port_from_command_when_port_file_missing(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+            (pid_dir / ".bunnify.pid").write_text("4242\n", encoding="utf-8")
+
+            with (
+                mock.patch("app.server_cli._is_process_running", return_value=True),
+                mock.patch(
+                    "app.server_cli._process_managed_by_pid_dir",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "app.server_cli._process_command",
+                    return_value=(
+                        "python -m app.server_cli --pid-dir "
+                        f"{pid_dir} --port 8123 --foreground"
+                    ),
+                ),
+                mock.patch("app.server_cli._terminate_pid") as terminate,
+                mock.patch("app.server_cli._port_is_free", return_value=True),
+                mock.patch(
+                    "app.server_cli._wait_for_port_free",
+                    return_value=True,
+                ) as wait_for_port,
+            ):
+                self.assertEqual(_stop_managed_server(pid_dir, quiet=False), 0)
+
+            terminate.assert_called_once_with(4242)
+            wait_for_port.assert_called_once_with(8123, timeout_s=15)
 
 
 class ServerProcessTests(SimpleTestCase):

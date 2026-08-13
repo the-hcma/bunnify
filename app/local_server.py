@@ -93,32 +93,75 @@ def ensure_local_server(
     )
 
 
-def stop_local_server(pid_dir: Path) -> None:
-    """Stop the managed local server associated with ``pid_dir``."""
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "app.server_cli",
-            "--stop",
-            "--pid-dir",
-            str(pid_dir),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=30,
-    )
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()
-        suffix = f": {detail}" if detail else ""
-        raise RuntimeError(f"Failed to stop the local Bunnify server{suffix}")
-
-
 def port_is_free(port: int) -> bool:
+    """Return whether ``port`` can be bound with ``SO_REUSEADDR`` (Django-compatible).
+
+    A plain bind without reuse can fail on macOS after a process exits while the
+    prior listen socket is still draining, even though nothing accepts connections
+    and Django's runserver (which sets reuse) could start successfully.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
+        candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             candidate.bind(("127.0.0.1", port))
         except OSError:
             return False
     return True
+
+
+def stop_local_server(
+    pid_dir: Path,
+    *,
+    port: int | None = None,
+    port_timeout_s: float = 15,
+) -> None:
+    """Stop the managed local server associated with ``pid_dir``.
+
+    When ``port`` is set, wait until that port can be bound again before
+    returning so callers can restart on the same port.
+    """
+    # Worst case: SIGTERM+SIGKILL waits for pid and listener, then port wait.
+    stop_timeout_s = max(60.0, port_timeout_s + 35)
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "app.server_cli",
+                "--stop",
+                "--pid-dir",
+                str(pid_dir),
+                "--port-timeout",
+                str(port_timeout_s),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=stop_timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Timed out stopping the local Bunnify server after {stop_timeout_s:g}s"
+        ) from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"Failed to stop the local Bunnify server{suffix}")
+    if port is None:
+        return
+    if wait_for_port_free(port, timeout_s=port_timeout_s):
+        return
+    raise RuntimeError(
+        f"Port {port} is still busy after stop; "
+        "choose another port or stop the other process"
+    )
+
+
+def wait_for_port_free(port: int, *, timeout_s: float = 15) -> bool:
+    """Poll until ``port`` accepts a bind on localhost, or ``timeout_s`` elapses."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if port_is_free(port):
+            return True
+        time.sleep(0.05)
+    return port_is_free(port)
