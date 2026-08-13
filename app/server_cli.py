@@ -298,19 +298,30 @@ def _parse_options(argv: list[str] | None) -> ServerOptions:
     )
 
 
+def _flag_value_from_arguments(arguments: list[str], flag: str) -> str | None:
+    """Return ``flag``'s value (``--flag value`` or ``--flag=value``)."""
+    prefix = f"{flag}="
+    for index, token in enumerate(arguments):
+        if token == flag:
+            if index + 1 >= len(arguments):
+                return None
+            return arguments[index + 1]
+        if token.startswith(prefix):
+            value = token[len(prefix) :]
+            return value or None
+    return None
+
+
 def _pid_dir_from_command(command: str) -> Path | None:
     """Return ``--pid-dir`` from a process command line, if present."""
     try:
         arguments = shlex.split(command)
     except ValueError:
         return None
-    try:
-        index = arguments.index("--pid-dir")
-    except ValueError:
+    value = _flag_value_from_arguments(arguments, "--pid-dir")
+    if value is None:
         return None
-    if index + 1 >= len(arguments):
-        return None
-    return Path(arguments[index + 1]).expanduser()
+    return Path(value).expanduser()
 
 
 def _pid_paths(pid_dir: Path) -> tuple[Path, Path, Path]:
@@ -327,14 +338,11 @@ def _port_from_command(command: str) -> int | None:
         arguments = shlex.split(command)
     except ValueError:
         return None
-    try:
-        index = arguments.index("--port")
-    except ValueError:
-        return None
-    if index + 1 >= len(arguments):
+    value = _flag_value_from_arguments(arguments, "--port")
+    if value is None:
         return None
     try:
-        port = int(arguments[index + 1])
+        port = int(value)
     except ValueError:
         return None
     if not 1 <= port <= 65535:

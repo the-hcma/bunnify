@@ -372,10 +372,22 @@ class ServerStopTests(SimpleTestCase):
             ),
             Path("/tmp/bunnify-run"),
         )
+        self.assertEqual(
+            _pid_dir_from_command(
+                "python -m app.server_cli --pid-dir=/tmp/bunnify-run --port=8000"
+            ),
+            Path("/tmp/bunnify-run"),
+        )
         self.assertIsNone(_pid_dir_from_command("python -m app.server_cli --port 8000"))
         self.assertEqual(
             _port_from_command(
                 "python -m app.server_cli --pid-dir /tmp/run --port 8123"
+            ),
+            8123,
+        )
+        self.assertEqual(
+            _port_from_command(
+                "python -m app.server_cli --pid-dir=/tmp/run --port=8123"
             ),
             8123,
         )
