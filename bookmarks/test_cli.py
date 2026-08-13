@@ -291,6 +291,27 @@ class CliUnitTests(TestCase):
             "gh", base_url="http://127.0.0.1:8000", strict=True
         )
 
+    @patch("app.cli.fetch_key_entries")
+    def test_repl_banner_includes_version(self, mock_fetch_entries) -> None:
+        from app.version import build_version
+
+        mock_fetch_entries.return_value = [KeyEntry(key="gh")]
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            _run(
+                shortcut_args=(),
+                base_url="http://127.0.0.1:8000",
+                list_keys=False,
+                use_fzf=False,
+                fzf_query="",
+                print_url=False,
+                open_browser=False,
+                input_fn=lambda _prompt: "quit",
+            )
+        output = captured.getvalue()
+        self.assertIn(build_version(), output)
+        self.assertIn("interactive", output)
+
     @patch("app.cli.resolve_shortcut")
     @patch("app.cli.fetch_key_entries")
     def test_interactive_loop_runs_multiple_commands(
@@ -1226,6 +1247,8 @@ class ConfigUnitTests(TestCase):
             self.assertEqual(result, "http://127.0.0.1:8123")
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
             joined = "\n".join(messages)
+            self.assertIn("Bunnify setup", joined)
+            self.assertIn("running from", joined)
             self.assertIn("Port 8000 is free", joined)
             self.assertIn("Local Bunnify is healthy", joined)
             self.assertIn("Configured local Bunnify server", joined)
@@ -1777,11 +1800,52 @@ class ConfigUnitTests(TestCase):
         self.assertIn("bookmarks.json", result.output)
         self.assertIn("bunnify setup", result.output)
         self.assertIn("CHROME_SETUP.md", result.output)
+        self.assertIn("bunnify upgrade", result.output)
         self.assertIn("pipx upgrade bunnify", result.output)
 
         flagged = CliRunner().invoke(main, ["--onboard"])
         self.assertEqual(flagged.exit_code, 0)
         self.assertIn("bunnify setup", flagged.output)
+
+    def test_upgrade_runs_pipx_and_explains_checkout(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+
+        from app.cli import main
+
+        completed = subprocess.CompletedProcess(
+            ["pipx", "upgrade", "bunnify"],
+            0,
+            "",
+            "",
+        )
+        with (
+            patch("app.cli.is_source_checkout", return_value=True),
+            patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli.subprocess.run", return_value=completed) as run,
+        ):
+            result = CliRunner().invoke(main, ["upgrade"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("This CLI is", result.output)
+        self.assertIn("running from", result.output)
+        self.assertIn("git checkout", result.output)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/pipx", "upgrade", "bunnify"])
+
+    def test_upgrade_errors_when_pipx_missing(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import main
+
+        with (
+            patch("app.cli.is_source_checkout", return_value=False),
+            patch("app.cli.shutil.which", return_value=None),
+        ):
+            result = CliRunner().invoke(main, ["--upgrade"])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("pipx not found", result.output)
 
     def test_base_url_prepends_http_scheme(self) -> None:
         from app.config import resolve_base_url

@@ -23,6 +23,8 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 bunnify                         # interactive REPL
 bunnify onboard                 # post-install / upgrade checklist
 bunnify setup                   # configure local or remote server
+bunnify upgrade                 # pipx upgrade; prints which binary you ran
+bunnify --version               # package version, commit, and install path
 bunnify gh                      # open a shortcut (example key from bunnify.json.example)
 bunnify bun                     # Bunnify source on GitHub
 bunnify pr the-hcma/bunnify 272 # parameterized shortcut (repo + PR number)

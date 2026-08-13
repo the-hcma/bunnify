@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
 import tomllib
 from collections.abc import Mapping
 from functools import lru_cache
@@ -71,6 +73,12 @@ def git_commit(
     return result.stdout.strip() or "unknown"
 
 
+def is_source_checkout(*, repository: Path | None = None) -> bool:
+    """Return whether this process is running from a git checkout of bunnify."""
+    checkout = repository or Path(__file__).resolve().parents[1]
+    return (checkout / ".git").exists()
+
+
 def package_version(*, pyproject_path: Path | None = None) -> str:
     """Return the distribution version, with a source-checkout fallback."""
     embedded = getattr(_build_metadata, "EMBEDDED_VERSION", "")
@@ -81,6 +89,25 @@ def package_version(*, pyproject_path: Path | None = None) -> str:
     except PackageNotFoundError:
         path = pyproject_path or Path(__file__).resolve().parents[1] / "pyproject.toml"
         return _pyproject_version(path)
+
+
+def running_command_path() -> Path:
+    """Return the path of the command that started this process.
+
+    The path is made absolute without following console-script symlinks so a
+    pipx or uv-tool install prints the PATH entry (``~/.local/bin/bunnify``)
+    rather than the venv target. Bare names such as ``bunnify`` are looked up
+    with ``shutil.which`` so PATH launches do not report ``$PWD/bunnify``.
+    """
+    argv0 = Path(sys.argv[0]).expanduser()
+    if not argv0.is_absolute():
+        located = shutil.which(os.fspath(argv0))
+        if located:
+            argv0 = Path(located)
+    try:
+        return argv0.absolute()
+    except OSError:
+        return argv0
 
 
 def _normalize_commit(token: str) -> str:

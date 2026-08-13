@@ -26,6 +26,7 @@ from app.version import (
     get_build_info,
     git_commit,
     package_version,
+    running_command_path,
 )
 
 
@@ -90,19 +91,72 @@ class BuildInfoTests(SimpleTestCase):
                     "1.2.3",
                 )
 
+    def test_is_source_checkout_detects_git_dir(self) -> None:
+        from app.version import is_source_checkout
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.assertFalse(is_source_checkout(repository=root))
+            (root / ".git").mkdir()
+            self.assertTrue(is_source_checkout(repository=root))
+
+    def test_running_command_path_keeps_console_script_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            venv_binary = root / "pipx" / "venvs" / "bunnify" / "bin" / "bunnify"
+            venv_binary.parent.mkdir(parents=True)
+            venv_binary.write_text("#!/bin/sh\n")
+            shim = root / "bin" / "bunnify"
+            shim.parent.mkdir()
+            shim.symlink_to(venv_binary)
+            with mock.patch("app.version.sys.argv", [str(shim)]):
+                shown = running_command_path()
+            self.assertEqual(shown, shim.absolute())
+            self.assertNotEqual(shown, venv_binary.resolve())
+
+    def test_running_command_path_looks_up_bare_command_on_path(self) -> None:
+        located = Path("/Users/me/.local/bin/bunnify")
+        with (
+            mock.patch("app.version.sys.argv", ["bunnify-on-path"]),
+            mock.patch("app.version.shutil.which", return_value=str(located)) as which,
+        ):
+            shown = running_command_path()
+        which.assert_called_once_with("bunnify-on-path")
+        self.assertEqual(shown, located)
+
+    def test_running_command_path_prefers_path_over_cwd_file(self) -> None:
+        located = Path("/Users/me/.local/bin/bunnify")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            cwd_file = Path(temporary_directory) / "bunnify"
+            cwd_file.write_text("not the CLI\n")
+            with (
+                mock.patch("app.version.sys.argv", ["bunnify"]),
+                mock.patch(
+                    "app.version.shutil.which",
+                    return_value=str(located),
+                ) as which,
+            ):
+                shown = running_command_path()
+        which.assert_called_once_with("bunnify")
+        self.assertEqual(shown, located)
+
 
 class CliVersionTests(SimpleTestCase):
     def test_version_uses_distribution_metadata(self) -> None:
         result = CliRunner().invoke(cli_main, ["--version"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.output, f"{build_info()}\n")
+        lines = result.output.splitlines()
+        self.assertEqual(lines[0], build_info())
+        self.assertTrue(lines[1].startswith("running from "))
 
     def test_version_command_prints_build_info(self) -> None:
         result = CliRunner().invoke(cli_main, ["version"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.output, f"{build_info()}\n")
+        lines = result.output.splitlines()
+        self.assertEqual(lines[0], build_info())
+        self.assertTrue(lines[1].startswith("running from "))
 
 
 class ConfigDataDirTests(SimpleTestCase):
