@@ -30,9 +30,12 @@ they fall back to the checkout ``.venv`` (same entry points systemd uses).
 Setup defaults to **local** mode. When `bookmarks.json` is missing, it offers
 to install the example shortcuts (see [Configuration](CONFIG.md)). It then
 prompts for a free non-privileged listening port
-(default `8000`, or `0` for an OS-assigned port), starts a managed server,
-verifies `/health`, and records the selected port in `config.env` and under
-`$BUNNIFY_DATA_DIR/run/` (for example `~/scratch/bunnify/run` on service hosts).
+(default `8000`, or `0` for an OS-assigned port). If that port already serves
+a **different** Bunnify build, setup asks whether to stop it and start this
+CLI's build (even when the process was started with a different run directory). It then
+starts a managed server, verifies `/health`, and records the selected port in
+`config.env` and under `$BUNNIFY_DATA_DIR/run/` (for example
+`~/scratch/bunnify/run` on service hosts).
 Remote mode prompts for a URL and saves it only after its `/health` response is
 HTTP 200 with body `ok`.
 

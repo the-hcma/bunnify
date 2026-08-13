@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 
 import click
+from packaging.version import InvalidVersion, Version
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
@@ -212,9 +217,8 @@ def format_onboarding_text() -> str:
             "",
             "4. Try it:  bunnify gh   (or address-bar keyword, e.g. b gh)",
             "",
-            "Upgrade later:",
-            "     bunnify upgrade   # pipx upgrade, then show which binary you ran",
-            "     # or: pipx upgrade bunnify && command -v bunnify",
+            "Upgrade later (preferred):",
+            "     bunnify upgrade   # shows from/to versions, then pipx upgrade",
             "   Bookmarks and config.env are kept across upgrades.",
             "   If --version still shows a checkout SHA, PATH is using",
             "   ./scripts/bunnify or a repo .venv — the pipx app lives in",
@@ -287,8 +291,7 @@ def run_setup(
     path = env_path if env_path is not None else env_file_path(environ=environ)
     existing = load_preferences(environ=environ, env_path=path)
 
-    log(colors.header("Bunnify setup"))
-    log(colors.dim(build_version()))
+    log(colors.header(_command_banner("setup")))
     log(colors.dim(f"running from {running_command_path()}"))
     log(colors.dim("Press Enter to accept the value in [brackets]."))
 
@@ -467,26 +470,40 @@ def run_upgrade(
     print_fn: Callable[[str], None] | None = None,
     pipx_bin: str | None = None,
     run_fn: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    theme: Theme | None = None,
 ) -> None:
-    """Upgrade the pipx install and explain which binary this process is."""
+    """Upgrade the pipx install and report from/to versions with commits."""
     log = print_fn or click.echo
+    colors = theme if theme is not None else Theme(enabled=False)
     package, commit = get_build_info()
+    from_label = f"{package} ({commit})"
     command_path = running_command_path()
-    log(f"This CLI is {package} ({commit})")
-    log(f"running from {command_path}")
+    log(colors.header(_command_banner("upgrade")))
+    log(f"From: {from_label}")
+    log(f"      {command_path}")
     if is_source_checkout():
         log(
             "This process is a git checkout, not the pipx app. "
-            "`pipx upgrade` updates ~/.local/bin/bunnify and will not change "
-            "this checkout's pyproject version or commit."
+            "`bunnify upgrade` updates ~/.local/bin/bunnify and will not "
+            "change this checkout's pyproject version or commit."
         )
-        log("Verify the published install with:  command -v bunnify")
 
     pipx = pipx_bin or shutil.which("pipx")
     if pipx is None:
         raise ClientError(
-            "pipx not found on PATH. Install pipx, then run: pipx upgrade bunnify"
+            "pipx not found on PATH. Install pipx, then run: bunnify upgrade"
         )
+    pypi_version = _pypi_latest_version()
+    pipx_app = _pipx_bunnify_path()
+    before_pipx = _read_executable_build(pipx_app) if pipx_app is not None else None
+    if before_pipx is not None and pipx_app is not None:
+        log(f"pipx app now: {before_pipx}")
+        log(f"              {pipx_app}")
+    if pypi_version is not None:
+        log(f"To:   {pypi_version} (PyPI latest; commit confirmed after upgrade)")
+    else:
+        log("To:   (querying PyPI failed; will show the pipx app after upgrade)")
+
     runner = run_fn or subprocess.run
     try:
         completed = runner(
@@ -499,7 +516,22 @@ def run_upgrade(
         raise ClientError("Timed out running `pipx upgrade bunnify`") from exc
     if completed.returncode != 0:
         raise ClientError("pipx upgrade bunnify failed")
-    log("pipx upgrade finished. Re-run `bunnify --version` using ~/.local/bin/bunnify.")
+
+    pipx_app = _pipx_bunnify_path() or pipx_app
+    after_pipx = _read_executable_build(pipx_app) if pipx_app is not None else None
+    if after_pipx is not None and pipx_app is not None:
+        log(f"To:   {after_pipx}")
+        log(f"      {pipx_app}")
+    else:
+        log(
+            "pipx upgrade finished, but could not read ~/.local/bin/bunnify "
+            "--version. Run that binary directly to confirm."
+        )
+    if from_label != after_pipx and is_source_checkout():
+        log(
+            "This process is still the checkout. Use the pipx path above "
+            "(after `pipx ensurepath`) for the upgraded app."
+        )
 
 
 def matching_keys(keys: list[str], prefix: str) -> list[str]:
@@ -518,6 +550,22 @@ def _builds_match(health: HealthStatus) -> bool:
         return False
     local_version, local_commit = get_build_info()
     return health.version == local_version and health.commit == local_commit
+
+
+def _cli_is_newer_than(health: HealthStatus) -> bool:
+    """Return whether this CLI's package version is newer than ``health``."""
+    if health.version is None:
+        return False
+    local_version, _local_commit = get_build_info()
+    try:
+        return Version(health.version) < Version(local_version)
+    except InvalidVersion:
+        return False
+
+
+def _command_banner(action: str) -> str:
+    """Return ``Bunnify version X.Y.Z (commit) - action`` for CLI headers."""
+    return f"Bunnify version {build_version()} - {action}"
 
 
 def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool:
@@ -576,9 +624,6 @@ def _offer_restart_mismatched_server(
 
     Returns the port when the caller should reuse or restart into it, or
     ``None`` when the prompt loop should continue (stop failed / still busy).
-
-    Restart is only offered when ``pid_dir`` records this same ``port``, so we
-    do not SIGTERM an unrelated managed server or loop when stop is a no-op.
     """
     local_version, local_commit = get_build_info()
     local_label = f"{local_version} ({local_commit})"
@@ -592,28 +637,88 @@ def _offer_restart_mismatched_server(
                 f"Could not determine the running build (this CLI is {local_label})."
             )
         )
+        prompt = f"Stop it and start {local_label} on port {port}? [y/N]: "
+    elif _cli_is_newer_than(health):
+        print_fn(theme.warn(f"That server is older than this CLI ({local_label})."))
+        prompt = f"Stop {running_label} and start {local_label} on port {port}? [y/N]: "
     else:
         print_fn(theme.warn(f"Running build differs from this CLI ({local_label})."))
-    if _managed_local_port(pid_dir) != port:
+        prompt = f"Restart with this CLI ({local_label}) on port {port}? [y/N]: "
+    managed = _managed_local_port(pid_dir)
+    if managed != port:
         print_fn(
             theme.warn(
-                "Not managed by this CLI run directory; reusing the running server. "
-                "Stop it yourself (or choose another port) to start a fresh build."
+                "Not recorded in this CLI run directory; confirming will stop "
+                "the Bunnify process listening on that port."
             )
         )
-        return port
-    if not _confirm_explicit_yes(
-        prompt_fn,
-        "Restart the managed local server with this CLI? [y/N]: ",
-    ):
+        if managed is not None:
+            print_fn(
+                theme.warn(
+                    f"This CLI's managed server on port {managed} will also be stopped."
+                )
+            )
+    if not _confirm_explicit_yes(prompt_fn, prompt):
+        print_fn(theme.dim(f"Reusing the running server ({running_label})."))
         return port
     try:
-        stop_local_server(pid_dir, port=port)
+        stop_local_server(
+            pid_dir,
+            port=port,
+            replace_foreign_bunnify=True,
+        )
     except RuntimeError as exc:
         print_fn(theme.warn(f"Could not stop the managed server: {exc}"))
         return None
     print_fn(theme.ok(f"✓ Stopped previous server; port {port} is free"))
     return port
+
+
+def _parse_version_line(output: str) -> str | None:
+    """Return ``0.5.0 (abc1234)`` from a ``bunnify --version`` first line."""
+    first = output.splitlines()[0].strip() if output else ""
+    if not first:
+        return None
+    prefix = "bunnify "
+    if first.startswith(prefix):
+        return first[len(prefix) :].strip() or None
+    return first or None
+
+
+def _pipx_bunnify_path() -> Path | None:
+    """Return the pipx ``bunnify`` app path when it exists."""
+    override = os.environ.get("PIPX_BIN_DIR", "").strip()
+    candidates = []
+    if override:
+        candidates.append(Path(override) / "bunnify")
+    candidates.append(Path.home() / ".local" / "bin" / "bunnify")
+    for candidate in candidates:
+        if candidate.is_file():
+            try:
+                return candidate.resolve()
+            except OSError:
+                return candidate
+    return None
+
+
+def _pypi_latest_version() -> str | None:
+    """Return the latest bunnify version on PyPI, or None on failure."""
+    try:
+        with urllib.request.urlopen(
+            "https://pypi.org/pypi/bunnify/json",
+            timeout=8,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (
+        OSError,
+        TimeoutError,
+        ValueError,
+        json.JSONDecodeError,
+        urllib.error.URLError,
+    ):
+        return None
+    version = payload.get("info", {}).get("version")
+    return version if isinstance(version, str) and version else None
 
 
 def _prompt_local_port(
@@ -692,6 +797,23 @@ def _prompt_local_port(
                 )
             )
         return found
+
+
+def _read_executable_build(executable: Path) -> str | None:
+    """Return version/commit from ``executable --version``, if readable."""
+    try:
+        completed = subprocess.run(
+            [str(executable), "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=15,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    if completed.returncode != 0:
+        return None
+    return _parse_version_line(completed.stdout or "")
 
 
 def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
@@ -1294,7 +1416,7 @@ def main(
             )
             return
         if upgrade_requested or shortcut_args == ("upgrade",):
-            run_upgrade()
+            run_upgrade(print_fn=click.echo, theme=theme)
             return
         if setup_requested or shortcut_args == ("setup",):
             run_setup(

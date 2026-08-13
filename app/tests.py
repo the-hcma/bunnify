@@ -233,6 +233,28 @@ class LocalServerTests(SimpleTestCase):
 
     @mock.patch("app.local_server.wait_for_port_free", return_value=True)
     @mock.patch("app.local_server.subprocess.run")
+    def test_stop_passes_replace_on_port(
+        self,
+        run: mock.Mock,
+        wait_for_port: mock.Mock,
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            stop_local_server(
+                pid_dir,
+                port=8123,
+                replace_foreign_bunnify=True,
+            )
+
+        command = run.call_args.args[0]
+        self.assertIn("--replace-on-port", command)
+        self.assertEqual(command[command.index("--replace-on-port") + 1], "8123")
+        wait_for_port.assert_called_once_with(8123, timeout_s=15)
+
+    @mock.patch("app.local_server.wait_for_port_free", return_value=True)
+    @mock.patch("app.local_server.subprocess.run")
     def test_stop_waits_for_requested_port(
         self,
         run: mock.Mock,
@@ -430,6 +452,37 @@ class ServerStopTests(SimpleTestCase):
 
             terminate.assert_not_called()
             wait_for_port.assert_not_called()
+
+    def test_stop_replace_on_port_terminates_foreign_bunnify_listener(self) -> None:
+        from app.server_cli import _stop_managed_server
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            with (
+                mock.patch("app.server_cli._port_is_free", return_value=False),
+                mock.patch("app.server_cli._listener_pids", return_value=[4242]),
+                mock.patch(
+                    "app.server_cli._process_managed_by_pid_dir",
+                    return_value=False,
+                ),
+                mock.patch(
+                    "app.server_cli._is_bunnify_process",
+                    return_value=True,
+                ),
+                mock.patch("app.server_cli._terminate_pid") as terminate,
+                mock.patch("app.server_cli._wait_for_port_free", return_value=True),
+            ):
+                self.assertEqual(
+                    _stop_managed_server(
+                        pid_dir,
+                        quiet=True,
+                        replace_on_port=8123,
+                    ),
+                    0,
+                )
+
+            terminate.assert_called_once_with(4242)
 
     def test_process_managed_by_pid_dir_defaults_missing_flag(self) -> None:
         from app.server_cli import _process_managed_by_pid_dir

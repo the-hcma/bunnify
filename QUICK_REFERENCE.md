@@ -24,7 +24,7 @@ bunnify                         # interactive REPL
 bunnify onboard                 # post-install / upgrade checklist
 bunnify setup                   # configure local or remote server
 bunnify stop                    # stop the managed local server
-bunnify upgrade                 # pipx upgrade; prints which binary you ran
+bunnify upgrade                 # preferred: pipx upgrade; prints from/to versions
 bunnify --version               # package version, commit, and install path
 bunnify gh                      # open a shortcut (example key from bunnify.json.example)
 bunnify bun                     # Bunnify source on GitHub
