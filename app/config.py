@@ -455,7 +455,7 @@ def _offer_example_bookmarks(
     log(f"No bookmarks found at {target}.")
     try:
         answer = ask("Install the example bookmarks there? [Y/n]: ")
-    except (EOFError, click.Abort):
+    except EOFError, click.Abort:
         return False
     normalized = answer.strip().lower()
     if normalized in {"y", "yes"}:
