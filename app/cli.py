@@ -1132,6 +1132,10 @@ def main(
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))
 
     def prompt_fn(message: str) -> str:
+        # click.prompt turns EOF into ``default=""``; decline interactive prompts
+        # when stdin is closed so setup never silently seeds or accepts defaults.
+        if not sys.stdin.isatty():
+            raise EOFError
         return click.prompt(
             message.rstrip(": "),
             default="",

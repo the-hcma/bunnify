@@ -922,6 +922,41 @@ class ConfigUnitTests(TestCase):
             self.assertTrue(
                 any("No bookmarks found" in message for message in messages)
             )
+            self.assertTrue(
+                any("Installed example bookmarks" in message for message in messages)
+            )
+            self.assertTrue(
+                any("personalize" in message.lower() for message in messages)
+            )
+
+    def test_ensure_user_bookmarks_returns_existing_on_seed_race(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+
+            def create_then_raise(_dest: Path) -> Path:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('{"raced": true}\n', encoding="utf-8")
+                raise FileExistsError(str(target))
+
+            with patch(
+                "app.config.seed_bookmarks_from_example",
+                side_effect=create_then_raise,
+            ):
+                result = ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=lambda _prompt: "y",
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.read_text(encoding="utf-8"), '{"raced": true}\n')
 
     def test_ensure_user_bookmarks_declines_seed_when_prompt_rejected(self) -> None:
         import tempfile
