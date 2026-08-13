@@ -100,7 +100,7 @@ def running_command_path() -> Path:
     with ``shutil.which`` so PATH launches do not report ``$PWD/bunnify``.
     """
     argv0 = Path(sys.argv[0]).expanduser()
-    if not argv0.is_absolute() and not argv0.exists():
+    if not argv0.is_absolute():
         located = shutil.which(os.fspath(argv0))
         if located:
             argv0 = Path(located)

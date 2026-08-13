@@ -124,6 +124,22 @@ class BuildInfoTests(SimpleTestCase):
         which.assert_called_once_with("bunnify-on-path")
         self.assertEqual(shown, located)
 
+    def test_running_command_path_prefers_path_over_cwd_file(self) -> None:
+        located = Path("/Users/me/.local/bin/bunnify")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            cwd_file = Path(temporary_directory) / "bunnify"
+            cwd_file.write_text("not the CLI\n")
+            with (
+                mock.patch("app.version.sys.argv", ["bunnify"]),
+                mock.patch(
+                    "app.version.shutil.which",
+                    return_value=str(located),
+                ) as which,
+            ):
+                shown = running_command_path()
+        which.assert_called_once_with("bunnify")
+        self.assertEqual(shown, located)
+
 
 class CliVersionTests(SimpleTestCase):
     def test_version_uses_distribution_metadata(self) -> None:
