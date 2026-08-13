@@ -91,10 +91,15 @@ def package_version(*, pyproject_path: Path | None = None) -> str:
 
 
 def running_command_path() -> Path:
-    """Return the resolved path of the command that started this process."""
-    argv0 = Path(sys.argv[0])
+    """Return the path of the command that started this process.
+
+    The path is made absolute without following console-script symlinks so a
+    pipx or uv-tool install prints the PATH entry (``~/.local/bin/bunnify``)
+    rather than the venv target.
+    """
+    argv0 = Path(sys.argv[0]).expanduser()
     try:
-        return argv0.expanduser().resolve()
+        return argv0.absolute()
     except OSError:
         return argv0
 

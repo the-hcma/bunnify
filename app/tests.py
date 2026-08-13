@@ -26,6 +26,7 @@ from app.version import (
     get_build_info,
     git_commit,
     package_version,
+    running_command_path,
 )
 
 
@@ -98,6 +99,20 @@ class BuildInfoTests(SimpleTestCase):
             self.assertFalse(is_source_checkout(repository=root))
             (root / ".git").mkdir()
             self.assertTrue(is_source_checkout(repository=root))
+
+    def test_running_command_path_keeps_console_script_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            venv_binary = root / "pipx" / "venvs" / "bunnify" / "bin" / "bunnify"
+            venv_binary.parent.mkdir(parents=True)
+            venv_binary.write_text("#!/bin/sh\n")
+            shim = root / "bin" / "bunnify"
+            shim.parent.mkdir()
+            shim.symlink_to(venv_binary)
+            with mock.patch("app.version.sys.argv", [str(shim)]):
+                shown = running_command_path()
+            self.assertEqual(shown, shim.absolute())
+            self.assertNotEqual(shown, venv_binary.resolve())
 
 
 class CliVersionTests(SimpleTestCase):
