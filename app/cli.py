@@ -57,7 +57,13 @@ from app.interactive import (
 from app.local_server import ensure_local_server, port_is_free, stop_local_server
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
-from app.version import build_info, get_build_info
+from app.version import (
+    build_info,
+    build_version,
+    get_build_info,
+    is_source_checkout,
+    running_command_path,
+)
 
 BUILD_INFO = build_info()
 
@@ -207,9 +213,12 @@ def format_onboarding_text() -> str:
             "4. Try it:  bunnify gh   (or address-bar keyword, e.g. b gh)",
             "",
             "Upgrade later:",
-            "     pipx upgrade bunnify",
-            "     bunnify --version",
+            "     bunnify upgrade   # pipx upgrade, then show which binary you ran",
+            "     # or: pipx upgrade bunnify && command -v bunnify",
             "   Bookmarks and config.env are kept across upgrades.",
+            "   If --version still shows a checkout SHA, PATH is using",
+            "   ./scripts/bunnify or a repo .venv — the pipx app lives in",
+            "   ~/.local/bin/bunnify.",
             "",
             "Docs: https://github.com/the-hcma/bunnify",
             "Re-print this message anytime:  bunnify onboard",
@@ -279,6 +288,8 @@ def run_setup(
     existing = load_preferences(environ=environ, env_path=path)
 
     log(colors.header("Bunnify setup"))
+    log(colors.dim(build_version()))
+    log(colors.dim(f"running from {running_command_path()}"))
     log(colors.dim("Press Enter to accept the value in [brackets]."))
 
     while True:
@@ -405,6 +416,46 @@ def run_setup(
             + "Try another URL? [Y/n]: ",
         ):
             raise ClientError("Setup aborted; settings were not changed")
+
+
+def run_upgrade(
+    *,
+    print_fn: Callable[[str], None] | None = None,
+    pipx_bin: str | None = None,
+    run_fn: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> None:
+    """Upgrade the pipx install and explain which binary this process is."""
+    log = print_fn or click.echo
+    package, commit = get_build_info()
+    command_path = running_command_path()
+    log(f"This CLI is {package} ({commit})")
+    log(f"running from {command_path}")
+    if is_source_checkout():
+        log(
+            "This process is a git checkout, not the pipx app. "
+            "`pipx upgrade` updates ~/.local/bin/bunnify and will not change "
+            "this checkout's pyproject version or commit."
+        )
+        log("Verify the published install with:  command -v bunnify")
+
+    pipx = pipx_bin or shutil.which("pipx")
+    if pipx is None:
+        raise ClientError(
+            "pipx not found on PATH. Install pipx, then run: pipx upgrade bunnify"
+        )
+    runner = run_fn or subprocess.run
+    try:
+        completed = runner(
+            [pipx, "upgrade", "bunnify"],
+            check=False,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ClientError("Timed out running `pipx upgrade bunnify`") from exc
+    if completed.returncode != 0:
+        raise ClientError("pipx upgrade bunnify failed")
+    log("pipx upgrade finished. Re-run `bunnify --version` using ~/.local/bin/bunnify.")
 
 
 def matching_keys(keys: list[str], prefix: str) -> list[str]:
@@ -641,6 +692,12 @@ def _print_repl_help(theme: Theme) -> None:
     )
 
 
+def _echo_version() -> None:
+    """Print package version, commit, and the path of this process."""
+    click.echo(BUILD_INFO)
+    click.echo(f"running from {running_command_path()}")
+
+
 def _expand_query(
     query: str,
     *,
@@ -722,7 +779,7 @@ def _run_repl(
     entries = fetch_key_entries(base_url=base_url)
     keys = [entry.key for entry in entries]
     click.echo(
-        f"{theme.brand('bunnify')} "
+        f"{theme.brand('bunnify')} {theme.dim(build_version())} "
         f"{theme.dim('interactive — Tab fuzzy-completes; quit to exit')}"
     )
     click.echo(
@@ -983,13 +1040,27 @@ def _run(
     )
 
 
+def _print_cli_version(
+    ctx: click.Context,
+    _param: click.Parameter,
+    value: bool,
+) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    _echo_version()
+    ctx.exit()
+
+
 @click.command(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
-@click.version_option(
-    version=BUILD_INFO.removeprefix("bunnify "),
-    prog_name="bunnify",
-    message="%(prog)s %(version)s",
+@click.option(
+    "--version",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_print_cli_version,
+    help="Show the version and exit.",
 )
 @click.argument("shortcut_args", nargs=-1)
 @click.option(
@@ -1073,6 +1144,12 @@ def _run(
     is_flag=True,
     help="Configure a verified local or remote server (also: `bunnify setup`).",
 )
+@click.option(
+    "--upgrade",
+    "upgrade_requested",
+    is_flag=True,
+    help="Upgrade the pipx install (also: `bunnify upgrade`).",
+)
 def main(
     shortcut_args: tuple[str, ...],
     base_url_option: str | None,
@@ -1087,6 +1164,7 @@ def main(
     env_file: Path | None,
     onboard_requested: bool,
     setup_requested: bool,
+    upgrade_requested: bool,
 ) -> None:
     """
     Open a Bunnify shortcut in your default browser.
@@ -1116,13 +1194,18 @@ def main(
       ./scripts/bunnify --version
 
     \b
+    Upgrade the pipx install (`upgrade` is a reserved shortcut name):
+      bunnify upgrade
+      bunnify --upgrade
+
+    \b
     Fuzzy pick (fzf) for argv / shell completion workflows:
       ./scripts/bunnify --fzf
       ./scripts/bunnify --list-keys | fzf
       ./scripts/bunnify --list-usage
     """
     if shortcut_args == ("version",):
-        click.echo(BUILD_INFO)
+        _echo_version()
         return
 
     if onboard_requested or shortcut_args == ("onboard",):
@@ -1144,6 +1227,9 @@ def main(
         else default_edit_mode_from_environ()
     )
     try:
+        if upgrade_requested or shortcut_args == ("upgrade",):
+            run_upgrade()
+            return
         if setup_requested or shortcut_args == ("setup",):
             run_setup(
                 prompt_fn=prompt_fn,

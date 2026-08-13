@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tomllib
 from collections.abc import Mapping
 from functools import lru_cache
@@ -71,6 +72,12 @@ def git_commit(
     return result.stdout.strip() or "unknown"
 
 
+def is_source_checkout(*, repository: Path | None = None) -> bool:
+    """Return whether this process is running from a git checkout of bunnify."""
+    checkout = repository or Path(__file__).resolve().parents[1]
+    return (checkout / ".git").exists()
+
+
 def package_version(*, pyproject_path: Path | None = None) -> str:
     """Return the distribution version, with a source-checkout fallback."""
     embedded = getattr(_build_metadata, "EMBEDDED_VERSION", "")
@@ -81,6 +88,15 @@ def package_version(*, pyproject_path: Path | None = None) -> str:
     except PackageNotFoundError:
         path = pyproject_path or Path(__file__).resolve().parents[1] / "pyproject.toml"
         return _pyproject_version(path)
+
+
+def running_command_path() -> Path:
+    """Return the resolved path of the command that started this process."""
+    argv0 = Path(sys.argv[0])
+    try:
+        return argv0.expanduser().resolve()
+    except OSError:
+        return argv0
 
 
 def _normalize_commit(token: str) -> str:

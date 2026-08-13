@@ -90,19 +90,32 @@ class BuildInfoTests(SimpleTestCase):
                     "1.2.3",
                 )
 
+    def test_is_source_checkout_detects_git_dir(self) -> None:
+        from app.version import is_source_checkout
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.assertFalse(is_source_checkout(repository=root))
+            (root / ".git").mkdir()
+            self.assertTrue(is_source_checkout(repository=root))
+
 
 class CliVersionTests(SimpleTestCase):
     def test_version_uses_distribution_metadata(self) -> None:
         result = CliRunner().invoke(cli_main, ["--version"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.output, f"{build_info()}\n")
+        lines = result.output.splitlines()
+        self.assertEqual(lines[0], build_info())
+        self.assertTrue(lines[1].startswith("running from "))
 
     def test_version_command_prints_build_info(self) -> None:
         result = CliRunner().invoke(cli_main, ["version"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.output, f"{build_info()}\n")
+        lines = result.output.splitlines()
+        self.assertEqual(lines[0], build_info())
+        self.assertTrue(lines[1].startswith("running from "))
 
 
 class ConfigDataDirTests(SimpleTestCase):

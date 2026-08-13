@@ -1,8 +1,8 @@
 # Bunnify
 
 [![PyPI version](https://img.shields.io/pypi/v/bunnify.svg)](https://pypi.org/project/bunnify/)
-[![Python versions](https://img.shields.io/pypi/pyversions/bunnify.svg)](https://pypi.org/project/bunnify/)
-[![License](https://img.shields.io/pypi/l/bunnify.svg)](https://github.com/the-hcma/bunnify/blob/main/LICENSE)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://pypi.org/project/bunnify/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/the-hcma/bunnify/blob/main/LICENSE)
 [![CI](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml/badge.svg)](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml)
 
 A Python bookmark manager and URL shortcut system: terminal CLI, web command
@@ -59,10 +59,18 @@ Summary of what it covers:
 ### Upgrade
 
 ```bash
+bunnify upgrade          # pipx upgrade + show which binary you ran
+# or:
 pipx upgrade bunnify
+command -v bunnify       # should be ~/.local/bin/bunnify
 bunnify --version
-bunnify onboard    # refresh next-step reminders
+bunnify onboard          # refresh next-step reminders
 ```
+
+`pipx upgrade` only updates the pipx app. If `bunnify --version` still shows a
+git checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv` — that
+process is the checkout, not the 0.x.y wheel. Use `~/.local/bin/bunnify` (after
+`pipx ensurepath`) or `bunnify upgrade` which prints the path it ran from.
 
 Bookmarks and `~/.config/bunnify/config.env` are user data — upgrades do not
 overwrite them. After a major server change, re-run `bunnify setup` only if
