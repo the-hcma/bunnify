@@ -17,7 +17,7 @@ The **primary clone** at the repo root (first line of `git worktree list`) is th
 
 - File edits, dependency installs, tests, builds, linters, formatters
 - `dep-updater --dir <repo-root>` (fast-forwards the primary clone and changes git state)
-- `gt create` / `gt modify` / `gt submit` / `gt sync` / `gt restack` / commits / checkouts
+- `gh stack …` / commits / checkouts / other git write operations
 - Leaving uncommitted changes or stray branches
 
 ## Read-only on main is OK

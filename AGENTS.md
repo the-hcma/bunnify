@@ -8,7 +8,7 @@ This file defines the non-negotiable standards for all contributors (human or AI
 ## Session Startup & Cleanup
 
 - **Mandatory Action**: At the beginning of every session (before starting any task), run `~/work/ai/repository-helpers/scripts/dev/start-development` from [repository-helpers](https://github.com/the-hcma/repository-helpers).
-- This script cleans up merged worktrees, prunes stale metadata, and runs `gt sync --force` to keep your local environment synchronized with the remote.
+- This script cleans up merged worktrees, prunes stale metadata, and syncs via the stacking backend in `.github/stacking-tool` (`gh-stack` — `gh stack sync` / rebase as needed).
 - By default it prompts for a new stack name and creates a new worktree under `.worktrees/<stack-name>-wt` ready for work.
 - Non-interactive alternative: bypass the prompt by passing a worktree name:
   ```bash
@@ -26,7 +26,7 @@ The **primary clone** (repo root — first entry in `git worktree list`, usually
 - Edit, create, or delete source files, config, or lockfiles
 - Run `uv sync`, tests, builds, or formatters
 - Run `dep-updater` with `--dir` pointing at the primary clone (it may fast-forward `main` and mutate git state)
-- Run `gt create`, `gt modify`, `gt submit`, `gt sync`, `gt restack`, or other Graphite/git write operations
+- Run `gh stack …`, commits, checkouts, or other git write operations
 - Leave uncommitted changes, stray branches, or detached HEAD state
 
 **Always** do implementation, investigation that mutates state, and validation in a **stack worktree** under `.worktrees/<stack-name>-wt`. Pass that path to tools (`--dir`, `cd`, etc.).
@@ -73,17 +73,15 @@ The **primary clone** (repo root — first entry in `git worktree list`, usually
 
 ## Commits, Stacking & Pull Requests
 
-- This project uses **Graphite** (`gt`) for branch stacking.
-- **Worktree-per-Stack**: Every new stack/PR must be created in its own Git worktree to ensure isolation. Use `~/work/ai/repository-helpers/scripts/dev/start-development` from [repository-helpers](https://github.com/the-hcma/repository-helpers) — it handles worktree creation and Graphite tracking automatically.
-- All work is done in stacked branches via `gt create`, `gt modify`, and `gt submit`.
-- Never work directly on `main`. Always create a stack branch: `gt create -m "feat: description"`.
-- Submit stacks with `gt submit` — do not open PRs manually via the GitHub UI.
-- After submitting, mark PRs as ready for review: `gh pr ready <number>`. `gt submit --no-interactive` creates drafts by default.
-- To merge a PR, add the `merge-it` label: `gh pr edit <number> --add-label merge-it`. Never use `gh pr merge` directly.
-- **Always ask the user for confirmation before adding the `merge-it` label.** Adding it triggers the Graphite merge queue; it must not be applied without explicit user approval.
+- Stacking backend is **`gh-stack`** (see `.github/stacking-tool`). Do **not** use Graphite (`gt`) on this repo.
+- Full non-interactive reference: [gh-stack skill](https://github.com/the-hcma/repository-helpers/blob/main/.cursor/skills/gh-stack/SKILL.md) (or `${REPOSITORY_HELPERS_DIR:-$HOME/work/ai/repository-helpers}/.cursor/skills/gh-stack/SKILL.md`).
+- **Worktree-per-Stack**: Every new stack/PR must be created in its own Git worktree. Use `~/work/ai/repository-helpers/scripts/dev/start-development` from [repository-helpers](https://github.com/the-hcma/repository-helpers) — it creates the worktree and is marker-aware for `gh-stack`.
+- Never work directly on `main`. Create layers with `gh stack init <branch>` / `gh stack add <branch>`, then `git add` / `git commit` as usual.
+- Prefer **`scripts/dev/submit-stack`** from repository-helpers (runs pre-pr checks, then `gh stack submit --auto --open`). Agents must always pass `--auto` (and prefer `--open`) — never interactive `gh stack submit` / `gh stack view` without `--json`.
+- Merge path is **GitHub’s merge queue**: enable auto-merge with `gh pr merge --auto --squash` when the operator asks to merge. Do **not** use the leftover `merge-it` label. **Always ask the user before enabling auto-merge.**
 - Follow **Conventional Commits**: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`.
 - Keep commits focused. One logical change per commit.
-- **Always run the full local pre-PR checklist (see below) before calling `gt submit`.** Do not rely on CI to catch issues that can be caught locally.
+- **Always run the full local pre-PR checklist (see below) before submitting.** Do not rely on CI to catch issues that can be caught locally.
 
 ---
 
