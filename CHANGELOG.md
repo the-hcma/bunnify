@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.4.0...bunnify-v0.5.0) (2026-08-13)
+
+
+### Features
+
+* seed example bookmarks during setup and refresh docs ([#284](https://github.com/the-hcma/bunnify/issues/284)) ([36e08b0](https://github.com/the-hcma/bunnify/commit/36e08b0e8488d3c763360227186cd840bc39ce94))
+
+
+### Bug Fixes
+
+* wait for port free after managed server stop ([#282](https://github.com/the-hcma/bunnify/issues/282)) ([22a1b69](https://github.com/the-hcma/bunnify/commit/22a1b6958b6ef6a5222f6258cd27f8202bd79927))
+
 ## [0.4.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.3.0...bunnify-v0.4.0) (2026-08-12)
 
 
