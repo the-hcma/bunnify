@@ -11,6 +11,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Literal
 
+import click
+
 from app.client import DEFAULT_BASE_URL
 
 BOOKMARKS_ENV_VAR = "BUNNIFY_BOOKMARKS"
@@ -443,16 +445,17 @@ def _offer_example_bookmarks(
 ) -> bool:
     """Prompt whether to install example bookmarks at ``target``.
 
-    On a TTY, Enter accepts (default yes). On non-TTY stdin (pipes / closed
-    stdin), click may turn EOF into ``""`` — require an explicit ``y``/``yes``
-    so closed stdin does not silently seed while piped answers still work.
+    On a TTY, Enter accepts (default yes). On non-TTY stdin (pipes), require an
+    explicit ``y``/``yes``. ``click.prompt`` raises ``Abort`` on EOF (not
+    ``EOFError``); treat that like a decline so setup falls through to the
+    missing-bookmarks guidance instead of printing ``Aborted!``.
     """
     log = print_fn if print_fn is not None else print
     ask = prompt_fn or input
     log(f"No bookmarks found at {target}.")
     try:
         answer = ask("Install the example bookmarks there? [Y/n]: ")
-    except EOFError:
+    except (EOFError, click.Abort):
         return False
     normalized = answer.strip().lower()
     if normalized in {"y", "yes"}:

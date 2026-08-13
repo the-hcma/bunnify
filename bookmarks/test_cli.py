@@ -1008,6 +1008,29 @@ class ConfigUnitTests(TestCase):
                     )
             self.assertFalse(target.exists())
 
+    def test_ensure_user_bookmarks_declines_seed_on_click_abort(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import click
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+
+            def abort_prompt(_prompt: str) -> str:
+                raise click.Abort()
+
+            with self.assertRaises(FileNotFoundError):
+                ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=abort_prompt,
+                    print_fn=lambda _message: None,
+                )
+            self.assertFalse(target.exists())
+
     def test_seed_bookmarks_does_not_overwrite(self) -> None:
         import tempfile
         from pathlib import Path
