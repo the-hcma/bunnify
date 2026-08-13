@@ -929,6 +929,27 @@ class ConfigUnitTests(TestCase):
                 any("personalize" in message.lower() for message in messages)
             )
 
+    def test_ensure_user_bookmarks_falls_back_when_example_missing(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with patch("app.config.example_bookmarks_bytes", return_value=None):
+                with self.assertRaises(FileNotFoundError) as context:
+                    ensure_user_bookmarks(
+                        dest=target,
+                        allow_prompt=True,
+                        prompt_fn=lambda _prompt: "y",
+                        print_fn=lambda _message: None,
+                    )
+            self.assertIn("Create it manually", str(context.exception))
+            self.assertNotIn("No bookmarks example found", str(context.exception))
+            self.assertFalse(target.exists())
+
     def test_ensure_user_bookmarks_returns_existing_on_seed_race(self) -> None:
         import tempfile
         from pathlib import Path

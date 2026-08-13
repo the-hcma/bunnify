@@ -332,17 +332,21 @@ def ensure_user_bookmarks(
         except FileExistsError:
             # Another process created the file while we were prompting.
             return target
-        log = print_fn if print_fn is not None else print
-        log(f"Installed example bookmarks at {seeded}.")
-        log(
-            "Edit that file to personalize shortcuts; the local server watches "
-            "it and reloads automatically (CLI resolves via the server)."
-        )
-        log(
-            "In the interactive REPL, run `refresh` after edits to update "
-            "Tab completion."
-        )
-        return seeded
+        except FileNotFoundError:
+            # Example template missing; fall through to friendly guidance below.
+            pass
+        else:
+            log = print_fn if print_fn is not None else print
+            log(f"Installed example bookmarks at {seeded}.")
+            log(
+                "Edit that file to personalize shortcuts; the local server watches "
+                "it and reloads automatically (CLI resolves via the server)."
+            )
+            log(
+                "In the interactive REPL, run `refresh` after edits to update "
+                "Tab completion."
+            )
+            return seeded
 
     raise FileNotFoundError(
         "Bookmarks file not found: "
