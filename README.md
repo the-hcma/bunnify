@@ -58,23 +58,24 @@ Summary of what it covers:
 
 ### Upgrade
 
+Preferred:
+
 ```bash
-bunnify upgrade          # pipx upgrade + show which binary you ran
-# or:
-pipx upgrade bunnify
-command -v bunnify       # should be ~/.local/bin/bunnify
-bunnify --version
-bunnify onboard          # refresh next-step reminders
+bunnify upgrade
 ```
 
-`pipx upgrade` only updates the pipx app. If `bunnify --version` still shows a
-git checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv` — that
-process is the checkout, not the 0.x.y wheel. Use `~/.local/bin/bunnify` (after
-`pipx ensurepath`) or `bunnify upgrade` which prints the path it ran from.
+That prints the version/commit you are running **from**, the PyPI target, then
+the pipx app version/commit **to** after `pipx upgrade`. Use this instead of
+bare `pipx upgrade bunnify` so you can see when PATH is still a git checkout.
+
+`pipx upgrade` only updates `~/.local/bin/bunnify`. If `bunnify --version` still
+shows a checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv`.
+After `pipx ensurepath`, `command -v bunnify` should be `~/.local/bin/bunnify`.
 
 Bookmarks and `~/.config/bunnify/config.env` are user data — upgrades do not
 overwrite them. After a major server change, re-run `bunnify setup` only if
-docs or release notes say so.
+docs or release notes say so. Setup will offer to stop an older local server
+and start this CLI's build when the port is already in use.
 
 Source and docs: [github.com/the-hcma/bunnify](https://github.com/the-hcma/bunnify).
 

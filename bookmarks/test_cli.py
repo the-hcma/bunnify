@@ -1534,10 +1534,11 @@ class ConfigUnitTests(TestCase):
             self.assertEqual(result, "http://127.0.0.1:8000")
             stop_server.assert_called_once()
             self.assertEqual(stop_server.call_args.kwargs.get("port"), 8000)
+            self.assertTrue(stop_server.call_args.kwargs.get("replace_foreign_bunnify"))
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
             joined = "\n".join(messages)
             self.assertIn("already serving Bunnify 0.2.0 (oldoldoldold)", joined)
-            self.assertIn("differs from this CLI", joined)
+            self.assertIn("older than this CLI", joined)
             self.assertIn("Stopped previous server", joined)
 
     def test_setup_local_reports_stop_failure_when_port_stays_busy(self) -> None:
@@ -1588,7 +1589,9 @@ class ConfigUnitTests(TestCase):
             self.assertIn("Could not stop the managed server", joined)
             self.assertIn("still busy after stop", joined)
 
-    def test_setup_local_reuses_unmanaged_mismatched_server(self) -> None:
+    def test_setup_local_reuses_unmanaged_mismatched_server_when_declined(
+        self,
+    ) -> None:
         import tempfile
         from pathlib import Path
 
@@ -1622,8 +1625,59 @@ class ConfigUnitTests(TestCase):
             stop_server.assert_not_called()
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
             joined = "\n".join(messages)
-            self.assertIn("Not managed by this CLI run directory", joined)
-            self.assertIn("differs from this CLI", joined)
+            self.assertIn("older than this CLI", joined)
+            self.assertIn("Not recorded in this CLI run directory", joined)
+            self.assertIn("Reusing the running server", joined)
+
+    def test_setup_local_replaces_older_unmanaged_server_on_confirm(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+
+        remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
+        responses = iter(["local", "", "y"])
+        messages: list[str] = []
+        port_state = {"free": False}
+
+        def port_free(_port: int) -> bool:
+            return port_state["free"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ) as ensure_server,
+                patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", side_effect=port_free),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=lambda _pid_dir, **_kwargs: port_state.__setitem__(
+                        "free", True
+                    ),
+                ) as stop_server,
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 8000)
+            self.assertTrue(stop_server.call_args.kwargs.get("replace_foreign_bunnify"))
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            joined = "\n".join(messages)
+            self.assertIn("older than this CLI", joined)
+            self.assertIn("Stopped previous server", joined)
 
     def test_setup_local_normalizes_privileged_saved_port_default(self) -> None:
         import tempfile
@@ -1801,7 +1855,7 @@ class ConfigUnitTests(TestCase):
         self.assertIn("bunnify setup", result.output)
         self.assertIn("CHROME_SETUP.md", result.output)
         self.assertIn("bunnify upgrade", result.output)
-        self.assertIn("pipx upgrade bunnify", result.output)
+        self.assertIn("preferred", result.output.lower())
 
         flagged = CliRunner().invoke(main, ["--onboard"])
         self.assertEqual(flagged.exit_code, 0)
@@ -1809,6 +1863,7 @@ class ConfigUnitTests(TestCase):
 
     def test_upgrade_runs_pipx_and_explains_checkout(self) -> None:
         import subprocess
+        from pathlib import Path
         from unittest.mock import patch
 
         from app.cli import main
@@ -1822,13 +1877,23 @@ class ConfigUnitTests(TestCase):
         with (
             patch("app.cli.is_source_checkout", return_value=True),
             patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli._pypi_latest_version", return_value="0.5.0"),
+            patch(
+                "app.cli._pipx_bunnify_path",
+                return_value=Path("/Users/me/.local/bin/bunnify"),
+            ),
+            patch(
+                "app.cli._read_executable_build",
+                side_effect=["0.4.0 (oldoldoldold)", "0.5.0 (newnewnewnew)"],
+            ),
             patch("app.cli.subprocess.run", return_value=completed) as run,
         ):
             result = CliRunner().invoke(main, ["upgrade"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("This CLI is", result.output)
-        self.assertIn("running from", result.output)
+        self.assertIn("From: ", result.output)
+        self.assertIn("To:   0.5.0 (PyPI latest", result.output)
+        self.assertIn("To:   0.5.0 (newnewnewnew)", result.output)
         self.assertIn("git checkout", result.output)
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], ["/usr/bin/pipx", "upgrade", "bunnify"])

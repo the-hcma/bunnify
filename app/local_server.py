@@ -115,28 +115,37 @@ def stop_local_server(
     *,
     port: int | None = None,
     port_timeout_s: float = 15,
+    replace_foreign_bunnify: bool = False,
 ) -> None:
     """Stop the managed local server associated with ``pid_dir``.
 
     When ``port`` is set, wait until that port can be bound again before
     returning so callers can restart on the same port.
+
+    ``replace_foreign_bunnify`` also stops a Bunnify listener on ``port`` that
+    was started with a different ``--pid-dir`` (explicit setup replacement).
     """
     _validate_stop_port(port)
     _validate_port_timeout_s(port_timeout_s)
+    if replace_foreign_bunnify and port is None:
+        raise ValueError("replace_foreign_bunnify requires a port")
     # Worst case: SIGTERM+SIGKILL waits for pid and listener, then port wait.
     stop_timeout_s = max(60.0, port_timeout_s + 35)
+    command = [
+        sys.executable,
+        "-m",
+        "app.server_cli",
+        "--stop",
+        "--pid-dir",
+        str(pid_dir),
+        "--port-timeout",
+        str(port_timeout_s),
+    ]
+    if replace_foreign_bunnify and port is not None:
+        command.extend(["--replace-on-port", str(port)])
     try:
         completed = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "app.server_cli",
-                "--stop",
-                "--pid-dir",
-                str(pid_dir),
-                "--port-timeout",
-                str(port_timeout_s),
-            ],
+            command,
             capture_output=True,
             check=False,
             text=True,

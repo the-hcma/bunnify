@@ -34,6 +34,7 @@ class ServerOptions:
     pid_dir: Path
     port: int
     port_timeout_s: float
+    replace_on_port: int | None
     stop: bool
 
 
@@ -107,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--replace-on-port",
+        type=_port_value,
+        default=None,
+        help=(
+            "With --stop, also SIGTERM a Bunnify listener on this port even if "
+            "it was started with a different --pid-dir."
+        ),
+    )
+    parser.add_argument(
         "--stop",
         action="store_true",
         help="Stop the server identified by files under --pid-dir.",
@@ -127,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         return _stop_managed_server(
             options.pid_dir,
             port_timeout_s=options.port_timeout_s,
+            replace_on_port=options.replace_on_port,
         )
 
     try:
@@ -294,6 +305,7 @@ def _parse_options(argv: list[str] | None) -> ServerOptions:
         pid_dir=(namespace.pid_dir or run_dir()).expanduser(),
         port=namespace.port,
         port_timeout_s=float(namespace.port_timeout),
+        replace_on_port=namespace.replace_on_port,
         stop=bool(namespace.stop),
     )
 
@@ -556,11 +568,14 @@ def _stop_managed_server(
     *,
     quiet: bool = False,
     port_timeout_s: float = 15,
+    replace_on_port: int | None = None,
 ) -> int:
     """SIGTERM the managed server, wait for exit, then confirm its port is free."""
     pid_file, port_file, _watcher_pid_file = _pid_paths(pid_dir)
     pid = _read_pid(pid_file)
     port = _read_port(port_file)
+    if replace_on_port is not None:
+        port = replace_on_port
     if pid == os.getpid():
         return 0
 
@@ -579,20 +594,25 @@ def _stop_managed_server(
                         f"Refusing to stop unrelated process {pid}; "
                         "removed stale PID files."
                     )
-            return 0
-        if port is None:
-            command = _process_command(pid)
-            if command is not None:
-                port = _port_from_command(command)
-        _terminate_pid(pid)
-        signaled_pids.append(pid)
+            pid = None
+            if replace_on_port is None:
+                return 0
+        else:
+            if port is None:
+                command = _process_command(pid)
+                if command is not None:
+                    port = _port_from_command(command)
+            _terminate_pid(pid)
+            signaled_pids.append(pid)
 
     if port is not None and not _port_is_free(port):
         for listener_pid in _listener_pids(port):
             if listener_pid == os.getpid() or listener_pid in signaled_pids:
                 continue
-            if not _process_managed_by_pid_dir(listener_pid, pid_dir):
-                continue
+            managed = _process_managed_by_pid_dir(listener_pid, pid_dir)
+            if not managed:
+                if replace_on_port is None or not _is_bunnify_process(listener_pid):
+                    continue
             _terminate_pid(listener_pid)
             signaled_pids.append(listener_pid)
 
