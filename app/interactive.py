@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple
@@ -361,27 +360,22 @@ class _FuzzyMatch(NamedTuple):
 
 
 def _best_fuzzy_match(needle: str, haystack: str) -> tuple[int, int] | None:
-    """Best prompt_toolkit-style subsequence match: ``(match_length, start_pos)``.
+    """Best case-insensitive contiguous substring: ``(match_length, start_pos)``.
 
-    Matching is case-insensitive (``str.casefold``); positions refer to the
-    original ``haystack`` (ASCII-safe; same approach as prompt_toolkit's
-    ``re.IGNORECASE`` fuzzy completer).
+    Positions refer to the original ``haystack`` (ASCII-safe). Scattered
+    subsequence matches such as ``p…o…r…t…u`` across a long description are
+    not accepted.
     """
     if not needle:
         return 0, 0
     if not haystack:
         return None
-    # Casefold both sides so "Translate" matches "Google Translate …".
     folded_needle = needle.casefold()
     folded_haystack = haystack.casefold()
-    pat = ".*?".join(map(re.escape, folded_needle))
-    pat = f"(?=({pat}))"
-    regex = re.compile(pat)
-    matches = list(regex.finditer(folded_haystack))
-    if not matches:
+    start = folded_haystack.find(folded_needle)
+    if start < 0:
         return None
-    best = min(matches, key=lambda match: (match.start(), len(match.group(1))))
-    return len(best.group(1)), best.start()
+    return len(folded_needle), start
 
 
 def _fuzzy_highlight_display(
@@ -391,7 +385,7 @@ def _fuzzy_highlight_display(
     start_pos: int,
     needle: str,
 ) -> AnyFormattedText:
-    """Highlight subsequence matches on a completion label (prompt_toolkit parity)."""
+    """Highlight a contiguous substring match on a completion label."""
     if match_length == 0:
         return word
 
@@ -409,11 +403,11 @@ def _fuzzy_highlight_display(
 
 
 class FirstTokenFuzzyCompleter(Completer):
-    """Fuzzy-match the first token against shortcut keys *and* descriptions.
+    """Match the first token as a substring of shortcut keys *and* descriptions.
 
-    Matching is case-insensitive. Offered completions always insert/display the
-    command key (or meta name); descriptions are used only for matching and
-    ranking.
+    Matching is case-insensitive and contiguous (the typed text must appear as
+    a single span). Offered completions always insert/display the command key
+    (or meta name); descriptions are used only for matching and ranking.
     """
 
     def __init__(self, inner: ShortcutCompleter) -> None:
