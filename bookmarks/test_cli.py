@@ -1847,6 +1847,99 @@ class ConfigUnitTests(TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("pipx not found", result.output)
 
+    def test_stop_ignores_out_of_range_port_file(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import main
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            run_dir,
+            save_preferences,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_home = Path(tmp) / "config"
+            data_home = Path(tmp) / "data"
+            env_path = config_home / "bunnify" / "config.env"
+            env_path.parent.mkdir(parents=True)
+            isolated = {
+                "XDG_CONFIG_HOME": str(config_home),
+                "XDG_DATA_HOME": str(data_home),
+            }
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=env_path,
+                environ=isolated,
+            )
+            port_file = run_dir(environ=isolated) / LOCAL_PORT_FILE_NAME
+            port_file.write_text("0\n", encoding="utf-8")
+            with (
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.stop_local_server") as stop_server,
+            ):
+                result = CliRunner().invoke(
+                    main,
+                    ["stop", "--env-file", str(env_path)],
+                    env=isolated,
+                )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+
+    def test_stop_prefers_runtime_port_file_over_config(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import main
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            run_dir,
+            save_preferences,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_home = Path(tmp) / "config"
+            data_home = Path(tmp) / "data"
+            env_path = config_home / "bunnify" / "config.env"
+            env_path.parent.mkdir(parents=True)
+            isolated = {
+                "XDG_CONFIG_HOME": str(config_home),
+                "XDG_DATA_HOME": str(data_home),
+            }
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=env_path,
+                environ=isolated,
+            )
+            port_file = run_dir(environ=isolated) / LOCAL_PORT_FILE_NAME
+            port_file.write_text("9000\n", encoding="utf-8")
+            with (
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.stop_local_server") as stop_server,
+            ):
+                result = CliRunner().invoke(
+                    main,
+                    ["stop", "--env-file", str(env_path)],
+                    env=isolated,
+                )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("http://127.0.0.1:9000", result.output)
+        self.assertEqual(stop_server.call_args.kwargs.get("port"), 9000)
+
     def test_stop_prints_url_and_stops_managed_server(self) -> None:
         import tempfile
         from pathlib import Path
@@ -1856,9 +1949,14 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            config_home = Path(tmp)
+            config_home = Path(tmp) / "config"
+            data_home = Path(tmp) / "data"
             env_path = config_home / "bunnify" / "config.env"
             env_path.parent.mkdir(parents=True)
+            isolated = {
+                "XDG_CONFIG_HOME": str(config_home),
+                "XDG_DATA_HOME": str(data_home),
+            }
             save_preferences(
                 ServerPreferences(
                     mode="local",
@@ -1866,20 +1964,17 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=env_path,
+                environ=isolated,
             )
             healthy = _healthy_status(version="0.5.0", commit="abc123456789")
             with (
                 patch("app.cli.fetch_health", return_value=healthy),
                 patch("app.cli.stop_local_server") as stop_server,
-                patch(
-                    "app.cli.run_dir",
-                    return_value=Path(tmp) / "run",
-                ),
             ):
                 result = CliRunner().invoke(
                     main,
                     ["stop", "--env-file", str(env_path)],
-                    env={"XDG_CONFIG_HOME": str(config_home)},
+                    env=isolated,
                 )
 
         self.assertEqual(result.exit_code, 0, result.output)

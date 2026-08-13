@@ -437,11 +437,9 @@ def run_stop(
             "the remote host yourself."
         )
     pid_dir = run_dir(environ=environ)
-    port = None
-    if preferences is not None and preferences.local_port is not None:
+    port = _managed_local_port(pid_dir)
+    if port is None and preferences is not None:
         port = preferences.local_port
-    if port is None:
-        port = _managed_local_port(pid_dir)
     if port is None:
         raise ClientError(
             "No local Bunnify server is recorded. Start one with `bunnify setup`."
@@ -557,9 +555,12 @@ def _format_running_build(health: HealthStatus) -> str:
 def _managed_local_port(pid_dir: Path) -> int | None:
     """Return the port recorded for this CLI run dir, if any."""
     try:
-        return int((pid_dir / LOCAL_PORT_FILE_NAME).read_text(encoding="utf-8").strip())
+        port = int((pid_dir / LOCAL_PORT_FILE_NAME).read_text(encoding="utf-8").strip())
     except OSError, ValueError:
         return None
+    if not 1 <= port <= 65535:
+        return None
+    return port
 
 
 def _offer_restart_mismatched_server(
