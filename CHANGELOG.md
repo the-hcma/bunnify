@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.6.0...bunnify-v0.6.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* match REPL Tab completions as contiguous substrings ([#295](https://github.com/the-hcma/bunnify/issues/295)) ([c5d812a](https://github.com/the-hcma/bunnify/commit/c5d812a74441c14e0ef39928459d20c28fa04fbe))
+
 ## [0.6.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.5.0...bunnify-v0.6.0) (2026-08-13)
 
 
