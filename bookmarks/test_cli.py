@@ -1680,6 +1680,58 @@ class ConfigUnitTests(TestCase):
             self.assertIn("older than this CLI", joined)
             self.assertIn("Stopped previous server", joined)
 
+    def test_setup_local_discloses_stopping_managed_server_on_other_port(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import LOCAL_PORT_FILE_NAME, run_dir
+
+        remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
+        responses = iter(["local", "", "y"])
+        messages: list[str] = []
+        port_state = {"free": False}
+
+        def port_free(_port: int) -> bool:
+            return port_state["free"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            managed = run_dir(environ=environ)
+            managed.mkdir(parents=True, exist_ok=True)
+            (managed / LOCAL_PORT_FILE_NAME).write_text("8123\n", encoding="utf-8")
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ),
+                patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", side_effect=port_free),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=lambda _pid_dir, **_kwargs: port_state.__setitem__(
+                        "free", True
+                    ),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            joined = "\n".join(messages)
+            self.assertIn("managed server on port 8123 will also be stopped", joined)
+
     def test_setup_local_normalizes_privileged_saved_port_default(self) -> None:
         import tempfile
         from pathlib import Path

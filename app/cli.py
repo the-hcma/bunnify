@@ -644,13 +644,20 @@ def _offer_restart_mismatched_server(
     else:
         print_fn(theme.warn(f"Running build differs from this CLI ({local_label})."))
         prompt = f"Restart with this CLI ({local_label}) on port {port}? [y/N]: "
-    if _managed_local_port(pid_dir) != port:
+    managed = _managed_local_port(pid_dir)
+    if managed != port:
         print_fn(
             theme.warn(
                 "Not recorded in this CLI run directory; confirming will stop "
                 "the Bunnify process listening on that port."
             )
         )
+        if managed is not None:
+            print_fn(
+                theme.warn(
+                    f"This CLI's managed server on port {managed} will also be stopped."
+                )
+            )
     if not _confirm_explicit_yes(prompt_fn, prompt):
         print_fn(theme.dim(f"Reusing the running server ({running_label})."))
         return port
