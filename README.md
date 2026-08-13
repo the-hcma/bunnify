@@ -1,4 +1,9 @@
-# Bunnify 🐰
+# Bunnify
+
+[![PyPI version](https://img.shields.io/pypi/v/bunnify.svg)](https://pypi.org/project/bunnify/)
+[![Python versions](https://img.shields.io/pypi/pyversions/bunnify.svg)](https://pypi.org/project/bunnify/)
+[![License](https://img.shields.io/pypi/l/bunnify.svg)](https://github.com/the-hcma/bunnify/blob/main/LICENSE)
+[![CI](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml/badge.svg)](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml)
 
 A Python bookmark manager and URL shortcut system: terminal CLI, web command
 palette, Chrome OpenSearch integration, and parameterized redirects.
@@ -22,6 +27,8 @@ running either command. Prefer the pipx apps over any checkout
 The wheel installs **`bunnify`** (CLI) and **`bunnify-server`** (Django
 server). No repository checkout or `uv` is required at runtime.
 
+Package on PyPI: [pypi.org/project/bunnify](https://pypi.org/project/bunnify/).
+
 ### After install or upgrade
 
 pipx does not print package docs after install. Run:
@@ -40,7 +47,8 @@ bunnify --onboard
 Summary of what it covers:
 
 1. **Bookmarks** at `~/.config/bunnify/bookmarks.json` (required before the
-   server starts) — seed from
+   server starts) — `bunnify setup` can install the example shortcuts, or seed
+   from
    [bunnify.json.example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
 2. **`bunnify setup`** — local on a laptop; remote for a home/always-on host  
    [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md)
@@ -64,10 +72,12 @@ Source and docs: [github.com/the-hcma/bunnify](https://github.com/the-hcma/bunni
 
 ## Quick start
 
-### 1. Create your bookmarks file
+### 1. Bookmarks file
 
-Download the [documented example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
-into XDG config (required before the server starts):
+`bunnify setup` offers to install the example bookmarks when none exist yet.
+You can also create the file yourself from the
+[documented example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
+into XDG config:
 
 ```bash
 mkdir -p ~/.config/bunnify
@@ -105,6 +115,7 @@ Details:
 ```bash
 bunnify              # interactive REPL (Tab completion, history)
 bunnify gh           # open a shortcut in the browser
+bunnify bun          # Bunnify source on GitHub
 bunnify pr the-hcma/bunnify 272   # parameterized shortcut
 bunnify --fzf        # fuzzy picker
 bunnify --print-url gh
@@ -119,7 +130,6 @@ Unknown keys exit non-zero in direct mode (no search-engine fallback).
 - **Chrome / Edge** — OpenSearch at `/opensearch.xml`
   ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
 - **Parameters** — URLs with `#{name}` placeholders and optional defaults
-- **Copilot reviews** — `rpr` shortcut streams in-app PR reviews
 - **Validation** — JSON Schema on load; reserved keys `h` / `help`
 
 ## Server lifecycle
@@ -184,7 +194,7 @@ Reload after edits: the server watches the JSON file, or run
 Contributors clone the repo and use `uv` — separate from the pipx path above.
 
 ```bash
-git clone https://github.com/thehcma/bunnify.git
+git clone https://github.com/the-hcma/bunnify.git
 cd bunnify
 uv sync
 uv run python manage.py migrate
@@ -228,7 +238,7 @@ bunnify-server --console --log-level DEBUG
 
 ```bash
 ls -l ~/.config/bunnify/bookmarks.json
-# create from bunnify.json.example if absent — see Quick start
+# run `bunnify setup` (offers the example), or copy bunnify.json.example
 ```
 
 **CLI can't reach server**

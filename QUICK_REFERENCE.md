@@ -1,14 +1,17 @@
 # ⚡ Quick reference
 
 Assumes `pipx install bunnify`, `pipx ensurepath` (so `~/.local/bin` is on
-`PATH`), a seeded `~/.config/bunnify/bookmarks.json`, and a completed
-`bunnify --setup`. Prefer **local** mode on a laptop; use **remote** for a
+`PATH`), bookmarks at `~/.config/bunnify/bookmarks.json` (install via
+`bunnify setup` or from `bunnify.json.example`), and a completed
+`bunnify setup`. Prefer **local** mode on a laptop; use **remote** for a
 home-server install. Your base URL is in `~/.config/bunnify/config.env` as
 `BUNNIFY_BASE_URL` — Chrome must use the same URL.
 
 ## Bookmarks file
 
 ```bash
+bunnify setup   # offers to install example bookmarks when missing
+# or:
 mkdir -p ~/.config/bunnify
 curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.example \
   -o ~/.config/bunnify/bookmarks.json
@@ -19,8 +22,9 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 ```bash
 bunnify                         # interactive REPL
 bunnify onboard                 # post-install / upgrade checklist
-bunnify --setup                 # configure local or remote server
+bunnify setup                   # configure local or remote server
 bunnify gh                      # open a shortcut (example key from bunnify.json.example)
+bunnify bun                     # Bunnify source on GitHub
 bunnify pr the-hcma/bunnify 272 # parameterized shortcut (repo + PR number)
 bunnify --fzf                   # fuzzy-pick a shortcut (requires fzf on PATH)
 bunnify --print-url gh          # print resolved URL instead of opening browser

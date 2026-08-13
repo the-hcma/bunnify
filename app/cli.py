@@ -191,13 +191,9 @@ def format_onboarding_text() -> str:
         [
             "Bunnify — next steps after install or upgrade",
             "",
-            "1. Create your bookmarks file (required before the server starts):",
-            f"     mkdir -p {bookmarks.parent}",
-            "     curl -fsSL \\",
-            "       https://raw.githubusercontent.com/the-hcma/bunnify/"
-            "main/bunnify.json.example \\",
-            f"       -o {bookmarks}",
-            f"     # edit {bookmarks}",
+            "1. Bookmarks (required before the server starts):",
+            "     bunnify setup   # offers to install the example shortcuts",
+            f"     # or create {bookmarks} yourself from bunnify.json.example",
             "",
             "2. Configure and start the server (local on a laptop; remote for a",
             "   home/always-on host):",

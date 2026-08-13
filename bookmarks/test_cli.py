@@ -891,6 +891,166 @@ class ConfigUnitTests(TestCase):
                 ensure_user_bookmarks(dest=target, allow_prompt=False)
 
             self.assertIn("Create it manually", str(context.exception))
+            self.assertIn("bunnify setup", str(context.exception))
+
+    def test_ensure_user_bookmarks_seeds_when_prompt_accepted(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        messages: list[str] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            result = ensure_user_bookmarks(
+                dest=target,
+                allow_prompt=True,
+                prompt_fn=lambda _prompt: "y",
+                print_fn=messages.append,
+            )
+
+            self.assertEqual(result, target)
+            self.assertTrue(target.is_file())
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            self.assertIn("bun", payload)
+            self.assertIn("gh", payload)
+            self.assertIn("yt", payload)
+            self.assertNotIn("ih", payload)
+            self.assertNotIn("ihh", payload)
+            self.assertTrue(
+                any("No bookmarks found" in message for message in messages)
+            )
+            self.assertTrue(
+                any("Installed example bookmarks" in message for message in messages)
+            )
+            self.assertTrue(
+                any("personalize" in message.lower() for message in messages)
+            )
+
+    def test_ensure_user_bookmarks_falls_back_when_example_missing(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with patch("app.config.example_bookmarks_bytes", return_value=None):
+                with self.assertRaises(FileNotFoundError) as context:
+                    ensure_user_bookmarks(
+                        dest=target,
+                        allow_prompt=True,
+                        prompt_fn=lambda _prompt: "y",
+                        print_fn=lambda _message: None,
+                    )
+            self.assertIn("Create it manually", str(context.exception))
+            self.assertNotIn("No bookmarks example found", str(context.exception))
+            self.assertFalse(target.exists())
+
+    def test_ensure_user_bookmarks_returns_existing_on_seed_race(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+
+            def create_then_raise(_dest: Path) -> Path:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('{"raced": true}\n', encoding="utf-8")
+                raise FileExistsError(str(target))
+
+            with patch(
+                "app.config.seed_bookmarks_from_example",
+                side_effect=create_then_raise,
+            ):
+                result = ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=lambda _prompt: "y",
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.read_text(encoding="utf-8"), '{"raced": true}\n')
+
+    def test_ensure_user_bookmarks_declines_seed_when_prompt_rejected(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with self.assertRaises(FileNotFoundError):
+                ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=lambda _prompt: "n",
+                    print_fn=lambda _message: None,
+                )
+            self.assertFalse(target.exists())
+
+    def test_ensure_user_bookmarks_empty_enter_seeds_only_on_tty(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with patch("app.config.sys.stdin") as stdin:
+                stdin.isatty.return_value = True
+                result = ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=lambda _prompt: "",
+                    print_fn=lambda _message: None,
+                )
+            self.assertEqual(result, target)
+            self.assertTrue(target.is_file())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with patch("app.config.sys.stdin") as stdin:
+                stdin.isatty.return_value = False
+                with self.assertRaises(FileNotFoundError):
+                    ensure_user_bookmarks(
+                        dest=target,
+                        allow_prompt=True,
+                        prompt_fn=lambda _prompt: "",
+                        print_fn=lambda _message: None,
+                    )
+            self.assertFalse(target.exists())
+
+    def test_ensure_user_bookmarks_declines_seed_on_click_abort(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import click
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+
+            def abort_prompt(_prompt: str) -> str:
+                raise click.Abort()
+
+            with self.assertRaises(FileNotFoundError):
+                ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=abort_prompt,
+                    print_fn=lambda _message: None,
+                )
+            self.assertFalse(target.exists())
 
     def test_seed_bookmarks_does_not_overwrite(self) -> None:
         import tempfile

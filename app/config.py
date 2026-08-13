@@ -11,6 +11,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Literal
 
+import click
+
 from app.client import DEFAULT_BASE_URL
 
 BOOKMARKS_ENV_VAR = "BUNNIFY_BOOKMARKS"
@@ -309,11 +311,43 @@ def ensure_user_bookmarks(
     allow_prompt: bool | None = None,
     print_fn: Callable[[str], None] | None = None,
 ) -> Path:
-    """Return the user bookmarks file path, or raise when it is missing."""
-    _ = legacy, prompt_fn, allow_prompt, print_fn
+    """Return the user bookmarks file path, or raise when it is missing.
+
+    When the file is absent and prompting is allowed, offer to install the
+    packaged example bookmarks at the default path (used by ``bunnify setup``).
+    """
+    _ = legacy
     target = dest if dest is not None else default_bookmarks_path(environ=environ)
     if target.is_file():
         return target
+
+    should_prompt = allow_prompt if allow_prompt is not None else sys.stdin.isatty()
+    if should_prompt and _offer_example_bookmarks(
+        target,
+        prompt_fn=prompt_fn,
+        print_fn=print_fn,
+    ):
+        try:
+            seeded = seed_bookmarks_from_example(target)
+        except FileExistsError:
+            # Another process created the file while we were prompting.
+            return target
+        except FileNotFoundError:
+            # Example template missing; fall through to friendly guidance below.
+            pass
+        else:
+            log = print_fn if print_fn is not None else print
+            log(f"Installed example bookmarks at {seeded}.")
+            log(
+                "Edit that file to personalize shortcuts; the local server watches "
+                "it and reloads automatically (CLI resolves via the server)."
+            )
+            log(
+                "In the interactive REPL, run `refresh` after edits to update "
+                "Tab completion."
+            )
+            return seeded
+
     raise FileNotFoundError(
         "Bookmarks file not found: "
         f"{target}\n"
@@ -322,6 +356,7 @@ def ensure_user_bookmarks(
         "  curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/"
         "bunnify.json.example \\\n"
         f"    -o {target}\n"
+        "Or run `bunnify setup` and accept installing the example bookmarks.\n"
         "Or set BUNNIFY_BOOKMARKS to an existing file path.\n"
         "Full checklist: bunnify onboard"
     )
@@ -404,3 +439,31 @@ def _env_line_pattern(key: str) -> re.Pattern[str]:
         rf"^[^\S\r\n]*{re.escape(key)}[^\S\r\n]*=[^\S\r\n]*(.*)$",
         re.MULTILINE,
     )
+
+
+def _offer_example_bookmarks(
+    target: Path,
+    *,
+    prompt_fn: Callable[[str], str] | None,
+    print_fn: Callable[[str], None] | None,
+) -> bool:
+    """Prompt whether to install example bookmarks at ``target``.
+
+    On a TTY, Enter accepts (default yes). On non-TTY stdin (pipes), require an
+    explicit ``y``/``yes``. ``click.prompt`` raises ``Abort`` on EOF (not
+    ``EOFError``); treat that like a decline so setup falls through to the
+    missing-bookmarks guidance instead of printing ``Aborted!``.
+    """
+    log = print_fn if print_fn is not None else print
+    ask = prompt_fn or input
+    log(f"No bookmarks found at {target}.")
+    try:
+        answer = ask("Install the example bookmarks there? [Y/n]: ")
+    except EOFError, click.Abort:
+        return False
+    normalized = answer.strip().lower()
+    if normalized in {"y", "yes"}:
+        return True
+    if normalized == "" and sys.stdin.isatty():
+        return True
+    return False
