@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.5.0...bunnify-v0.6.0) (2026-08-13)
+
+
+### Features
+
+* add bunnify stop for the managed local server ([#290](https://github.com/the-hcma/bunnify/issues/290)) ([95ca0c2](https://github.com/the-hcma/bunnify/commit/95ca0c21988fd6147cc4a7e8e0fbbfa73eb465c2))
+* compare upgrade from/to builds and replace older local servers ([#292](https://github.com/the-hcma/bunnify/issues/292)) ([95c84a8](https://github.com/the-hcma/bunnify/commit/95c84a8061c74fd0583f22ba2f0911ddea81bb52))
+* show build identity on setup, REPL, and pipx upgrade ([#289](https://github.com/the-hcma/bunnify/issues/289)) ([a9c6923](https://github.com/the-hcma/bunnify/commit/a9c6923475d0297dc4c739607dbf5a4337e23734))
+
 ## [0.5.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.4.0...bunnify-v0.5.0) (2026-08-13)
 
 
