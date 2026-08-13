@@ -20,8 +20,8 @@ These files are user data and are not tracked by Git.
 ## Setup
 
 When `bookmarks.json` is missing, interactive `bunnify setup` (and other
-prompting CLI paths) offer to install the example bookmarks in the correct
-location. Decline that prompt if you prefer to create the file yourself:
+prompting CLI paths) offer to install the example bookmarks. Decline that
+prompt if you prefer to create the file yourself:
 
 ```bash
 mkdir -p ~/.config/bunnify
@@ -32,8 +32,12 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 In a development checkout you can instead `cp bunnify.json.example` from the
 repo root.
 
-Non-interactive starts (`bunnify-server --noninteractive`, CI, etc.) never
-seed automatically — create the file first.
+After install, edit that file directly to personalize shortcuts. The managed
+local server watches the bookmarks file and reloads on change
+(`watch_bookmarks`). The CLI resolves shortcuts through the server, so edits
+apply once the watcher reloads; in the interactive REPL run `refresh` to update
+Tab completion. Non-interactive starts (`bunnify-server --noninteractive`, CI,
+etc.) never seed automatically — create the file first.
 
 Run `bunnify setup` to write verified settings. Existing base-URL-only files
 remain supported; they are interpreted as remote mode.
