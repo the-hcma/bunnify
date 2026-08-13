@@ -907,7 +907,7 @@ class ConfigUnitTests(TestCase):
             result = ensure_user_bookmarks(
                 dest=target,
                 allow_prompt=True,
-                prompt_fn=lambda _prompt: "",
+                prompt_fn=lambda _prompt: "y",
                 print_fn=messages.append,
             )
 
@@ -973,6 +973,39 @@ class ConfigUnitTests(TestCase):
                     prompt_fn=lambda _prompt: "n",
                     print_fn=lambda _message: None,
                 )
+            self.assertFalse(target.exists())
+
+    def test_ensure_user_bookmarks_empty_enter_seeds_only_on_tty(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with patch("app.config.sys.stdin") as stdin:
+                stdin.isatty.return_value = True
+                result = ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=lambda _prompt: "",
+                    print_fn=lambda _message: None,
+                )
+            self.assertEqual(result, target)
+            self.assertTrue(target.is_file())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with patch("app.config.sys.stdin") as stdin:
+                stdin.isatty.return_value = False
+                with self.assertRaises(FileNotFoundError):
+                    ensure_user_bookmarks(
+                        dest=target,
+                        allow_prompt=True,
+                        prompt_fn=lambda _prompt: "",
+                        print_fn=lambda _message: None,
+                    )
             self.assertFalse(target.exists())
 
     def test_seed_bookmarks_does_not_overwrite(self) -> None:
