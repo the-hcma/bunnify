@@ -131,6 +131,8 @@ def stop_local_server(
                 "--stop",
                 "--pid-dir",
                 str(pid_dir),
+                "--port-timeout",
+                str(port_timeout_s),
             ],
             capture_output=True,
             check=False,

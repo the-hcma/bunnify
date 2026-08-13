@@ -161,6 +161,24 @@ class LocalServerTests(SimpleTestCase):
 
     @mock.patch("app.local_server.wait_for_port_free", return_value=True)
     @mock.patch("app.local_server.subprocess.run")
+    def test_stop_passes_port_timeout_to_server_cli(
+        self,
+        run: mock.Mock,
+        wait_for_port: mock.Mock,
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pid_dir = Path(temporary_directory)
+
+            stop_local_server(pid_dir, port=8123, port_timeout_s=1.5)
+
+        command = run.call_args.args[0]
+        self.assertIn("--port-timeout", command)
+        self.assertEqual(command[command.index("--port-timeout") + 1], "1.5")
+        wait_for_port.assert_called_once_with(8123, timeout_s=1.5)
+
+    @mock.patch("app.local_server.wait_for_port_free", return_value=True)
+    @mock.patch("app.local_server.subprocess.run")
     def test_stop_waits_for_requested_port(
         self,
         run: mock.Mock,
@@ -261,9 +279,17 @@ class ServerStopTests(SimpleTestCase):
                     mock.patch(
                         "app.server_cli._wait_for_port_free",
                         return_value=False,
-                    ),
+                    ) as wait_for_port,
                 ):
-                    self.assertEqual(_stop_managed_server(pid_dir, quiet=False), 1)
+                    self.assertEqual(
+                        _stop_managed_server(
+                            pid_dir,
+                            quiet=False,
+                            port_timeout_s=0.25,
+                        ),
+                        1,
+                    )
+                wait_for_port.assert_called_once_with(port, timeout_s=0.25)
 
     def test_quiet_stop_skips_wait_when_nothing_signaled(self) -> None:
         from app.server_cli import _stop_managed_server
