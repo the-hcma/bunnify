@@ -2351,6 +2351,17 @@ class ConfigUnitTests(TestCase):
         )
         self.assertEqual([c.text for c in completions], ["gtrp"])
 
+    def test_fuzzy_match_indices_use_original_haystack(self) -> None:
+        from app.interactive import _best_fuzzy_match
+
+        matched = _best_fuzzy_match("PORTU", "…Portuguese…")
+        self.assertIsNotNone(matched)
+        assert matched is not None
+        match_length, start_pos = matched
+        self.assertEqual(start_pos, 1)
+        self.assertEqual(match_length, 5)
+        self.assertEqual("…Portuguese…"[start_pos : start_pos + match_length], "Portu")
+
     @patch("app.cli.fetch_key_entries")
     def test_interactive_refresh_updates_keys(self, mock_fetch_entries) -> None:
         mock_fetch_entries.side_effect = [

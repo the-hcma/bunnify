@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple
@@ -18,7 +19,7 @@ from prompt_toolkit.completion import (
 )
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import EditingMode
-from prompt_toolkit.formatted_text import AnyFormattedText, StyleAndTextTuples
+from prompt_toolkit.formatted_text import AnyFormattedText
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 
 from app.client import ClientError, KeyEntry
@@ -362,7 +363,8 @@ class _FuzzyMatch(NamedTuple):
 def _best_fuzzy_match(needle: str, haystack: str) -> tuple[int, int] | None:
     """Best case-insensitive contiguous substring: ``(match_length, start_pos)``.
 
-    Positions refer to the original ``haystack`` (ASCII-safe). Scattered
+    Positions and length refer to the original ``haystack`` (via ``re.IGNORECASE``
+    match spans), so Unicode case folding cannot shift indices. Scattered
     subsequence matches such as ``p…o…r…t…u`` across a long description are
     not accepted.
     """
@@ -370,12 +372,10 @@ def _best_fuzzy_match(needle: str, haystack: str) -> tuple[int, int] | None:
         return 0, 0
     if not haystack:
         return None
-    folded_needle = needle.casefold()
-    folded_haystack = haystack.casefold()
-    start = folded_haystack.find(folded_needle)
-    if start < 0:
+    match = re.search(re.escape(needle), haystack, flags=re.IGNORECASE)
+    if match is None:
         return None
-    return len(folded_needle), start
+    return match.end() - match.start(), match.start()
 
 
 def _fuzzy_highlight_display(
@@ -386,20 +386,16 @@ def _fuzzy_highlight_display(
     needle: str,
 ) -> AnyFormattedText:
     """Highlight a contiguous substring match on a completion label."""
+    del needle
     if match_length == 0:
         return word
 
-    result: StyleAndTextTuples = []
-    result.append(("class:fuzzymatch.outside", word[:start_pos]))
-    characters = list(needle.casefold())
-    for char in word[start_pos : start_pos + match_length]:
-        classname = "class:fuzzymatch.inside"
-        if characters and char.casefold() == characters[0]:
-            classname += ".character"
-            del characters[0]
-        result.append((classname, char))
-    result.append(("class:fuzzymatch.outside", word[start_pos + match_length :]))
-    return result
+    end = start_pos + match_length
+    return [
+        ("class:fuzzymatch.outside", word[:start_pos]),
+        ("class:fuzzymatch.inside.character", word[start_pos:end]),
+        ("class:fuzzymatch.outside", word[end:]),
+    ]
 
 
 class FirstTokenFuzzyCompleter(Completer):
