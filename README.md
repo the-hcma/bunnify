@@ -74,8 +74,8 @@ After `pipx ensurepath`, `command -v bunnify` should be `~/.local/bin/bunnify`.
 
 Bookmarks and `~/.config/bunnify/config.env` are user data — upgrades do not
 overwrite them. After a major server change, re-run `bunnify setup` only if
-docs or release notes say so. Setup will offer to stop an older local server
-and start this CLI's build when the port is already in use.
+docs or release notes say so. Setup will offer to stop a different local
+Bunnify build and start this CLI's build when the port is already in use.
 
 Source and docs: [github.com/the-hcma/bunnify](https://github.com/the-hcma/bunnify).
 
