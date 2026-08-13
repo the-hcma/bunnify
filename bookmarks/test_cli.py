@@ -891,6 +891,54 @@ class ConfigUnitTests(TestCase):
                 ensure_user_bookmarks(dest=target, allow_prompt=False)
 
             self.assertIn("Create it manually", str(context.exception))
+            self.assertIn("bunnify setup", str(context.exception))
+
+    def test_ensure_user_bookmarks_seeds_when_prompt_accepted(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        messages: list[str] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            result = ensure_user_bookmarks(
+                dest=target,
+                allow_prompt=True,
+                prompt_fn=lambda _prompt: "",
+                print_fn=messages.append,
+            )
+
+            self.assertEqual(result, target)
+            self.assertTrue(target.is_file())
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            self.assertIn("bun", payload)
+            self.assertIn("gh", payload)
+            self.assertIn("yt", payload)
+            self.assertNotIn("ih", payload)
+            self.assertNotIn("ihh", payload)
+            self.assertTrue(
+                any("No bookmarks found" in message for message in messages)
+            )
+
+    def test_ensure_user_bookmarks_declines_seed_when_prompt_rejected(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ensure_user_bookmarks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config" / "bookmarks.json"
+            with self.assertRaises(FileNotFoundError):
+                ensure_user_bookmarks(
+                    dest=target,
+                    allow_prompt=True,
+                    prompt_fn=lambda _prompt: "n",
+                    print_fn=lambda _message: None,
+                )
+            self.assertFalse(target.exists())
 
     def test_seed_bookmarks_does_not_overwrite(self) -> None:
         import tempfile
