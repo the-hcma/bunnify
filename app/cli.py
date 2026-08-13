@@ -418,6 +418,50 @@ def run_setup(
             raise ClientError("Setup aborted; settings were not changed")
 
 
+def run_stop(
+    *,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+    print_fn: Callable[[str], None] | None = None,
+    theme: Theme | None = None,
+) -> None:
+    """Stop the managed local server recorded for this CLI install."""
+    log = print_fn or click.echo
+    colors = theme if theme is not None else Theme(enabled=False)
+    path = env_path if env_path is not None else env_file_path(environ=environ)
+    preferences = load_preferences(environ=environ, env_path=path)
+    if preferences is not None and preferences.mode == "remote":
+        raise ClientError(
+            "Configured mode is remote; `bunnify stop` only stops a local "
+            "managed server. Re-run `bunnify setup` and choose local, or stop "
+            "the remote host yourself."
+        )
+    pid_dir = run_dir(environ=environ)
+    port = _managed_local_port(pid_dir)
+    if port is None and preferences is not None:
+        port = preferences.local_port
+    if port is None:
+        raise ClientError(
+            "No local Bunnify server is recorded. Start one with `bunnify setup`."
+        )
+    base_url = f"http://127.0.0.1:{port}"
+    log(colors.header("Stopping local Bunnify"))
+    log(f"URL: {base_url}")
+    log(f"Runtime directory: {pid_dir}")
+    health = fetch_health(base_url)
+    if health.ok:
+        log(f"Running build: {_format_running_build(health)}")
+    else:
+        log(
+            colors.dim(
+                "Server did not respond to /health; stopping the managed "
+                "process anyway."
+            )
+        )
+    stop_local_server(pid_dir, port=port)
+    log(colors.ok(f"Stopped local Bunnify at {base_url}"))
+
+
 def run_upgrade(
     *,
     print_fn: Callable[[str], None] | None = None,
@@ -511,9 +555,12 @@ def _format_running_build(health: HealthStatus) -> str:
 def _managed_local_port(pid_dir: Path) -> int | None:
     """Return the port recorded for this CLI run dir, if any."""
     try:
-        return int((pid_dir / LOCAL_PORT_FILE_NAME).read_text(encoding="utf-8").strip())
+        port = int((pid_dir / LOCAL_PORT_FILE_NAME).read_text(encoding="utf-8").strip())
     except OSError, ValueError:
         return None
+    if not 1 <= port <= 65535:
+        return None
+    return port
 
 
 def _offer_restart_mismatched_server(
@@ -1145,6 +1192,12 @@ def _print_cli_version(
     help="Configure a verified local or remote server (also: `bunnify setup`).",
 )
 @click.option(
+    "--stop",
+    "stop_requested",
+    is_flag=True,
+    help="Stop the managed local server (also: `bunnify stop`).",
+)
+@click.option(
     "--upgrade",
     "upgrade_requested",
     is_flag=True,
@@ -1164,6 +1217,7 @@ def main(
     env_file: Path | None,
     onboard_requested: bool,
     setup_requested: bool,
+    stop_requested: bool,
     upgrade_requested: bool,
 ) -> None:
     """
@@ -1187,6 +1241,11 @@ def main(
     Server setup (`setup` is a reserved shortcut name):
       ./scripts/bunnify setup
       ./scripts/bunnify --setup
+
+    \b
+    Stop the local managed server (`stop` is a reserved shortcut name):
+      bunnify stop
+      bunnify --stop
 
     \b
     Build identity (`version` is a reserved shortcut name):
@@ -1227,6 +1286,13 @@ def main(
         else default_edit_mode_from_environ()
     )
     try:
+        if stop_requested or shortcut_args == ("stop",):
+            run_stop(
+                env_path=env_file,
+                print_fn=click.echo,
+                theme=theme,
+            )
+            return
         if upgrade_requested or shortcut_args == ("upgrade",):
             run_upgrade()
             return

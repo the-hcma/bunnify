@@ -23,6 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 bunnify                         # interactive REPL
 bunnify onboard                 # post-install / upgrade checklist
 bunnify setup                   # configure local or remote server
+bunnify stop                    # stop the managed local server
 bunnify upgrade                 # pipx upgrade; prints which binary you ran
 bunnify --version               # package version, commit, and install path
 bunnify gh                      # open a shortcut (example key from bunnify.json.example)
@@ -36,6 +37,7 @@ bunnify --list-keys             # list keys from the running server
 ## Server
 
 ```bash
+bunnify stop                    # stop the managed local server (local mode)
 bunnify-server --help
 bunnify-server --foreground --noninteractive --port 8000   # foreground (systemd/debug)
 bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run

@@ -48,6 +48,17 @@ BUNNIFY_LOCAL_PORT=8000
 `setup` is a reserved CLI shortcut name. Use `--base-url URL` for a one-time
 server override that is not persisted.
 
+To stop the managed local server:
+
+```bash
+bunnify stop
+# equivalent: bunnify --stop
+```
+
+That prints the URL and runtime directory, then stops the process recorded for
+this CLI install. Remote mode is unchanged — stop the host service there
+instead.
+
 ## Manual local workflow
 
 ```bash
