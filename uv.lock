@@ -47,7 +47,7 @@ dev = [
 requires-dist = [
     { name = "asgiref", specifier = "==3.12.1" },
     { name = "click", specifier = ">=8.4.2" },
-    { name = "django", specifier = ">=6.0.8" },
+    { name = "django", specifier = ">=6.1" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "packaging", specifier = ">=26.3" },
     { name = "pathspec", specifier = "==1.1.1" },
