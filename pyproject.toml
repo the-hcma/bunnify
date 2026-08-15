@@ -13,7 +13,7 @@ classifiers = [
 dependencies = [
     "asgiref==3.12.1",
     "click>=8.4.2",
-    "django>=6.0.8",
+    "django>=6.1",
     "jsonschema>=4.26.0",
     "packaging>=26.3",
     "pathspec==1.1.1",
