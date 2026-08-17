@@ -66,7 +66,8 @@ class ChordTracker:
 # IOKit IOLLEvent.h: NX_DEVICELCTLKEYMASK / NX_DEVICERCTLKEYMASK in CGEvent flags.
 DEVICE_LEFT_CONTROL_MASK = 0x00000001
 DEVICE_RIGHT_CONTROL_MASK = 0x00002000
-DUPLICATE_EVENT_WINDOW_S = 0.05
+# Quartz may deliver two flagsChanged for one physical press a few ms apart.
+DUPLICATE_EVENT_WINDOW_S = 0.008
 
 # Carbon HIToolbox Events.h kVK_* (ANSI US). Ordered by keycode.
 KEYCODE_NAMES: dict[int, str] = {

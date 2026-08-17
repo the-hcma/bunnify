@@ -19,7 +19,6 @@ from app.spotty_bunny_cli import (
 from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
-    DUPLICATE_EVENT_WINDOW_S,
     ChordTracker,
     apply_control_event,
     apply_hid_snapshot,
@@ -410,7 +409,7 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
             )
         )
         self.assertTrue(tracker.held_right)
-        clock.advance(DUPLICATE_EVENT_WINDOW_S)
+        clock.advance(0.029)
         self.assertFalse(
             apply_control_event(
                 tracker,
@@ -421,7 +420,7 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
         )
         self.assertTrue(tracker.held_left)
         self.assertFalse(tracker.held_right)
-        clock.advance(DUPLICATE_EVENT_WINDOW_S)
+        clock.advance(0.07)
         self.assertTrue(
             apply_control_event(
                 tracker,
