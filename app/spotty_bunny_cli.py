@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import logging
 import logging.handlers
 import os
@@ -11,6 +12,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from app.config import data_dir
+from app.spotty_bunny_launch import clear_spotty_bunny_pid, write_spotty_bunny_pid
 from app.version import build_version
 
 COMMAND_NAME = "spotty-bunny"
@@ -65,8 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level",
         type=str.upper,
         choices=LOG_LEVELS,
-        default="WARNING",
-        help="Application log level (default: WARNING). Same values as bunnify-server.",
+        default="INFO",
+        help="Application log level (default: INFO). Same values as bunnify-server.",
     )
     parser.add_argument(
         "-v",
@@ -101,6 +103,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{COMMAND_NAME}: logging to {active_log}", file=sys.stderr)
     else:
         print(f"{COMMAND_NAME}: logging to stderr only", file=sys.stderr)
+    if sys.platform == "darwin":
+        write_spotty_bunny_pid(os.getpid())
+        atexit.register(clear_spotty_bunny_pid)
     return run_spotty_bunny()
 
 

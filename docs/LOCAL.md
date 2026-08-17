@@ -94,7 +94,7 @@ spotty-bunny
 # development checkout (wrapper syncs extra macos)
 ./scripts/spotty-bunny
 ./scripts/spotty-bunny --verbose          # DEBUG: every tap event, chord, show/hide
-./scripts/spotty-bunny --log-level INFO   # chord complete, show/hide, SIGINT
+./scripts/spotty-bunny --log-level INFO   # default; chord complete, show/hide, SIGINT
 # same values as bunnify-server:
 ./scripts/spotty-bunny --log-level DEBUG
 # rotating file (10 MiB × 5), same verbose format as bunnify-server:
@@ -109,7 +109,11 @@ the CLI (`FirstTokenFuzzyCompleter` / `ShortcutCompleter`) and lists matches
 under the field. Enter resolves via `/api/resolve/?strict=1` and opens the URL
 in the default browser (unknown keys stay in the panel with an error). Ctrl-C
 in that terminal quits. Startup prints the log file path on stderr
-(`spotty-bunny: logging to …`).
+(`spotty-bunny: logging to …`). Default log level is **INFO** (use `--verbose`
+for per-key tap debug).
+
+The search box is centered on the **main display** (menu-bar monitor), with a
+small bunny icon beside the field.
 
 If the chord does nothing, run with `--verbose` and watch stderr. Lines
 named `tap …` show whether key events arrive. If none appear while you press
@@ -119,6 +123,9 @@ Settings → Privacy & Security, then re-run. If events arrive but `fired=True`
 never appears, HID may still miss right Control (`hid R=False`); Spotty Bunny
 also uses device flag bits and the event keycode. Re-run `--verbose` after
 this fix.
+
+On macOS, starting the **`bunnify` interactive REPL** (no query args) also
+starts `spotty-bunny` in the background when it is not already running.
 
 ## macOS LaunchAgent
 

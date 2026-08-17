@@ -70,7 +70,7 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.assertTrue(self.log_file.is_file())
         self.assertIn(str(self.log_file), stderr.getvalue())
 
-    def test_default_log_level_is_warning(self) -> None:
+    def test_default_log_level_is_info(self) -> None:
         stderr = StringIO()
         with (
             patch("app.spotty_bunny_cli.sys.platform", "linux"),
@@ -79,11 +79,11 @@ class SpottyBunnyCliTests(SimpleTestCase):
             self.assertEqual(main([]), 1)
         self.assertEqual(
             logging.getLogger("app.spotty_bunny_app").level,
-            logging.WARNING,
+            logging.INFO,
         )
         self.assertEqual(
             logging.getLogger("app.spotty_bunny_cli").level,
-            logging.WARNING,
+            logging.INFO,
         )
 
     def test_env_log_file(self) -> None:
@@ -264,6 +264,22 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         )
         self.assertFalse(
             completion_still_current(expected_seq=2, field="gh", prefix="gh", seq=3)
+        )
+
+    def test_completion_row_after_selector_supports_page_keys(self) -> None:
+        from app.spotty_bunny_complete import completion_row_after_selector
+
+        self.assertEqual(
+            completion_row_after_selector(7, row_count=20, selector="pageUp:"),
+            2,
+        )
+        self.assertEqual(
+            completion_row_after_selector(7, row_count=20, selector="pageDown:"),
+            12,
+        )
+        self.assertEqual(
+            completion_row_after_selector(0, row_count=3, selector="moveDown:"),
+            1,
         )
 
     def test_first_token_fuzzy_matches_description(self) -> None:
@@ -800,6 +816,119 @@ class SpottyBunnyQuitTests(SimpleTestCase):
             "otherEventWithType_location_modifierFlags_timestamp_windowNumber"
             "_context_subtype_data1_data2_",
         )
+
+
+class SpottyBunnyLaunchTests(SimpleTestCase):
+    def test_ensure_spotty_bunny_running_skips_when_already_running(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            (pid_dir / SPOTTY_BUNNY_PID_FILE).write_text(f"{os.getpid()}\n")
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        spawn=lambda _cmd: self.fail("should not spawn"),
+                    )
+                )
+
+    def test_ensure_spotty_bunny_running_spawns_on_darwin(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        spawn=lambda _cmd: 4242,
+                    )
+                )
+            self.assertEqual(
+                (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
+                "4242\n",
+            )
+
+    def test_ensure_spotty_bunny_running_fails_when_child_exits(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        spawn=lambda _cmd: 4242,
+                    )
+                )
+            self.assertFalse((pid_dir / SPOTTY_BUNNY_PID_FILE).exists())
+
+    def test_spotty_bunny_is_running_clears_stale_pid(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+            spotty_bunny_is_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            pid_path = pid_dir / SPOTTY_BUNNY_PID_FILE
+            pid_path.write_text("999999999\n", encoding="utf-8")
+            self.assertFalse(spotty_bunny_is_running(pid_dir=pid_dir))
+            self.assertFalse(pid_path.exists())
+
+            spawned: list[object] = []
+
+            def spawn(_cmd: object) -> int:
+                spawned.append(_cmd)
+                return 4242
+
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(pid_dir=pid_dir, spawn=spawn)
+                )
+            self.assertEqual(len(spawned), 1)
+            self.assertEqual(pid_path.read_text(encoding="utf-8"), "4242\n")
+
+    def test_placeholder_documents_examples(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("gh, c, search hello", source)
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):
