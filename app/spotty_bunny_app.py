@@ -250,11 +250,21 @@ class SpottyBunnyController(NSObject):
         logger.debug("windowDidBecomeKey")
         self._became_key = True
 
-    def windowDidResignKey_(self, _notification) -> None:
+    def windowDidResignKey_(self, notification) -> None:
         # Accessory + Terminal: resign fires before the panel ever becomes key.
         # Only dismiss after a successful key cycle (click-away / app switch).
         logger.debug("windowDidResignKey became_key=%s", self._became_key)
+        resigning = notification.object()
+        if resigning is self._about_panel:
+            key = NSApp.keyWindow()
+            if key is self.panel:
+                self._hide_about_panel()
+            else:
+                self.hide()
+            return
         if self._became_key:
+            if self._about_panel is not None and self._about_panel.isVisible():
+                return
             self.hide()
 
     def _build_panel(self) -> None:
@@ -397,6 +407,7 @@ class SpottyBunnyController(NSObject):
     def _toggle_about_panel(self) -> None:
         if self._about_panel is None:
             self._about_panel = build_about_panel()
+            self._about_panel.setDelegate_(self)
         if self._about_panel.isVisible():
             self._about_panel.orderOut_(None)
             return

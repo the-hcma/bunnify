@@ -952,6 +952,14 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertNotIn('setTitle_("spotty-bunny")', source)
         self.assertIn("showAbout:", source)
 
+    def test_about_panel_resign_does_not_dismiss_main_while_visible(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("resigning is self._about_panel", source)
+        self.assertIn("self._about_panel.isVisible()", source)
+        self.assertIn("self._about_panel.setDelegate_(self)", source)
+
 
 class SpottyBunnyResolveTests(SimpleTestCase):
     def test_failure_does_not_append_history(self) -> None:
