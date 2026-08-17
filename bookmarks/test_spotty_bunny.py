@@ -802,6 +802,57 @@ class SpottyBunnyQuitTests(SimpleTestCase):
         )
 
 
+class SpottyBunnyResolveTests(SimpleTestCase):
+    def test_failure_does_not_append_history(self) -> None:
+        from app.client import ClientError
+        from app.spotty_bunny_resolve import resolve_query
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "repl_history"
+
+            def append(line: str) -> None:
+                append_history_line(line, path=path)
+
+            def boom(*_args: object, **_kwargs: object) -> object:
+                raise ClientError("unknown shortcut")
+
+            with self.assertRaises(ClientError):
+                resolve_query(
+                    "nope",
+                    base_url="http://127.0.0.1:9",
+                    append_fn=append,
+                    open_fn=lambda _url: None,
+                    resolve_fn=boom,
+                )
+            self.assertEqual(load_history_lines(path=path), [])
+
+    def test_success_appends_shared_history_and_opens(self) -> None:
+        from app.client import ResolvedShortcut
+        from app.spotty_bunny_resolve import resolve_query
+
+        opened: list[str] = []
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "repl_history"
+
+            def append(line: str) -> None:
+                append_history_line(line, path=path)
+
+            url = resolve_query(
+                "  gh  ",
+                base_url="http://127.0.0.1:8000",
+                append_fn=append,
+                open_fn=opened.append,
+                resolve_fn=lambda query, **_kwargs: ResolvedShortcut(
+                    url="https://github.com",
+                    kind="shortcut",
+                    key=query,
+                ),
+            )
+            self.assertEqual(url, "https://github.com")
+            self.assertEqual(opened, ["https://github.com"])
+            self.assertEqual(load_history_lines(path=path), ["gh"])
+
+
 class _FakeClock:
     def __init__(self) -> None:
         self.t = 0.0

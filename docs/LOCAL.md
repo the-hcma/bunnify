@@ -106,8 +106,10 @@ Hold **one** Control, then press the **other** to show the search box. Esc
 (or the same chord again) hides it. Up/down walks the CLI REPL history file
 (`platformdirs` cache `bunnify/repl_history`). Tab uses the same completers as
 the CLI (`FirstTokenFuzzyCompleter` / `ShortcutCompleter`) and lists matches
-under the field. Ctrl-C in that terminal quits. Startup prints the log file
-path on stderr (`spotty-bunny: logging to …`).
+under the field. Enter resolves via `/api/resolve/?strict=1` and opens the URL
+in the default browser (unknown keys stay in the panel with an error). Ctrl-C
+in that terminal quits. Startup prints the log file path on stderr
+(`spotty-bunny: logging to …`).
 
 If the chord does nothing, run with `--verbose` and watch stderr. Lines
 named `tap …` show whether key events arrive. If none appear while you press
@@ -117,8 +119,6 @@ Settings → Privacy & Security, then re-run. If events arrive but `fired=True`
 never appears, HID may still miss right Control (`hid R=False`); Spotty Bunny
 also uses device flag bits and the event keycode. Re-run `--verbose` after
 this fix.
-
-Opening shortcuts with Enter is not wired yet.
 
 ## macOS LaunchAgent
 
