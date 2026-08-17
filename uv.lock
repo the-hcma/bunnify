@@ -39,9 +39,9 @@ dependencies = [
 
 [package.optional-dependencies]
 macos = [
-    { name = "pyobjc-core" },
-    { name = "pyobjc-framework-cocoa" },
-    { name = "pyobjc-framework-quartz" },
+    { name = "pyobjc-core", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
 ]
 
 [package.dev-dependencies]
@@ -60,9 +60,9 @@ requires-dist = [
     { name = "pathspec", specifier = "==1.1.1" },
     { name = "platformdirs", specifier = ">=4.11.1" },
     { name = "prompt-toolkit", specifier = ">=3.0.53" },
-    { name = "pyobjc-core", marker = "extra == 'macos'", specifier = "==12.2.1" },
-    { name = "pyobjc-framework-cocoa", marker = "extra == 'macos'", specifier = "==12.2.1" },
-    { name = "pyobjc-framework-quartz", marker = "extra == 'macos'", specifier = "==12.2.1" },
+    { name = "pyobjc-core", marker = "sys_platform == 'darwin' and extra == 'macos'", specifier = "==12.2.1" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'macos'", specifier = "==12.2.1" },
+    { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin' and extra == 'macos'", specifier = "==12.2.1" },
     { name = "rpds-py", specifier = ">=2026.6.3" },
     { name = "typing-extensions", specifier = "==4.16.0" },
 ]

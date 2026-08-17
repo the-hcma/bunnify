@@ -25,9 +25,9 @@ dependencies = [
 
 [project.optional-dependencies]
 macos = [
-    "pyobjc-core==12.2.1",
-    "pyobjc-framework-Cocoa==12.2.1",
-    "pyobjc-framework-Quartz==12.2.1",
+    "pyobjc-core==12.2.1; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa==12.2.1; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz==12.2.1; sys_platform == 'darwin'",
 ]
 
 [project.scripts]
