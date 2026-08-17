@@ -1360,10 +1360,10 @@ def main(
       bunnify --onboard
 
     \b
-    macOS overlay (`overlay` is a reserved shortcut name):
-      bunnify overlay
-      ./scripts/bunnify-overlay
-      ./scripts/bunnify-overlay --verbose
+    macOS Spotty Bunny (`spotty-bunny` is a reserved shortcut name):
+      bunnify spotty-bunny
+      ./scripts/spotty-bunny
+      ./scripts/spotty-bunny --verbose
 
     \b
     Server setup (`setup` is a reserved shortcut name):
@@ -1399,10 +1399,10 @@ def main(
         click.echo(format_onboarding_text())
         return
 
-    if shortcut_args and shortcut_args[0] == "overlay":
-        from app.overlay_cli import main as overlay_main
+    if shortcut_args and shortcut_args[0] == "spotty-bunny":
+        from app.spotty_bunny_cli import main as spotty_bunny_main
 
-        raise SystemExit(overlay_main(list(shortcut_args[1:])))
+        raise SystemExit(spotty_bunny_main(list(shortcut_args[1:])))
 
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))
 

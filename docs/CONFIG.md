@@ -52,7 +52,7 @@ remain supported; they are interpreted as remote mode.
 - `BUNNIFY_EDIT_MODE` selects `vim` or `emacs` CLI editing keys.
 - `BUNNIFY_LOG_LEVEL`, `BUNNIFY_LOG_CONSOLE`, and `BUNNIFY_LOG_FILE` configure
   server logging.
-- `BUNNIFY_OVERLAY_LOG_FILE` overrides the overlay log path (default
-  `$BUNNIFY_DATA_DIR/bunnify-overlay.log`, or `~/.local/share/bunnify/bunnify-overlay.log`).
-  `bunnify-overlay --log-file` also sets it. Rotation matches the server
+- `BUNNIFY_SPOTTY_BUNNY_LOG_FILE` overrides the Spotty Bunny log path (default
+  `$BUNNIFY_DATA_DIR/spotty-bunny.log`, or `~/.local/share/bunnify/spotty-bunny.log`).
+  `spotty-bunny --log-file` also sets it. Rotation matches the server
   (10 MiB, 5 backups).

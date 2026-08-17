@@ -10,13 +10,13 @@ from unittest.mock import patch
 from click.testing import CliRunner
 from django.test import SimpleTestCase
 
-from app.overlay_cli import (
-    OVERLAY_LOG_ENV_VAR,
-    OverlayEventTapError,
+from app.spotty_bunny_cli import (
+    LOG_ENV_VAR,
+    SpottyBunnyEventTapError,
     main,
-    run_overlay,
+    run_spotty_bunny,
 )
-from app.overlay_hotkey import (
+from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
     ChordTracker,
@@ -26,22 +26,22 @@ from app.overlay_hotkey import (
 )
 
 
-class OverlayCliTests(SimpleTestCase):
+class SpottyBunnyCliTests(SimpleTestCase):
     def setUp(self) -> None:
         super().setUp()
         log_dir = TemporaryDirectory()
         self.addCleanup(log_dir.cleanup)
         self.log_root = Path(log_dir.name)
-        self.log_file = self.log_root / "bunnify-overlay.log"
-        env_patch = patch.dict(os.environ, {OVERLAY_LOG_ENV_VAR: ""}, clear=False)
+        self.log_file = self.log_root / "spotty-bunny.log"
+        env_patch = patch.dict(os.environ, {LOG_ENV_VAR: ""}, clear=False)
         env_patch.start()
         self.addCleanup(env_patch.stop)
-        data_patch = patch("app.overlay_cli.data_dir", return_value=self.log_root)
+        data_patch = patch("app.spotty_bunny_cli.data_dir", return_value=self.log_root)
         data_patch.start()
         self.addCleanup(data_patch.stop)
 
     def tearDown(self) -> None:
-        for name in ("app.overlay_app", "app.overlay_cli"):
+        for name in ("app.spotty_bunny_app", "app.spotty_bunny_cli"):
             logger = logging.getLogger(name)
             for handler in logger.handlers:
                 handler.close()
@@ -51,8 +51,8 @@ class OverlayCliTests(SimpleTestCase):
     def test_default_log_file_is_created(self) -> None:
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main([]), 1)
         self.assertTrue(self.log_file.is_file())
@@ -61,33 +61,39 @@ class OverlayCliTests(SimpleTestCase):
     def test_default_log_level_is_warning(self) -> None:
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main([]), 1)
-        self.assertEqual(logging.getLogger("app.overlay_app").level, logging.WARNING)
-        self.assertEqual(logging.getLogger("app.overlay_cli").level, logging.WARNING)
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_app").level,
+            logging.WARNING,
+        )
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_cli").level,
+            logging.WARNING,
+        )
 
-    def test_env_overlay_log_file(self) -> None:
+    def test_env_log_file(self) -> None:
         custom = self.log_root / "from-env.log"
         stderr = StringIO()
         with (
-            patch.dict(os.environ, {OVERLAY_LOG_ENV_VAR: str(custom)}),
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch.dict(os.environ, {LOG_ENV_VAR: str(custom)}),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main(["--verbose"]), 1)
-        self.assertIn("overlay starting", custom.read_text(encoding="utf-8"))
+        self.assertIn("spotty-bunny starting", custom.read_text(encoding="utf-8"))
 
     def test_explicit_log_file_receives_debug(self) -> None:
         custom = self.log_root / "custom.log"
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main(["--verbose", "--log-file", str(custom)]), 1)
-        self.assertIn("overlay starting", custom.read_text(encoding="utf-8"))
+        self.assertIn("spotty-bunny starting", custom.read_text(encoding="utf-8"))
         self.assertIn("log_level=DEBUG", custom.read_text(encoding="utf-8"))
 
     def test_help_exits_zero(self) -> None:
@@ -100,6 +106,7 @@ class OverlayCliTests(SimpleTestCase):
         self.assertEqual(raised.exception.code, 0)
         help_text = stdout.getvalue()
         self.assertIn("search box", help_text)
+        self.assertIn("spotty-bunny", help_text)
         self.assertIn("--log-file", help_text)
         self.assertIn("--log-level", help_text)
         self.assertIn("--verbose", help_text)
@@ -107,12 +114,18 @@ class OverlayCliTests(SimpleTestCase):
     def test_log_level_sets_logger(self) -> None:
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main(["--log-level", "INFO"]), 1)
-        self.assertEqual(logging.getLogger("app.overlay_app").level, logging.INFO)
-        self.assertEqual(logging.getLogger("app.overlay_cli").level, logging.INFO)
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_app").level,
+            logging.INFO,
+        )
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_cli").level,
+            logging.INFO,
+        )
 
     def test_missing_pyobjc_prints_extra_hint(self) -> None:
         def boom() -> int:
@@ -120,78 +133,87 @@ class OverlayCliTests(SimpleTestCase):
 
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "darwin"),
-            patch("app.overlay_cli._load_run_overlay_app", side_effect=boom),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_cli._load_run_spotty_bunny_app", side_effect=boom),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
-            self.assertEqual(run_overlay(), 1)
+            self.assertEqual(run_spotty_bunny(), 1)
         self.assertIn("bunnify[macos]", stderr.getvalue())
         self.assertIn("uv sync --extra macos", stderr.getvalue())
 
     def test_not_macos_prints_hint(self) -> None:
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main([]), 1)
         self.assertIn("only available on macOS", stderr.getvalue())
 
-    def test_overlay_shortcut_dispatches_extra_args(self) -> None:
+    def test_spotty_bunny_shortcut_dispatches_extra_args(self) -> None:
         from app.cli import main as cli_main
 
-        with patch("app.overlay_cli.main", return_value=1) as overlay:
-            result = CliRunner().invoke(cli_main, ["overlay", "foo"])
+        with patch("app.spotty_bunny_cli.main", return_value=1) as spotty:
+            result = CliRunner().invoke(cli_main, ["spotty-bunny", "foo"])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        overlay.assert_called_once_with(["foo"])
+        spotty.assert_called_once_with(["foo"])
 
-    def test_overlay_shortcut_dispatches_to_overlay_cli(self) -> None:
+    def test_spotty_bunny_shortcut_dispatches_to_cli(self) -> None:
         from app.cli import main as cli_main
 
-        with patch("app.overlay_cli.main", return_value=1) as overlay:
-            result = CliRunner().invoke(cli_main, ["overlay"])
+        with patch("app.spotty_bunny_cli.main", return_value=1) as spotty:
+            result = CliRunner().invoke(cli_main, ["spotty-bunny"])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        overlay.assert_called_once_with([])
+        spotty.assert_called_once_with([])
 
     def test_tap_failure_prints_permission_hint(self) -> None:
         def fail_tap() -> int:
-            raise OverlayEventTapError("event tap was not created")
+            raise SpottyBunnyEventTapError("event tap was not created")
 
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "darwin"),
-            patch("app.overlay_cli._load_run_overlay_app", return_value=fail_tap),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "darwin"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_app",
+                return_value=fail_tap,
+            ),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
-            self.assertEqual(run_overlay(), 1)
+            self.assertEqual(run_spotty_bunny(), 1)
         self.assertIn("Accessibility", stderr.getvalue())
         self.assertIn("Input Monitoring", stderr.getvalue())
 
     def test_verbose_overrides_log_level(self) -> None:
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main(["--verbose", "--log-level", "ERROR"]), 1)
-        self.assertEqual(logging.getLogger("app.overlay_app").level, logging.DEBUG)
-        self.assertEqual(logging.getLogger("app.overlay_cli").level, logging.DEBUG)
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_app").level,
+            logging.DEBUG,
+        )
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_cli").level,
+            logging.DEBUG,
+        )
 
     def test_verbose_writes_debug_to_default_log_file(self) -> None:
         stderr = StringIO()
         with (
-            patch("app.overlay_cli.sys.platform", "linux"),
-            patch("app.overlay_cli.sys.stderr", stderr),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
             self.assertEqual(main(["--verbose"]), 1)
         logged = self.log_file.read_text(encoding="utf-8")
-        self.assertIn("overlay starting", logged)
+        self.assertIn("spotty-bunny starting", logged)
         self.assertIn("log_level=DEBUG", logged)
 
 
-class OverlayHotkeyTests(SimpleTestCase):
+class SpottyBunnyHotkeyTests(SimpleTestCase):
     def test_batched_hid_both_down_fires_on_completing_keycode(self) -> None:
         tracker = ChordTracker()
         self.assertTrue(

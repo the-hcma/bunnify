@@ -1,5 +1,5 @@
 # pyright: reportMissingImports=false
-"""macOS overlay UI (PyObjC). Imported only after Cocoa/Quartz are available."""
+"""Spotty Bunny macOS UI (PyObjC). Imported only after Cocoa/Quartz are available."""
 
 from __future__ import annotations
 
@@ -59,8 +59,8 @@ from Quartz import (
     kCGSessionEventTap,
 )
 
-from app.overlay_cli import OverlayEventTapError
-from app.overlay_hotkey import (
+from app.spotty_bunny_cli import SpottyBunnyEventTapError
+from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
     DEVICE_LEFT_CONTROL_MASK,
@@ -77,7 +77,7 @@ PANEL_WIDTH = 640.0
 logger = logging.getLogger(__name__)
 
 
-class OverlayController(NSObject):
+class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
 
     def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
@@ -99,7 +99,7 @@ class OverlayController(NSObject):
         self.visible = False
 
     def init(self):
-        self = objc.super(OverlayController, self).init()
+        self = objc.super(SpottyBunnyController, self).init()
         if self is None:
             return None
         self._became_key = False
@@ -158,7 +158,7 @@ class OverlayController(NSObject):
             NSBackingStoreBuffered,
             False,
         )
-        panel.setTitle_("bunnify")
+        panel.setTitle_("spotty-bunny")
         panel.setTitlebarAppearsTransparent_(True)
         panel.setLevel_(NSFloatingWindowLevel)
         panel.setCollectionBehavior_(
@@ -199,16 +199,16 @@ class OverlayController(NSObject):
         self.panel.setFrameOrigin_((origin_x, origin_y))
 
 
-def run_overlay_app() -> int:
+def run_spotty_bunny_app() -> int:
     """Run NSApplication until SIGINT (Ctrl-C) or NSApp.stop_."""
     NSApplication.sharedApplication()
     NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     NSApp.finishLaunching()
-    controller = OverlayController.alloc().init()
+    controller = SpottyBunnyController.alloc().init()
     logger.info("NSApplication ready (activationPolicy=accessory)")
     _install_event_tap(controller)
     print(
-        "bunnify-overlay: hold one Control, press the other for the search box "
+        "spotty-bunny: hold one Control, press the other for the search box "
         "(Ctrl-C to quit)",
         file=sys.stderr,
     )
@@ -254,7 +254,7 @@ def _event_type_name(event_type: int) -> str:
     return names.get(int(event_type), f"type:{event_type}")
 
 
-def _install_event_tap(controller: OverlayController) -> None:
+def _install_event_tap(controller: SpottyBunnyController) -> None:
     tap_holder: dict[str, object] = {}
 
     def callback(_proxy, event_type, event, _refcon):
@@ -355,7 +355,7 @@ def _install_event_tap(controller: OverlayController) -> None:
         tap_kind = "hid"
     if tap is None:
         logger.error("CGEventTapCreate returned None for session and HID")
-        raise OverlayEventTapError("event tap was not created")
+        raise SpottyBunnyEventTapError("event tap was not created")
     logger.info("listen-only %s event tap installed", tap_kind)
     tap_holder["tap"] = tap
     source = CFMachPortCreateRunLoopSource(None, tap, 0)

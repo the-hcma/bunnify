@@ -32,8 +32,8 @@ macos = [
 
 [project.scripts]
 bunnify = "app.cli:main"
-bunnify-overlay = "app.overlay_cli:main"
 bunnify-server = "app.server_cli:main"
+spotty-bunny = "app.spotty_bunny_cli:main"
 
 [project.urls]
 Changelog = "https://github.com/the-hcma/bunnify/blob/main/CHANGELOG.md"

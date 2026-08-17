@@ -25,7 +25,7 @@ running either command. Prefer the pipx apps over any checkout
 `./scripts/bunnify` still on `PATH`.
 
 The wheel installs **`bunnify`** (CLI), **`bunnify-server`** (Django
-server), and **`bunnify-overlay`** (macOS search box; needs extra
+server), and **`spotty-bunny`** (macOS search box; needs extra
 `macos`). No repository checkout or `uv` is required at runtime.
 
 Package on PyPI: [pypi.org/project/bunnify](https://pypi.org/project/bunnify/).
@@ -136,7 +136,7 @@ Unknown keys exit non-zero in direct mode (no search-engine fallback).
 ## Features
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
-- **macOS overlay** — dual-Control search box (`bunnify-overlay`; extra `macos`)
+- **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`)
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
 - **Chrome / Edge** — OpenSearch at `/opensearch.xml`
   ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))

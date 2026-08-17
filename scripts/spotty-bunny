@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root" || exit 1
+
+spotty_bunny_module="app.spotty_bunny_cli"
+
+if command -v uv >/dev/null 2>&1; then
+  exec uv run --extra macos spotty-bunny "$@"
+fi
+
+venv_cmd="${repo_root}/.venv/bin/spotty-bunny"
+if [[ -x "$venv_cmd" ]]; then
+  exec "$venv_cmd" "$@"
+fi
+
+venv_python="${repo_root}/.venv/bin/python"
+if [[ -x "$venv_python" ]]; then
+  exec "$venv_python" -m "$spotty_bunny_module" "$@"
+fi
+
+echo "spotty-bunny: install uv (https://docs.astral.sh/uv/) or run 'uv sync --extra macos' in ${repo_root}" >&2
+exit 1
