@@ -176,6 +176,7 @@ class SpottyBunnyController(NSObject):
         if self is None:
             return None
         self._about_panel = None
+        self._about_open = False
         self._applying_completion = False
         self._became_key = False
         self._base_url = ""
@@ -260,9 +261,8 @@ class SpottyBunnyController(NSObject):
         if resigning is self._about_panel:
             key = NSApp.keyWindow()
             if key is self.panel:
-                self._hide_about_panel()
-            else:
-                self.hide()
+                return
+            self.hide()
             return
         if self._became_key:
             if (
@@ -409,17 +409,19 @@ class SpottyBunnyController(NSObject):
     def _hide_about_panel(self) -> None:
         if self._about_panel is not None:
             self._about_panel.orderOut_(None)
+        self._about_open = False
 
     def _toggle_about_panel(self) -> None:
         if self._about_panel is None:
             self._about_panel = build_about_panel()
             self._about_panel.setDelegate_(self)
-        if self._about_panel.isVisible():
-            self._about_panel.orderOut_(None)
+        if self._about_open:
+            self._hide_about_panel()
             return
         if self.panel is not None:
             position_about_panel(self._about_panel, anchor_frame=self.panel.frame())
         self._about_panel.orderFrontRegardless()
+        self._about_open = True
 
     def _hide_completions(self) -> None:
         self._completion_seq += 1

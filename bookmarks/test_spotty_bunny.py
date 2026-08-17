@@ -965,6 +965,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("resigning is self._about_panel", source)
         self.assertIn("NSApp.keyWindow() is self._about_panel", source)
         self.assertIn("self._about_panel.setDelegate_(self)", source)
+        self.assertIn("self._about_open", source)
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):
