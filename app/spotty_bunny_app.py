@@ -93,6 +93,7 @@ from app.spotty_bunny_quit import (
     post_application_wake_event,
     quit_ns_app,
 )
+from app.spotty_bunny_resolve import resolve_query
 
 PANEL_HEIGHT = 80.0
 PANEL_WIDTH = 640.0
@@ -128,9 +129,12 @@ class SpottyBunnyController(NSObject):
             if self.field is not None:
                 self.field.setStringValue_(history_text)
             return True
-        if name in {"cancelOperation:", "insertNewline:"}:
+        if name in {"cancelOperation:"}:
             logger.info("field-editor command %s → hide", name)
             self.hide()
+            return True
+        if name == "insertNewline:":
+            self._submit_query()
             return True
         logger.debug("field-editor command ignored: %s", name)
         return False
@@ -138,6 +142,7 @@ class SpottyBunnyController(NSObject):
     def hide(self) -> None:
         logger.info("hide panel (was visible=%s)", self.visible)
         self._hide_completions()
+        self._set_status("")
         panel = getattr(self, "panel", None)
         if panel is not None:
             panel.orderOut_(None)
@@ -150,6 +155,7 @@ class SpottyBunnyController(NSObject):
             return None
         self._applying_completion = False
         self._became_key = False
+        self._base_url = ""
         self._completer = None
         self._completion_prefix = ""
         self._completion_rows: list[CompletionRow] = []
@@ -162,6 +168,7 @@ class SpottyBunnyController(NSObject):
         self.panel = None
         self.scroll = None
         self.source = None
+        self.status = None
         self.table = None
         self.tap = None
         self.visible = False
@@ -255,6 +262,17 @@ class SpottyBunnyController(NSObject):
         field.setDelegate_(self)
         panel.contentView().addSubview_(field)
 
+        status = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(16.0, 4.0, PANEL_WIDTH - 32.0, 14.0)
+        )
+        status.setEditable_(False)
+        status.setSelectable_(False)
+        status.setBezeled_(False)
+        status.setDrawsBackground_(False)
+        status.setFont_(NSFont.systemFontOfSize_(11.0))
+        status.setStringValue_("")
+        panel.contentView().addSubview_(status)
+
         scroll = NSScrollView.alloc().initWithFrame_(
             NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, TABLE_HEIGHT - 8.0)
         )
@@ -278,6 +296,7 @@ class SpottyBunnyController(NSObject):
         self.field = field
         self.panel = panel
         self.scroll = scroll
+        self.status = status
         self.table = table
 
     def _center_panel(self) -> None:
@@ -297,7 +316,9 @@ class SpottyBunnyController(NSObject):
             if isinstance(result, Exception):
                 logger.warning("could not load shortcuts: %s", result)
                 return
-            self._completer = result
+            completer, base_url = result  # type: ignore[misc]
+            self._completer = completer
+            self._base_url = base_url
             logger.info("shortcut completer ready")
 
         _run_on_main(apply)
@@ -332,10 +353,11 @@ class SpottyBunnyController(NSObject):
     def _load_completer(self) -> object:
         base_url = resolve_base_url(persist=False, allow_prompt=False)
         entries = fetch_key_entries(base_url=base_url)
-        return make_spotty_completer(
+        completer = make_spotty_completer(
             entries=entries,
             suggestions_fn=lambda query: fetch_suggestions(query, base_url=base_url),
         )
+        return completer, base_url
 
     def _move_completion(self, selector: str) -> None:
         if not self._completion_rows or self.table is None or self.field is None:
@@ -372,6 +394,18 @@ class SpottyBunnyController(NSObject):
             lambda result: self._completions_ready(result, seq=seq),
         )
 
+    def _resolve_ready(self, result: object) -> None:
+        def apply() -> None:
+            if isinstance(result, Exception):
+                logger.warning("resolve failed: %s", result)
+                self._hide_completions()
+                self._set_status(str(result))
+                return
+            logger.info("opened %s", result)
+            self.hide()
+
+        _run_on_main(apply)
+
     def _set_field_text(self, text: str) -> None:
         if self.field is None:
             return
@@ -380,6 +414,13 @@ class SpottyBunnyController(NSObject):
             self.field.setStringValue_(text)
         finally:
             self._applying_completion = False
+
+    def _set_status(self, message: str) -> None:
+        if self.status is None:
+            return
+        self.status.setStringValue_(message)
+        color = NSColor.systemRedColor() if message else NSColor.secondaryLabelColor()
+        self.status.setTextColor_(color)
 
     def _set_table_visible(self, visible: bool) -> None:
         if self.scroll is None or self.panel is None or self.field is None:
@@ -413,6 +454,21 @@ class SpottyBunnyController(NSObject):
                 False,
             )
         self._set_table_visible(len(rows) > 1)
+
+    def _submit_query(self) -> None:
+        if self.field is None:
+            return
+        query = str(self.field.stringValue()).strip()
+        if not query:
+            self.hide()
+            return
+        self._set_status("")
+        base_url = self._base_url or resolve_base_url(persist=False)
+
+        def work() -> str:
+            return resolve_query(query, base_url=base_url)
+
+        self._io.submit(work, self._resolve_ready)
 
 
 def run_spotty_bunny_app() -> int:
