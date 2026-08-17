@@ -1363,6 +1363,7 @@ def main(
     macOS overlay (`overlay` is a reserved shortcut name):
       bunnify overlay
       ./scripts/bunnify-overlay
+      ./scripts/bunnify-overlay --verbose
 
     \b
     Server setup (`setup` is a reserved shortcut name):

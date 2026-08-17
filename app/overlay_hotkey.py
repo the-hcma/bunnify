@@ -36,6 +36,143 @@ class ChordTracker:
         return fired
 
 
+# IOKit IOLLEvent.h: NX_DEVICELCTLKEYMASK / NX_DEVICERCTLKEYMASK in CGEvent flags.
+DEVICE_LEFT_CONTROL_MASK = 0x00000001
+DEVICE_RIGHT_CONTROL_MASK = 0x00002000
+
+# Carbon HIToolbox Events.h kVK_* (ANSI US). Ordered by keycode.
+KEYCODE_NAMES: dict[int, str] = {
+    0: "A",
+    1: "S",
+    2: "D",
+    3: "F",
+    4: "H",
+    5: "G",
+    6: "Z",
+    7: "X",
+    8: "C",
+    9: "V",
+    10: "Section",
+    11: "B",
+    12: "Q",
+    13: "W",
+    14: "E",
+    15: "R",
+    16: "Y",
+    17: "T",
+    18: "1",
+    19: "2",
+    20: "3",
+    21: "4",
+    22: "6",
+    23: "5",
+    24: "=",
+    25: "9",
+    26: "7",
+    27: "-",
+    28: "8",
+    29: "0",
+    30: "]",
+    31: "O",
+    32: "U",
+    33: "[",
+    34: "I",
+    35: "P",
+    36: "Return",
+    37: "L",
+    38: "J",
+    39: "'",
+    40: "K",
+    41: ";",
+    42: "\\",
+    43: ",",
+    44: "/",
+    45: "N",
+    46: "M",
+    47: ".",
+    48: "Tab",
+    49: "Space",
+    50: "`",
+    51: "Delete",
+    53: "Escape",
+    54: "rightCommand",
+    55: "leftCommand",
+    56: "leftShift",
+    57: "capsLock",
+    58: "leftOption",
+    59: "leftControl",
+    60: "rightShift",
+    61: "rightOption",
+    62: "rightControl",
+    63: "fn",
+    64: "F17",
+    65: "Keypad.",
+    67: "Keypad*",
+    69: "Keypad+",
+    71: "KeypadClear",
+    72: "VolumeUp",
+    73: "VolumeDown",
+    74: "Mute",
+    75: "Keypad/",
+    76: "KeypadEnter",
+    78: "Keypad-",
+    79: "F18",
+    80: "F19",
+    81: "Keypad=",
+    82: "Keypad0",
+    83: "Keypad1",
+    84: "Keypad2",
+    85: "Keypad3",
+    86: "Keypad4",
+    87: "Keypad5",
+    88: "Keypad6",
+    89: "Keypad7",
+    91: "Keypad8",
+    92: "Keypad9",
+    96: "F5",
+    97: "F6",
+    98: "F7",
+    99: "F3",
+    100: "F8",
+    101: "F9",
+    103: "F11",
+    105: "F13",
+    106: "F16",
+    107: "F14",
+    109: "F10",
+    111: "F12",
+    113: "F15",
+    114: "Help",
+    115: "Home",
+    116: "PageUp",
+    117: "ForwardDelete",
+    118: "F4",
+    119: "End",
+    120: "F2",
+    121: "PageDown",
+    122: "F1",
+    123: "LeftArrow",
+    124: "RightArrow",
+    125: "DownArrow",
+    126: "UpArrow",
+}
+
+MODIFIER_KEYCODES = frozenset(
+    {
+        54,
+        55,
+        56,
+        57,
+        58,
+        CONTROL_LEFT_KEYCODE,
+        60,
+        61,
+        CONTROL_RIGHT_KEYCODE,
+        63,
+    }
+)
+
+
 def apply_hid_snapshot(
     tracker: ChordTracker,
     *,
@@ -59,3 +196,57 @@ def apply_hid_snapshot(
             tracker.sync(left_down=True, right_down=False)
             return tracker.sync(left_down=True, right_down=True)
     return tracker.sync(left_down=left_down, right_down=right_down)
+
+
+def describe_key(
+    keycode: int,
+    *,
+    command: bool = False,
+    control: bool = False,
+    fn: bool = False,
+    option: bool = False,
+    shift: bool = False,
+) -> str:
+    """Human-readable key name, with modifiers (``CTRL-A``)."""
+    name = KEYCODE_NAMES.get(keycode, f"keycode:{keycode}")
+    if keycode in MODIFIER_KEYCODES:
+        return name
+    parts: list[str] = []
+    if control:
+        parts.append("CTRL")
+    if option:
+        parts.append("OPT")
+    if shift:
+        parts.append("SHIFT")
+    if command:
+        parts.append("CMD")
+    if fn:
+        parts.append("FN")
+    parts.append(name)
+    return "-".join(parts)
+
+
+def resolve_control_snapshot(
+    *,
+    keycode: int,
+    hid_left: bool,
+    hid_right: bool,
+    flag_left: bool,
+    flag_right: bool,
+    held_left: bool,
+    held_right: bool,
+) -> tuple[bool, bool]:
+    """Merge HID, device-dependent flags, and the event keycode.
+
+    ``CGEventSourceKeyState`` often stays False for right Control. Quartz
+    still delivers ``flagsChanged`` with keycode 62 and may set
+    ``NX_DEVICERCTLKEYMASK``. If both miss, treat that keycode as an edge
+    against the tracker's previous held state.
+    """
+    left_down = hid_left or flag_left
+    right_down = hid_right or flag_right
+    if keycode == CONTROL_LEFT_KEYCODE and not left_down:
+        left_down = not held_left
+    if keycode == CONTROL_RIGHT_KEYCODE and not right_down:
+        right_down = not held_right
+    return left_down, right_down

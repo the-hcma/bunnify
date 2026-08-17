@@ -93,14 +93,27 @@ bunnify-overlay
 
 # development checkout (wrapper syncs extra macos)
 ./scripts/bunnify-overlay
+./scripts/bunnify-overlay --verbose          # DEBUG: every tap event, chord, show/hide
+./scripts/bunnify-overlay --log-level INFO   # chord complete, show/hide, SIGINT
+# same values as bunnify-server:
+./scripts/bunnify-overlay --log-level DEBUG
+# rotating file (10 MiB × 5), same verbose format as bunnify-server:
+# default ~/.local/share/bunnify/bunnify-overlay.log
+./scripts/bunnify-overlay --log-file /tmp/overlay.log --verbose
 ```
 
 Hold **one** Control, then press the **other** to show the search box. Esc
-(or the same chord again) hides it. Ctrl-C in the terminal quits.
+(or the same chord again) hides it. Ctrl-C in that terminal quits. Startup
+prints the log file path on stderr (`bunnify-overlay: logging to …`).
 
-If the chord does nothing, grant **Accessibility** and **Input Monitoring**
-to the Python interpreter (or Terminal) in System Settings → Privacy &
-Security, then re-run.
+If the chord does nothing, run with `--verbose` and watch stderr. Lines
+named `tap …` show whether key events arrive. If none appear while you press
+keys, grant **Accessibility** and **Input Monitoring** to the Python that
+`uv run` uses (often `.venv/bin/python`), not only Terminal.app, in System
+Settings → Privacy & Security, then re-run. If events arrive but `fired=True`
+never appears, HID may still miss right Control (`hid R=False`); the overlay
+also uses device flag bits and the event keycode. Re-run `--verbose` after
+this fix.
 
 Tab completion and opening shortcuts are not wired yet; this is a no-op
 panel for assessing the hotkey and window.
