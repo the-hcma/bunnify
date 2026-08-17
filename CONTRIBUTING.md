@@ -48,8 +48,9 @@ Individual gates: `uv run ruff check .`, `uv run ruff format --check .`,
 - One logical change per PR; use `gh stack` stacking when appropriate
   (see `.github/stacking-tool` and [AGENTS.md](AGENTS.md))
 - Update user-facing docs when behavior or install paths change
-- Keep `./scripts/bunnify` and `./scripts/bunnify-server` as thin wrappers
-  around the installed entry points
+- Keep `./scripts/bunnify`, `./scripts/bunnify-server`, and
+  `./scripts/bunnify-overlay` as thin wrappers around the installed entry
+  points
 
 ## Questions
 

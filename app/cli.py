@@ -1360,6 +1360,11 @@ def main(
       bunnify --onboard
 
     \b
+    macOS overlay (`overlay` is a reserved shortcut name):
+      bunnify overlay
+      ./scripts/bunnify-overlay
+
+    \b
     Server setup (`setup` is a reserved shortcut name):
       ./scripts/bunnify setup
       ./scripts/bunnify --setup
@@ -1392,6 +1397,11 @@ def main(
     if onboard_requested or shortcut_args == ("onboard",):
         click.echo(format_onboarding_text())
         return
+
+    if shortcut_args and shortcut_args[0] == "overlay":
+        from app.overlay_cli import main as overlay_main
+
+        raise SystemExit(overlay_main(list(shortcut_args[1:])))
 
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))
 

@@ -81,6 +81,30 @@ written to `~/.local/share/bunnify/run/.bunnify.port`. Set
 `BUNNIFY_DATA_DIR` to relocate the SQLite database, logs, and managed runtime
 files together.
 
+## macOS overlay
+
+Foreground process (no login agent yet). Needs the optional `macos` extra
+(PyObjC):
+
+```bash
+# pipx
+pipx install 'bunnify[macos]'
+bunnify-overlay
+
+# development checkout (wrapper syncs extra macos)
+./scripts/bunnify-overlay
+```
+
+Hold **one** Control, then press the **other** to show the search box. Esc
+(or the same chord again) hides it. Ctrl-C in the terminal quits.
+
+If the chord does nothing, grant **Accessibility** and **Input Monitoring**
+to the Python interpreter (or Terminal) in System Settings → Privacy &
+Security, then re-run.
+
+Tab completion and opening shortcuts are not wired yet; this is a no-op
+panel for assessing the hotkey and window.
+
 ## macOS LaunchAgent
 
 Copy `etc/launchd/com.thehcma.bunnify.plist.example` to
