@@ -18,6 +18,8 @@ from Cocoa import (
     NSEventTypeApplicationDefined,
     NSFloatingWindowLevel,
     NSFont,
+    NSImageScaleProportionallyUpOrDown,
+    NSImageView,
     NSMakeRect,
     NSObject,
     NSPanel,
@@ -70,6 +72,7 @@ from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
     apply_completion,
+    completion_row_after_selector,
     completion_still_current,
     completions_for,
     make_spotty_completer,
@@ -89,6 +92,7 @@ from app.spotty_bunny_hotkey import (
     apply_control_event,
     describe_key,
 )
+from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
 from app.spotty_bunny_quit import (
     WAKE_EVENT_SELECTOR,
@@ -97,9 +101,15 @@ from app.spotty_bunny_quit import (
 )
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
 
+FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, search hello)"
+LOGO_LEFT = 16.0
+LOGO_SIZE = 40.0
+LOGO_TOP = 24.0
 PANEL_HEIGHT = 80.0
 PANEL_WIDTH = 640.0
 TABLE_HEIGHT = 140.0
+FIELD_LEFT = LOGO_LEFT + LOGO_SIZE + 12.0
+FIELD_WIDTH = PANEL_WIDTH - FIELD_LEFT - 16.0
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +129,12 @@ class SpottyBunnyController(NSObject):
         if name == "insertTab:":
             self._request_completions()
             return True
-        if self._completion_rows and name in {"moveDown:", "moveUp:"}:
+        if self._completion_rows and name in {
+            "moveDown:",
+            "moveUp:",
+            "pageDown:",
+            "pageUp:",
+        }:
             self._move_completion(name)
             return True
         current = ""
@@ -172,6 +187,7 @@ class SpottyBunnyController(NSObject):
         self.callback = None
         self.chord = ChordTracker()
         self.field = None
+        self.logo = None
         self.panel = None
         self.scroll = None
         self.source = None
@@ -259,14 +275,21 @@ class SpottyBunnyController(NSObject):
         panel.setReleasedWhenClosed_(False)
         panel.setDelegate_(self)
 
+        logo = NSImageView.alloc().initWithFrame_(
+            NSMakeRect(LOGO_LEFT, LOGO_TOP, LOGO_SIZE, LOGO_SIZE)
+        )
+        logo.setImage_(make_spotty_bunny_icon(LOGO_SIZE))
+        logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+        panel.contentView().addSubview_(logo)
+
         field = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, 40.0)
+            NSMakeRect(FIELD_LEFT, 16.0, FIELD_WIDTH, 40.0)
         )
         field.setEditable_(True)
         field.setSelectable_(True)
         field.setBezeled_(True)
         field.setFont_(NSFont.systemFontOfSize_(20.0))
-        field.setPlaceholderString_("Type a shortcut…")
+        field.setPlaceholderString_(FIELD_PLACEHOLDER)
         field.setBackgroundColor_(NSColor.textBackgroundColor())
         field.setDelegate_(self)
         panel.contentView().addSubview_(field)
@@ -303,6 +326,7 @@ class SpottyBunnyController(NSObject):
         panel.contentView().addSubview_(scroll)
 
         self.field = field
+        self.logo = logo
         self.panel = panel
         self.scroll = scroll
         self.status = status
@@ -311,7 +335,7 @@ class SpottyBunnyController(NSObject):
     def _center_panel(self) -> None:
         if self.panel is None:
             return
-        screen = NSScreen.mainScreen()
+        screen = _primary_screen()
         if screen is None:
             return
         visible = screen.visibleFrame()
@@ -374,17 +398,16 @@ class SpottyBunnyController(NSObject):
     def _move_completion(self, selector: str) -> None:
         if not self._completion_rows or self.table is None or self.field is None:
             return
-        idx = int(self.table.selectedRow())
-        if idx < 0:
-            idx = 0
-        if selector == "moveUp:":
-            idx = max(0, idx - 1)
-        else:
-            idx = min(len(self._completion_rows) - 1, idx + 1)
+        idx = completion_row_after_selector(
+            int(self.table.selectedRow()),
+            row_count=len(self._completion_rows),
+            selector=selector,
+        )
         self.table.selectRowIndexes_byExtendingSelection_(
             NSIndexSet.indexSetWithIndex_(idx),
             False,
         )
+        self.table.scrollRowToVisible_(idx)
         row = self._completion_rows[idx]
         self._set_field_text(apply_completion(self._completion_prefix, row))
 
@@ -448,13 +471,13 @@ class SpottyBunnyController(NSObject):
         self.panel.setFrame_display_(frame, True)
         if visible:
             self.field.setFrame_(
-                NSMakeRect(16.0, 16.0 + TABLE_HEIGHT, PANEL_WIDTH - 32.0, 40.0)
+                NSMakeRect(FIELD_LEFT, 16.0 + TABLE_HEIGHT, FIELD_WIDTH, 40.0)
             )
             self.scroll.setFrame_(
                 NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, TABLE_HEIGHT - 8.0)
             )
         else:
-            self.field.setFrame_(NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, 40.0))
+            self.field.setFrame_(NSMakeRect(FIELD_LEFT, 16.0, FIELD_WIDTH, 40.0))
         self._center_panel()
 
     def _show_completions(self, rows: list[CompletionRow]) -> None:
@@ -470,6 +493,7 @@ class SpottyBunnyController(NSObject):
                 NSIndexSet.indexSetWithIndex_(0),
                 False,
             )
+            self.table.scrollRowToVisible_(0)
         self._set_table_visible(len(rows) > 1)
 
     def _submit_query(self) -> None:
@@ -497,6 +521,15 @@ class SpottyBunnyController(NSObject):
             return url
 
         self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
+
+
+def _primary_screen():
+    """Return the menu-bar (main) display, not a secondary monitor."""
+    main = NSScreen.mainScreen()
+    if main is not None:
+        return main
+    screens = NSScreen.screens()
+    return screens[0] if screens else None
 
 
 def run_spotty_bunny_app() -> int:

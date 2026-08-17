@@ -23,6 +23,31 @@ class CompletionRow:
     start_position: int
 
 
+COMPLETION_PAGE_STEP = 5
+
+
+def completion_row_after_selector(
+    current: int,
+    *,
+    row_count: int,
+    selector: str,
+    page_step: int = COMPLETION_PAGE_STEP,
+) -> int:
+    """Return the completion table row index after a navigation selector."""
+    if row_count <= 0:
+        return 0
+    idx = current if current >= 0 else 0
+    if selector == "moveUp:":
+        return max(0, idx - 1)
+    if selector == "moveDown:":
+        return min(row_count - 1, idx + 1)
+    if selector == "pageUp:":
+        return max(0, idx - page_step)
+    if selector == "pageDown:":
+        return min(row_count - 1, idx + page_step)
+    return idx
+
+
 def apply_completion(current: str, row: CompletionRow) -> str:
     """Apply *row* like prompt_toolkit (start_position is relative to the cursor)."""
     begin = len(current) + row.start_position

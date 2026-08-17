@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 from io import StringIO
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from click.testing import CliRunner
 from django.test import Client, TestCase, override_settings
@@ -290,6 +290,38 @@ class CliUnitTests(TestCase):
         mock_resolve.assert_called_once_with(
             "gh", base_url="http://127.0.0.1:8000", strict=True
         )
+
+    @patch("app.cli.fetch_key_entries")
+    def test_repl_starts_spotty_bunny_on_macos(self, mock_fetch_entries) -> None:
+        mock_fetch_entries.return_value = [KeyEntry(key="gh")]
+        captured = StringIO()
+        mock_session = MagicMock()
+        mock_session.prompt.side_effect = EOFError()
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch(
+                "app.spotty_bunny_launch.ensure_spotty_bunny_running",
+                return_value=True,
+            ) as ensure,
+            patch("sys.stdout", captured),
+            patch("app.cli.ensure_github_authenticated", return_value=None),
+            patch(
+                "app.cli.create_repl_session",
+                return_value=(mock_session, MagicMock()),
+            ),
+        ):
+            _run(
+                shortcut_args=(),
+                base_url="http://127.0.0.1:8000",
+                list_keys=False,
+                use_fzf=False,
+                fzf_query="",
+                print_url=False,
+                open_browser=False,
+                input_fn=None,
+            )
+        ensure.assert_called_once()
+        self.assertIn("Spotty Bunny overlay ready", captured.getvalue())
 
     @patch("app.cli.fetch_key_entries")
     def test_repl_banner_includes_version(self, mock_fetch_entries) -> None:

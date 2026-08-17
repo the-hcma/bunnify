@@ -947,6 +947,15 @@ def _run_repl(
 ) -> None:
     entries = fetch_key_entries(base_url=base_url)
     keys = [entry.key for entry in entries]
+    if sys.platform == "darwin" and input_fn is None:
+        from app.spotty_bunny_launch import ensure_spotty_bunny_running
+
+        if ensure_spotty_bunny_running():
+            click.echo(
+                theme.dim(
+                    "Spotty Bunny overlay ready (hold one Control, tap the other)"
+                )
+            )
     click.echo(
         f"{theme.brand('bunnify')} {theme.dim(build_version())} "
         f"{theme.dim('interactive — Tab fuzzy-completes; quit to exit')}"
