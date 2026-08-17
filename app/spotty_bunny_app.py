@@ -162,6 +162,7 @@ class SpottyBunnyController(NSObject):
         self._completion_seq = 0
         self._history = HistoryNavigator()
         self._io = ThreadIo()
+        self._resolving = False
         self.callback = None
         self.chord = ChordTracker()
         self.field = None
@@ -181,6 +182,7 @@ class SpottyBunnyController(NSObject):
     def show(self) -> None:
         self._history = HistoryNavigator(load_history_lines())
         self._hide_completions()
+        self._set_status("")
         if self.field is not None:
             self.field.setStringValue_("")
         self._center_panel()
@@ -396,6 +398,9 @@ class SpottyBunnyController(NSObject):
 
     def _resolve_ready(self, result: object) -> None:
         def apply() -> None:
+            self._resolving = False
+            if not self.visible:
+                return
             if isinstance(result, Exception):
                 logger.warning("resolve failed: %s", result)
                 self._hide_completions()
@@ -456,14 +461,15 @@ class SpottyBunnyController(NSObject):
         self._set_table_visible(len(rows) > 1)
 
     def _submit_query(self) -> None:
-        if self.field is None:
+        if self.field is None or self._resolving:
             return
         query = str(self.field.stringValue()).strip()
         if not query:
             self.hide()
             return
+        self._resolving = True
         self._set_status("")
-        base_url = self._base_url or resolve_base_url(persist=False)
+        base_url = self._base_url or resolve_base_url(persist=False, allow_prompt=False)
 
         def work() -> str:
             return resolve_query(query, base_url=base_url)

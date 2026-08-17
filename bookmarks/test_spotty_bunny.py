@@ -826,31 +826,64 @@ class SpottyBunnyResolveTests(SimpleTestCase):
                 )
             self.assertEqual(load_history_lines(path=path), [])
 
-    def test_success_appends_shared_history_and_opens(self) -> None:
-        from app.client import ResolvedShortcut
+    def test_open_failure_does_not_append_history(self) -> None:
+        from app.client import ClientError, ResolvedShortcut
         from app.spotty_bunny_resolve import resolve_query
 
-        opened: list[str] = []
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "repl_history"
 
             def append(line: str) -> None:
                 append_history_line(line, path=path)
 
+            def boom_open(_url: str) -> None:
+                raise ClientError("no browser")
+
+            with self.assertRaises(ClientError):
+                resolve_query(
+                    "gh",
+                    base_url="http://127.0.0.1:8000",
+                    append_fn=append,
+                    open_fn=boom_open,
+                    resolve_fn=lambda query, **_kwargs: ResolvedShortcut(
+                        url="https://github.com",
+                        kind="shortcut",
+                        key=query,
+                    ),
+                )
+            self.assertEqual(load_history_lines(path=path), [])
+
+    def test_success_appends_shared_history_and_opens(self) -> None:
+        from app.client import ResolvedShortcut
+        from app.spotty_bunny_resolve import resolve_query
+
+        opened: list[str] = []
+        seen: dict[str, object] = {}
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "repl_history"
+
+            def append(line: str) -> None:
+                append_history_line(line, path=path)
+
+            def resolve_fn(query: str, **kwargs: object) -> ResolvedShortcut:
+                seen.update(kwargs)
+                return ResolvedShortcut(
+                    url="https://github.com",
+                    kind="shortcut",
+                    key=query,
+                )
+
             url = resolve_query(
                 "  gh  ",
                 base_url="http://127.0.0.1:8000",
                 append_fn=append,
                 open_fn=opened.append,
-                resolve_fn=lambda query, **_kwargs: ResolvedShortcut(
-                    url="https://github.com",
-                    kind="shortcut",
-                    key=query,
-                ),
+                resolve_fn=resolve_fn,
             )
             self.assertEqual(url, "https://github.com")
             self.assertEqual(opened, ["https://github.com"])
             self.assertEqual(load_history_lines(path=path), ["gh"])
+            self.assertIs(seen.get("strict"), True)
 
 
 class _FakeClock:
