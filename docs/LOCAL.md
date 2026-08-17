@@ -91,8 +91,7 @@ Foreground process (no login agent yet). Needs the optional `macos` extra
 pipx install 'bunnify[macos]'
 bunnify-overlay
 
-# development checkout
-uv sync --extra macos
+# development checkout (wrapper syncs extra macos)
 ./scripts/bunnify-overlay
 ```
 

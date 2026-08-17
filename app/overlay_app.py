@@ -24,6 +24,7 @@ from Cocoa import (
     NSWindowStyleMaskFullSizeContentView,
     NSWindowStyleMaskTitled,
 )
+from PyObjCTools import AppHelper
 from Quartz import (
     CFMachPortCreateRunLoopSource,
     CFRunLoopAddSource,
@@ -52,6 +53,7 @@ from app.overlay_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
     ChordTracker,
+    apply_hid_snapshot,
 )
 
 PANEL_HEIGHT = 80.0
@@ -60,6 +62,14 @@ PANEL_WIDTH = 640.0
 
 class OverlayController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
+
+    def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
+        """Dismiss on Esc/Return via the field editor (not NSTextField.keyDown_)."""
+        name = selector if isinstance(selector, str) else str(selector)
+        if name in {"cancelOperation:", "insertNewline:"}:
+            self.hide()
+            return True
+        return False
 
     def hide(self) -> None:
         panel = getattr(self, "panel", None)
@@ -120,7 +130,7 @@ class OverlayController(NSObject):
         panel.setReleasedWhenClosed_(False)
         panel.setDelegate_(self)
 
-        field = OverlayTextField.alloc().initWithFrame_(
+        field = NSTextField.alloc().initWithFrame_(
             NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, 40.0)
         )
         field.setEditable_(True)
@@ -129,7 +139,7 @@ class OverlayController(NSObject):
         field.setFont_(NSFont.systemFontOfSize_(20.0))
         field.setPlaceholderString_("Type a shortcut…")
         field.setBackgroundColor_(NSColor.textBackgroundColor())
-        field.overlayController = self
+        field.setDelegate_(self)
         panel.contentView().addSubview_(field)
 
         self.field = field
@@ -148,21 +158,6 @@ class OverlayController(NSObject):
         self.panel.setFrameOrigin_((origin_x, origin_y))
 
 
-class OverlayTextField(NSTextField):
-    """Dismiss the overlay on Escape or Return (completion is not wired yet)."""
-
-    overlayController = objc.ivar()
-
-    def keyDown_(self, event) -> None:
-        keycode = int(event.keyCode())
-        if keycode in {_ESCAPE_KEYCODE, _RETURN_KEYCODE}:
-            controller = self.overlayController
-            if controller is not None:
-                controller.hide()
-            return
-        objc.super(OverlayTextField, self).keyDown_(event)
-
-
 def run_overlay_app() -> int:
     """Run NSApplication until the process is interrupted."""
     NSApplication.sharedApplication()
@@ -175,14 +170,11 @@ def run_overlay_app() -> int:
         file=sys.stderr,
     )
     try:
-        NSApp.run()
+        AppHelper.runEventLoop()
     except KeyboardInterrupt:
+        AppHelper.stopEventLoop()
         return 0
     return 0
-
-
-_ESCAPE_KEYCODE = 53
-_RETURN_KEYCODE = 36
 
 
 def _control_key_down(keycode: int) -> bool:
@@ -215,7 +207,9 @@ def _install_event_tap(controller: OverlayController) -> None:
             CONTROL_RIGHT_KEYCODE,
         }:
             return event
-        if controller.chord.sync(
+        if apply_hid_snapshot(
+            controller.chord,
+            keycode=keycode,
             left_down=_control_key_down(CONTROL_LEFT_KEYCODE),
             right_down=_control_key_down(CONTROL_RIGHT_KEYCODE),
         ):

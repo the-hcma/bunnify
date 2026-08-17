@@ -6,14 +6,13 @@ from unittest.mock import patch
 from click.testing import CliRunner
 from django.test import SimpleTestCase
 
-from app.overlay_cli import (
-    MACOS_EXTRA_HINT,
-    NOT_MACOS_MESSAGE,
-    OverlayEventTapError,
-    main,
-    run_overlay,
+from app.overlay_cli import OverlayEventTapError, main, run_overlay
+from app.overlay_hotkey import (
+    CONTROL_LEFT_KEYCODE,
+    CONTROL_RIGHT_KEYCODE,
+    ChordTracker,
+    apply_hid_snapshot,
 )
-from app.overlay_hotkey import ChordTracker
 
 
 class OverlayCliTests(SimpleTestCase):
@@ -40,7 +39,6 @@ class OverlayCliTests(SimpleTestCase):
             self.assertEqual(run_overlay(), 1)
         self.assertIn("bunnify[macos]", stderr.getvalue())
         self.assertIn("uv sync --extra macos", stderr.getvalue())
-        self.assertIn("PyObjC", MACOS_EXTRA_HINT)
 
     def test_not_macos_prints_hint(self) -> None:
         stderr = StringIO()
@@ -50,15 +48,23 @@ class OverlayCliTests(SimpleTestCase):
         ):
             self.assertEqual(main([]), 1)
         self.assertIn("only available on macOS", stderr.getvalue())
-        self.assertIn("macOS", NOT_MACOS_MESSAGE)
+
+    def test_overlay_shortcut_dispatches_extra_args(self) -> None:
+        from app.cli import main as cli_main
+
+        with patch("app.overlay_cli.main", return_value=1) as overlay:
+            result = CliRunner().invoke(cli_main, ["overlay", "foo"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        overlay.assert_called_once_with(["foo"])
 
     def test_overlay_shortcut_dispatches_to_overlay_cli(self) -> None:
-        from app.cli import main
+        from app.cli import main as cli_main
 
-        with patch("app.overlay_cli.main", return_value=0) as overlay:
-            result = CliRunner().invoke(main, ["overlay"])
+        with patch("app.overlay_cli.main", return_value=1) as overlay:
+            result = CliRunner().invoke(cli_main, ["overlay"])
 
-        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.exit_code, 1, result.output)
         overlay.assert_called_once_with([])
 
     def test_tap_failure_prints_permission_hint(self) -> None:
@@ -77,6 +83,26 @@ class OverlayCliTests(SimpleTestCase):
 
 
 class OverlayHotkeyTests(SimpleTestCase):
+    def test_batched_hid_both_down_fires_on_completing_keycode(self) -> None:
+        tracker = ChordTracker()
+        self.assertTrue(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                left_down=True,
+                right_down=True,
+            )
+        )
+        tracker = ChordTracker()
+        self.assertTrue(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                left_down=True,
+                right_down=True,
+            )
+        )
+
     def test_both_from_idle_does_not_fire(self) -> None:
         tracker = ChordTracker()
         self.assertFalse(tracker.sync(left_down=True, right_down=True))
