@@ -255,9 +255,19 @@ class SpottyBunnyHistoryTests(SimpleTestCase):
                 ["gh", "g hello"],
             )
 
+    def test_append_unwritable_parent_is_ignored(self) -> None:
+        with TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "blocked"
+            parent.write_text("not-a-dir")
+            append_history_line("gh", path=parent / "repl_history")
+
     def test_apply_history_selector_ignores_return(self) -> None:
         navigator = HistoryNavigator(["gh"])
         self.assertIsNone(apply_history_selector(navigator, "", "insertNewline:"))
+
+    def test_down_at_live_line_keeps_current(self) -> None:
+        navigator = HistoryNavigator(["gh"])
+        self.assertEqual(navigator.down("typed"), "typed")
 
     def test_down_restores_draft_after_up(self) -> None:
         navigator = HistoryNavigator(["gh", "g hello"])
@@ -265,6 +275,30 @@ class SpottyBunnyHistoryTests(SimpleTestCase):
         self.assertEqual(navigator.up("g hello"), "gh")
         self.assertEqual(navigator.down("gh"), "g hello")
         self.assertEqual(navigator.down("g hello"), "draft")
+
+    def test_edit_recalled_line_becomes_draft(self) -> None:
+        navigator = HistoryNavigator(["gh", "g hello"])
+        self.assertEqual(navigator.up("abc"), "g hello")
+        self.assertEqual(navigator.up("g hello!"), "gh")
+        self.assertEqual(navigator.down("gh"), "g hello")
+        self.assertEqual(navigator.down("g hello"), "g hello!")
+
+    def test_load_invalid_utf8_returns_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "repl_history"
+            path.write_bytes(b"\xff\xfe")
+            self.assertEqual(load_history_lines(path=path), [])
+
+    def test_load_missing_file_returns_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing" / "repl_history"
+            self.assertEqual(load_history_lines(path=path), [])
+
+    def test_up_at_oldest_stays_at_oldest(self) -> None:
+        navigator = HistoryNavigator(["gh", "g hello"])
+        self.assertEqual(navigator.up("draft"), "g hello")
+        self.assertEqual(navigator.up("g hello"), "gh")
+        self.assertEqual(navigator.up("gh"), "gh")
 
     def test_up_on_empty_history_keeps_current(self) -> None:
         navigator = HistoryNavigator()

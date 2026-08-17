@@ -25,20 +25,27 @@ class HistoryNavigator:
         """Newer entry, or the live draft past the newest line."""
         if self._cursor >= len(self._lines):
             return current
+        self._capture_draft(current)
         self._cursor += 1
         if self._cursor >= len(self._lines):
             return self._draft
         return self._lines[self._cursor]
 
     def up(self, current: str) -> str:
-        """Older entry. Saves *current* as the draft when leaving the live line."""
+        """Older entry. Saves *current* as the draft when it is not a stored line."""
         if not self._lines:
             return current
-        if self._cursor >= len(self._lines):
-            self._draft = current
+        self._capture_draft(current)
         if self._cursor > 0:
             self._cursor -= 1
         return self._lines[self._cursor]
+
+    def _capture_draft(self, current: str) -> None:
+        if self._cursor >= len(self._lines):
+            self._draft = current
+            return
+        if current != self._lines[self._cursor]:
+            self._draft = current
 
 
 def append_history_line(line: str, *, path: Path | None = None) -> None:
@@ -47,8 +54,11 @@ def append_history_line(line: str, *, path: Path | None = None) -> None:
     if not text:
         return
     dest = path if path is not None else history_file_path()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    FileHistory(str(dest)).append_string(text)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        FileHistory(str(dest)).append_string(text)
+    except OSError:
+        return
 
 
 def apply_history_selector(
@@ -69,6 +79,9 @@ def load_history_lines(*, path: Path | None = None) -> list[str]:
     dest = path if path is not None else history_file_path()
     if not dest.is_file():
         return []
-    newest_first = list(FileHistory(str(dest)).load_history_strings())
+    try:
+        newest_first = list(FileHistory(str(dest)).load_history_strings())
+    except OSError, UnicodeDecodeError:
+        return []
     newest_first.reverse()
     return newest_first
