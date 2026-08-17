@@ -263,7 +263,11 @@ class SpottyBunnyController(NSObject):
                 self.hide()
             return
         if self._became_key:
-            if self._about_panel is not None and self._about_panel.isVisible():
+            if (
+                self._about_panel is not None
+                and self._about_panel.isVisible()
+                and NSApp.keyWindow() is self._about_panel
+            ):
                 return
             self.hide()
 

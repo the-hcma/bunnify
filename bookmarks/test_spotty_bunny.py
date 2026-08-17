@@ -957,7 +957,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
         self.assertIn("resigning is self._about_panel", source)
-        self.assertIn("self._about_panel.isVisible()", source)
+        self.assertIn("NSApp.keyWindow() is self._about_panel", source)
         self.assertIn("self._about_panel.setDelegate_(self)", source)
 
 
