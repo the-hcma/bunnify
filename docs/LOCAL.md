@@ -103,8 +103,9 @@ spotty-bunny
 ```
 
 Hold **one** Control, then press the **other** to show the search box. Esc
-(or the same chord again) hides it. Ctrl-C in that terminal quits. Startup
-prints the log file path on stderr (`spotty-bunny: logging to …`).
+(or the same chord again) hides it. Up/down walks the CLI REPL history file
+(`platformdirs` cache `bunnify/repl_history`). Ctrl-C in that terminal quits.
+Startup prints the log file path on stderr (`spotty-bunny: logging to …`).
 
 If the chord does nothing, run with `--verbose` and watch stderr. Lines
 named `tap …` show whether key events arrive. If none appear while you press
@@ -115,8 +116,7 @@ never appears, HID may still miss right Control (`hid R=False`); Spotty Bunny
 also uses device flag bits and the event keycode. Re-run `--verbose` after
 this fix.
 
-Tab completion and opening shortcuts are not wired yet; this is a no-op
-panel for assessing the hotkey and window.
+Tab completion and opening shortcuts are not wired yet.
 
 ## macOS LaunchAgent
 
