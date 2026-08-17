@@ -101,6 +101,7 @@ from app.spotty_bunny_quit import (
     quit_ns_app,
 )
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
+from app.version import get_build_info
 
 FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, yt, docs)"
 LOGO_LEFT = 16.0
@@ -199,6 +200,7 @@ class SpottyBunnyController(NSObject):
         self.tap = None
         self.visible = False
         self._build_panel()
+        self._io.submit(get_build_info, lambda _result: None)
         return self
 
     def numberOfRowsInTableView_(self, _table) -> int:

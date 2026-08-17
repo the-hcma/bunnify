@@ -952,6 +952,12 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertNotIn('setTitle_("spotty-bunny")', source)
         self.assertIn("showAbout:", source)
 
+    def test_about_panel_build_info_prewarmed(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("self._io.submit(get_build_info", source)
+
     def test_about_panel_resign_does_not_dismiss_main_while_visible(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
