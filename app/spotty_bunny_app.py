@@ -22,6 +22,9 @@ from Cocoa import (
     NSObject,
     NSPanel,
     NSScreen,
+    NSScrollView,
+    NSTableColumn,
+    NSTableView,
     NSTextField,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
@@ -29,6 +32,7 @@ from Cocoa import (
     NSWindowStyleMaskNonactivatingPanel,
     NSWindowStyleMaskTitled,
 )
+from Foundation import NSIndexSet, NSOperationQueue, NSThread
 from PyObjCTools import MachSignals
 from Quartz import (
     CFMachPortCreateRunLoopSource,
@@ -59,7 +63,16 @@ from Quartz import (
     kCGSessionEventTap,
 )
 
+from app.client import fetch_key_entries, fetch_suggestions
+from app.config import resolve_base_url
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
+from app.spotty_bunny_complete import (
+    CompletionRow,
+    apply_completion,
+    completion_still_current,
+    completions_for,
+    make_spotty_completer,
+)
 from app.spotty_bunny_history import (
     HistoryNavigator,
     apply_history_selector,
@@ -74,6 +87,7 @@ from app.spotty_bunny_hotkey import (
     apply_control_event,
     describe_key,
 )
+from app.spotty_bunny_io import ThreadIo
 from app.spotty_bunny_quit import (
     WAKE_EVENT_SELECTOR,
     post_application_wake_event,
@@ -82,6 +96,7 @@ from app.spotty_bunny_quit import (
 
 PANEL_HEIGHT = 80.0
 PANEL_WIDTH = 640.0
+TABLE_HEIGHT = 140.0
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +104,21 @@ logger = logging.getLogger(__name__)
 class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
 
+    def controlTextDidChange_(self, _notification) -> None:
+        if self._applying_completion:
+            return
+        if self._completion_rows:
+            self._hide_completions()
+
     def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
-        """History up/down; dismiss on Esc/Return via the field editor."""
+        """Tab completions, history up/down, dismiss on Esc/Return."""
         name = selector if isinstance(selector, str) else str(selector)
+        if name == "insertTab:":
+            self._request_completions()
+            return True
+        if self._completion_rows and name in {"moveDown:", "moveUp:"}:
+            self._move_completion(name)
+            return True
         current = ""
         if self.field is not None:
             current = str(self.field.stringValue())
@@ -110,6 +137,7 @@ class SpottyBunnyController(NSObject):
 
     def hide(self) -> None:
         logger.info("hide panel (was visible=%s)", self.visible)
+        self._hide_completions()
         panel = getattr(self, "panel", None)
         if panel is not None:
             panel.orderOut_(None)
@@ -120,20 +148,32 @@ class SpottyBunnyController(NSObject):
         self = objc.super(SpottyBunnyController, self).init()
         if self is None:
             return None
+        self._applying_completion = False
         self._became_key = False
+        self._completer = None
+        self._completion_prefix = ""
+        self._completion_rows: list[CompletionRow] = []
+        self._completion_seq = 0
         self._history = HistoryNavigator()
+        self._io = ThreadIo()
         self.callback = None
         self.chord = ChordTracker()
         self.field = None
         self.panel = None
+        self.scroll = None
         self.source = None
+        self.table = None
         self.tap = None
         self.visible = False
         self._build_panel()
         return self
 
+    def numberOfRowsInTableView_(self, _table) -> int:
+        return len(self._completion_rows)
+
     def show(self) -> None:
         self._history = HistoryNavigator(load_history_lines())
+        self._hide_completions()
         if self.field is not None:
             self.field.setStringValue_("")
         self._center_panel()
@@ -147,6 +187,18 @@ class SpottyBunnyController(NSObject):
             self.panel.makeKeyAndOrderFront_(None)
         if self.panel is not None and self.field is not None:
             self.panel.makeFirstResponder_(self.field)
+        self._io.submit(self._load_completer, self._completer_loaded)
+
+    def tableView_objectValueForTableColumn_row_(self, _table, column, row: int):
+        if row < 0 or row >= len(self._completion_rows):
+            return ""
+        item = self._completion_rows[row]
+        ident = str(column.identifier())
+        if ident == "key":
+            return item.insert
+        if ident == "meta":
+            return item.meta
+        return ""
 
     def toggle(self) -> None:
         logger.info("toggle (visible=%s)", self.visible)
@@ -203,8 +255,30 @@ class SpottyBunnyController(NSObject):
         field.setDelegate_(self)
         panel.contentView().addSubview_(field)
 
+        scroll = NSScrollView.alloc().initWithFrame_(
+            NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, TABLE_HEIGHT - 8.0)
+        )
+        scroll.setHasVerticalScroller_(True)
+        scroll.setHidden_(True)
+        table = NSTableView.alloc().init()
+        key_col = NSTableColumn.alloc().initWithIdentifier_("key")
+        key_col.setTitle_("Shortcut")
+        key_col.setWidth_(160.0)
+        meta_col = NSTableColumn.alloc().initWithIdentifier_("meta")
+        meta_col.setTitle_("Description")
+        meta_col.setWidth_(400.0)
+        table.addTableColumn_(key_col)
+        table.addTableColumn_(meta_col)
+        table.setDataSource_(self)
+        table.setDelegate_(self)
+        table.setHeaderView_(None)
+        scroll.setDocumentView_(table)
+        panel.contentView().addSubview_(scroll)
+
         self.field = field
         self.panel = panel
+        self.scroll = scroll
+        self.table = table
 
     def _center_panel(self) -> None:
         if self.panel is None:
@@ -217,6 +291,128 @@ class SpottyBunnyController(NSObject):
         origin_x = visible.origin.x + (visible.size.width - frame.size.width) / 2.0
         origin_y = visible.origin.y + (visible.size.height - frame.size.height) * 0.55
         self.panel.setFrameOrigin_((origin_x, origin_y))
+
+    def _completer_loaded(self, result: object) -> None:
+        def apply() -> None:
+            if isinstance(result, Exception):
+                logger.warning("could not load shortcuts: %s", result)
+                return
+            self._completer = result
+            logger.info("shortcut completer ready")
+
+        _run_on_main(apply)
+
+    def _completions_ready(self, result: object, *, seq: int) -> None:
+        def apply() -> None:
+            field = str(self.field.stringValue()) if self.field is not None else ""
+            if not completion_still_current(
+                expected_seq=seq,
+                field=field,
+                prefix=self._completion_prefix,
+                seq=self._completion_seq,
+            ):
+                return
+            if not self.visible:
+                return
+            if isinstance(result, Exception):
+                logger.warning("completion failed: %s", result)
+                return
+            self._show_completions(result)  # type: ignore[arg-type]
+
+        _run_on_main(apply)
+
+    def _hide_completions(self) -> None:
+        self._completion_seq += 1
+        self._completion_prefix = ""
+        self._completion_rows = []
+        if self.table is not None:
+            self.table.reloadData()
+        self._set_table_visible(False)
+
+    def _load_completer(self) -> object:
+        base_url = resolve_base_url(persist=False, allow_prompt=False)
+        entries = fetch_key_entries(base_url=base_url)
+        return make_spotty_completer(
+            entries=entries,
+            suggestions_fn=lambda query: fetch_suggestions(query, base_url=base_url),
+        )
+
+    def _move_completion(self, selector: str) -> None:
+        if not self._completion_rows or self.table is None or self.field is None:
+            return
+        idx = int(self.table.selectedRow())
+        if idx < 0:
+            idx = 0
+        if selector == "moveUp:":
+            idx = max(0, idx - 1)
+        else:
+            idx = min(len(self._completion_rows) - 1, idx + 1)
+        self.table.selectRowIndexes_byExtendingSelection_(
+            NSIndexSet.indexSetWithIndex_(idx),
+            False,
+        )
+        row = self._completion_rows[idx]
+        self._set_field_text(apply_completion(self._completion_prefix, row))
+
+    def _request_completions(self) -> None:
+        if self._completer is None or self.field is None:
+            logger.warning("tab ignored (completer not ready)")
+            return
+        text = str(self.field.stringValue())
+        self._completion_rows = []
+        if self.table is not None:
+            self.table.reloadData()
+        self._set_table_visible(False)
+        self._completion_prefix = text
+        self._completion_seq += 1
+        seq = self._completion_seq
+        completer = self._completer
+        self._io.submit(
+            lambda: completions_for(text, completer),
+            lambda result: self._completions_ready(result, seq=seq),
+        )
+
+    def _set_field_text(self, text: str) -> None:
+        if self.field is None:
+            return
+        self._applying_completion = True
+        try:
+            self.field.setStringValue_(text)
+        finally:
+            self._applying_completion = False
+
+    def _set_table_visible(self, visible: bool) -> None:
+        if self.scroll is None or self.panel is None or self.field is None:
+            return
+        self.scroll.setHidden_(not visible)
+        frame = self.panel.frame()
+        frame.size.height = PANEL_HEIGHT + (TABLE_HEIGHT if visible else 0.0)
+        self.panel.setFrame_display_(frame, True)
+        if visible:
+            self.field.setFrame_(
+                NSMakeRect(16.0, 16.0 + TABLE_HEIGHT, PANEL_WIDTH - 32.0, 40.0)
+            )
+            self.scroll.setFrame_(
+                NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, TABLE_HEIGHT - 8.0)
+            )
+        else:
+            self.field.setFrame_(NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, 40.0))
+        self._center_panel()
+
+    def _show_completions(self, rows: list[CompletionRow]) -> None:
+        self._completion_rows = rows
+        if not rows:
+            self._hide_completions()
+            return
+        if self.field is not None:
+            self._set_field_text(apply_completion(self._completion_prefix, rows[0]))
+        if self.table is not None:
+            self.table.reloadData()
+            self.table.selectRowIndexes_byExtendingSelection_(
+                NSIndexSet.indexSetWithIndex_(0),
+                False,
+            )
+        self._set_table_visible(len(rows) > 1)
 
 
 def run_spotty_bunny_app() -> int:
@@ -389,3 +585,12 @@ def _post_wake_event() -> None:
 def _quit_on_sigint(_signum: int) -> None:
     logger.info("SIGINT received; stopping NSApp")
     quit_ns_app(ns_app=NSApp, post_wake=_post_wake_event)
+
+
+def _run_on_main(fn: object) -> None:
+    """Run *fn* on the AppKit thread (completion callbacks arrive off-main)."""
+    callback = fn if callable(fn) else lambda: None
+    if NSThread.isMainThread():
+        callback()
+        return
+    NSOperationQueue.mainQueue().addOperationWithBlock_(callback)

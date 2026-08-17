@@ -240,6 +240,103 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.assertIn("log_level=DEBUG", logged)
 
 
+class SpottyBunnyCompleteTests(SimpleTestCase):
+    def test_apply_completion_appends_when_start_position_is_zero(self) -> None:
+        from app.spotty_bunny_complete import CompletionRow, apply_completion
+
+        row = CompletionRow(insert="the-hcma/bunnify", meta="", start_position=0)
+        self.assertEqual(apply_completion("pr ", row), "pr the-hcma/bunnify")
+
+    def test_apply_completion_replaces_prefix(self) -> None:
+        from app.spotty_bunny_complete import CompletionRow, apply_completion
+
+        row = CompletionRow(insert="gh", meta="GitHub", start_position=-1)
+        self.assertEqual(apply_completion("g", row), "gh")
+
+    def test_completion_still_current_requires_matching_seq_and_field(self) -> None:
+        from app.spotty_bunny_complete import completion_still_current
+
+        self.assertTrue(
+            completion_still_current(expected_seq=2, field="gh", prefix="gh", seq=2)
+        )
+        self.assertFalse(
+            completion_still_current(expected_seq=2, field="gho", prefix="gh", seq=2)
+        )
+        self.assertFalse(
+            completion_still_current(expected_seq=2, field="gh", prefix="gh", seq=3)
+        )
+
+    def test_first_token_fuzzy_matches_description(self) -> None:
+        from app.client import KeyEntry
+        from app.spotty_bunny_complete import completions_for, make_spotty_completer
+
+        completer = make_spotty_completer(
+            entries=[
+                KeyEntry(key="gh", description="GitHub"),
+                KeyEntry(key="g", description="Google"),
+            ]
+        )
+        rows = completions_for("hub", completer)
+        self.assertEqual([row.insert for row in rows], ["gh"])
+
+    def test_meta_commands_are_excluded(self) -> None:
+        from app.spotty_bunny_complete import completions_for, make_spotty_completer
+
+        rows = completions_for("q", make_spotty_completer(entries=[]))
+        self.assertEqual(rows, [])
+
+    def test_open_search_uses_suggestions_fn(self) -> None:
+        from app.client import KeyEntry
+        from app.spotty_bunny_complete import completions_for, make_spotty_completer
+
+        def suggestions(query: str) -> list[str]:
+            if query.startswith("g "):
+                return [f"{query} news"]
+            return []
+
+        completer = make_spotty_completer(
+            entries=[KeyEntry(key="g", description="Google")],
+            suggestions_fn=suggestions,
+        )
+        rows = completions_for("g hello", completer)
+        self.assertEqual([row.insert for row in rows], ["g hello news"])
+
+    def test_param_suggest_fn_is_used(self) -> None:
+        from app.client import KeyEntry
+        from app.spotty_bunny_complete import (
+            apply_completion,
+            completions_for,
+            make_spotty_completer,
+        )
+
+        completer = make_spotty_completer(
+            entries=[
+                KeyEntry(key="pr", description="PR", params=("org/repo", "n")),
+            ],
+            param_suggest_fn=lambda **_kwargs: ["the-hcma/bunnify"],
+        )
+        rows = completions_for("pr ", completer)
+        self.assertEqual([row.insert for row in rows], ["the-hcma/bunnify"])
+        self.assertEqual(rows[0].start_position, 0)
+        self.assertEqual(apply_completion("pr ", rows[0]), "pr the-hcma/bunnify")
+
+    def test_wrapper_asks_first_token_fuzzy_completer(self) -> None:
+        from prompt_toolkit.completion import Completion
+
+        from app.spotty_bunny_complete import completions_for
+
+        completer = MagicMock()
+        completer.get_completions.return_value = [
+            Completion("gh", start_position=-1, display_meta="GitHub"),
+        ]
+        rows = completions_for("g", completer)
+        completer.get_completions.assert_called_once()
+        document = completer.get_completions.call_args[0][0]
+        self.assertEqual(document.text, "g")
+        self.assertEqual([row.insert for row in rows], ["gh"])
+        self.assertEqual(rows[0].meta, "GitHub")
+
+
 class SpottyBunnyHistoryTests(SimpleTestCase):
     def test_append_round_trips_prompt_toolkit_file_history(self) -> None:
         from prompt_toolkit.history import FileHistory

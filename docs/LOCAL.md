@@ -104,8 +104,10 @@ spotty-bunny
 
 Hold **one** Control, then press the **other** to show the search box. Esc
 (or the same chord again) hides it. Up/down walks the CLI REPL history file
-(`platformdirs` cache `bunnify/repl_history`). Ctrl-C in that terminal quits.
-Startup prints the log file path on stderr (`spotty-bunny: logging to …`).
+(`platformdirs` cache `bunnify/repl_history`). Tab uses the same completers as
+the CLI (`FirstTokenFuzzyCompleter` / `ShortcutCompleter`) and lists matches
+under the field. Ctrl-C in that terminal quits. Startup prints the log file
+path on stderr (`spotty-bunny: logging to …`).
 
 If the chord does nothing, run with `--verbose` and watch stderr. Lines
 named `tap …` show whether key events arrive. If none appear while you press
@@ -116,7 +118,7 @@ never appears, HID may still miss right Control (`hid R=False`); Spotty Bunny
 also uses device flag bits and the event keycode. Re-run `--verbose` after
 this fix.
 
-Tab completion and opening shortcuts are not wired yet.
+Opening shortcuts with Enter is not wired yet.
 
 ## macOS LaunchAgent
 
