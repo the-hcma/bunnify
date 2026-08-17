@@ -32,6 +32,7 @@ bunnify pr the-hcma/bunnify 272 # parameterized shortcut (repo + PR number)
 bunnify --fzf                   # fuzzy-pick a shortcut (requires fzf on PATH)
 bunnify --print-url gh          # print resolved URL instead of opening browser
 bunnify --list-keys             # list keys from the running server
+bunnify overlay                 # macOS search box (requires extra macos)
 ```
 
 ## Server

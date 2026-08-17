@@ -84,6 +84,8 @@ if [[ "$version_line" == *"(unknown)"* ]]; then
 fi
 "$bin_dir/bunnify-server" --help >/dev/null
 "$bin_dir/bunnify-server" --version
+"$bin_dir/bunnify-overlay" --help >/dev/null
+"$bin_dir/bunnify-overlay" --version
 
 echo "🐰 Starting installed server outside the repository..."
 "$bin_dir/bunnify-server" \

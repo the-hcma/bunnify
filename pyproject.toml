@@ -23,8 +23,16 @@ dependencies = [
     "typing-extensions==4.16.0",
 ]
 
+[project.optional-dependencies]
+macos = [
+    "pyobjc-core==12.2.1",
+    "pyobjc-framework-Cocoa==12.2.1",
+    "pyobjc-framework-Quartz==12.2.1",
+]
+
 [project.scripts]
 bunnify = "app.cli:main"
+bunnify-overlay = "app.overlay_cli:main"
 bunnify-server = "app.server_cli:main"
 
 [project.urls]

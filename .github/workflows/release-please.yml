@@ -181,6 +181,9 @@ jobs:
       - name: Validate bunnify-server script
         run: ./scripts/bunnify-server --help
 
+      - name: Validate bunnify-overlay script
+        run: ./scripts/bunnify-overlay --help
+
       - name: Run unit tests
         run: ./test_bunnify
 
