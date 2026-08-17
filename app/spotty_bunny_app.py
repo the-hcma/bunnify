@@ -384,6 +384,8 @@ class SpottyBunnyController(NSObject):
     def _request_completions(self) -> None:
         if self._completer is None or self.field is None:
             logger.warning("tab ignored (completer not ready)")
+            if self._completer is None:
+                self._set_status("could not load shortcuts")
             return
         text = str(self.field.stringValue())
         self._completion_rows = []
