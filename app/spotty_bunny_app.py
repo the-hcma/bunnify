@@ -141,6 +141,8 @@ class SpottyBunnyController(NSObject):
 
     def hide(self) -> None:
         logger.info("hide panel (was visible=%s)", self.visible)
+        self._resolve_seq += 1
+        self._resolving = False
         self._hide_completions()
         self._set_status("")
         panel = getattr(self, "panel", None)
@@ -162,6 +164,7 @@ class SpottyBunnyController(NSObject):
         self._completion_seq = 0
         self._history = HistoryNavigator()
         self._io = ThreadIo()
+        self._resolve_seq = 0
         self._resolving = False
         self.callback = None
         self.chord = ChordTracker()
@@ -396,11 +399,11 @@ class SpottyBunnyController(NSObject):
             lambda result: self._completions_ready(result, seq=seq),
         )
 
-    def _resolve_ready(self, result: object) -> None:
+    def _resolve_ready(self, result: object, *, seq: int) -> None:
         def apply() -> None:
-            self._resolving = False
-            if not self.visible:
+            if seq != self._resolve_seq:
                 return
+            self._resolving = False
             if isinstance(result, Exception):
                 logger.warning("resolve failed: %s", result)
                 self._hide_completions()
@@ -467,6 +470,8 @@ class SpottyBunnyController(NSObject):
         if not query:
             self.hide()
             return
+        self._resolve_seq += 1
+        seq = self._resolve_seq
         self._resolving = True
         self._set_status("")
         base_url = self._base_url or resolve_base_url(persist=False, allow_prompt=False)
@@ -474,7 +479,7 @@ class SpottyBunnyController(NSObject):
         def work() -> str:
             return resolve_query(query, base_url=base_url)
 
-        self._io.submit(work, self._resolve_ready)
+        self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
 
 
 def run_spotty_bunny_app() -> int:
