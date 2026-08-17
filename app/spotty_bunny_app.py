@@ -69,6 +69,7 @@ from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
     apply_completion,
+    completion_still_current,
     completions_for,
     make_spotty_completer,
 )
@@ -102,6 +103,12 @@ logger = logging.getLogger(__name__)
 
 class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
+
+    def controlTextDidChange_(self, _notification) -> None:
+        if self._applying_completion:
+            return
+        if self._completion_rows:
+            self._hide_completions()
 
     def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
         """Tab completions, history up/down, dismiss on Esc/Return."""
@@ -141,10 +148,12 @@ class SpottyBunnyController(NSObject):
         self = objc.super(SpottyBunnyController, self).init()
         if self is None:
             return None
+        self._applying_completion = False
         self._became_key = False
         self._completer = None
         self._completion_prefix = ""
         self._completion_rows: list[CompletionRow] = []
+        self._completion_seq = 0
         self._history = HistoryNavigator()
         self._io = ThreadIo()
         self.callback = None
@@ -293,8 +302,18 @@ class SpottyBunnyController(NSObject):
 
         _run_on_main(apply)
 
-    def _completions_ready(self, result: object) -> None:
+    def _completions_ready(self, result: object, *, seq: int) -> None:
         def apply() -> None:
+            field = str(self.field.stringValue()) if self.field is not None else ""
+            if not completion_still_current(
+                expected_seq=seq,
+                field=field,
+                prefix=self._completion_prefix,
+                seq=self._completion_seq,
+            ):
+                return
+            if not self.visible:
+                return
             if isinstance(result, Exception):
                 logger.warning("completion failed: %s", result)
                 return
@@ -303,6 +322,7 @@ class SpottyBunnyController(NSObject):
         _run_on_main(apply)
 
     def _hide_completions(self) -> None:
+        self._completion_seq += 1
         self._completion_prefix = ""
         self._completion_rows = []
         if self.table is not None:
@@ -310,7 +330,7 @@ class SpottyBunnyController(NSObject):
         self._set_table_visible(False)
 
     def _load_completer(self) -> object:
-        base_url = resolve_base_url(persist=False)
+        base_url = resolve_base_url(persist=False, allow_prompt=False)
         entries = fetch_key_entries(base_url=base_url)
         return make_spotty_completer(
             entries=entries,
@@ -332,7 +352,7 @@ class SpottyBunnyController(NSObject):
             False,
         )
         row = self._completion_rows[idx]
-        self.field.setStringValue_(apply_completion(self._completion_prefix, row))
+        self._set_field_text(apply_completion(self._completion_prefix, row))
 
     def _request_completions(self) -> None:
         if self._completer is None or self.field is None:
@@ -340,11 +360,22 @@ class SpottyBunnyController(NSObject):
             return
         text = str(self.field.stringValue())
         self._completion_prefix = text
+        self._completion_seq += 1
+        seq = self._completion_seq
         completer = self._completer
         self._io.submit(
             lambda: completions_for(text, completer),
-            self._completions_ready,
+            lambda result: self._completions_ready(result, seq=seq),
         )
+
+    def _set_field_text(self, text: str) -> None:
+        if self.field is None:
+            return
+        self._applying_completion = True
+        try:
+            self.field.setStringValue_(text)
+        finally:
+            self._applying_completion = False
 
     def _set_table_visible(self, visible: bool) -> None:
         if self.scroll is None or self.panel is None or self.field is None:
@@ -370,9 +401,7 @@ class SpottyBunnyController(NSObject):
             self._hide_completions()
             return
         if self.field is not None:
-            self.field.setStringValue_(
-                apply_completion(self._completion_prefix, rows[0])
-            )
+            self._set_field_text(apply_completion(self._completion_prefix, rows[0]))
         if self.table is not None:
             self.table.reloadData()
             self.table.selectRowIndexes_byExtendingSelection_(

@@ -241,11 +241,30 @@ class SpottyBunnyCliTests(SimpleTestCase):
 
 
 class SpottyBunnyCompleteTests(SimpleTestCase):
+    def test_apply_completion_appends_when_start_position_is_zero(self) -> None:
+        from app.spotty_bunny_complete import CompletionRow, apply_completion
+
+        row = CompletionRow(insert="the-hcma/bunnify", meta="", start_position=0)
+        self.assertEqual(apply_completion("pr ", row), "pr the-hcma/bunnify")
+
     def test_apply_completion_replaces_prefix(self) -> None:
         from app.spotty_bunny_complete import CompletionRow, apply_completion
 
         row = CompletionRow(insert="gh", meta="GitHub", start_position=-1)
         self.assertEqual(apply_completion("g", row), "gh")
+
+    def test_completion_still_current_requires_matching_seq_and_field(self) -> None:
+        from app.spotty_bunny_complete import completion_still_current
+
+        self.assertTrue(
+            completion_still_current(expected_seq=2, field="gh", prefix="gh", seq=2)
+        )
+        self.assertFalse(
+            completion_still_current(expected_seq=2, field="gho", prefix="gh", seq=2)
+        )
+        self.assertFalse(
+            completion_still_current(expected_seq=2, field="gh", prefix="gh", seq=3)
+        )
 
     def test_first_token_fuzzy_matches_description(self) -> None:
         from app.client import KeyEntry
@@ -284,7 +303,11 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
 
     def test_param_suggest_fn_is_used(self) -> None:
         from app.client import KeyEntry
-        from app.spotty_bunny_complete import completions_for, make_spotty_completer
+        from app.spotty_bunny_complete import (
+            apply_completion,
+            completions_for,
+            make_spotty_completer,
+        )
 
         completer = make_spotty_completer(
             entries=[
@@ -294,6 +317,8 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         )
         rows = completions_for("pr ", completer)
         self.assertEqual([row.insert for row in rows], ["the-hcma/bunnify"])
+        self.assertEqual(rows[0].start_position, 0)
+        self.assertEqual(apply_completion("pr ", rows[0]), "pr the-hcma/bunnify")
 
     def test_wrapper_asks_first_token_fuzzy_completer(self) -> None:
         from prompt_toolkit.completion import Completion

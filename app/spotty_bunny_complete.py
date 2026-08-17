@@ -24,11 +24,22 @@ class CompletionRow:
 
 
 def apply_completion(current: str, row: CompletionRow) -> str:
-    """Replace the in-progress token in *current* with *row.insert*."""
-    start = row.start_position
-    if start < 0:
-        return current[: len(current) + start] + row.insert
-    return current[:start] + row.insert
+    """Apply *row* like prompt_toolkit (start_position is relative to the cursor)."""
+    begin = len(current) + row.start_position
+    if begin < 0:
+        begin = 0
+    return current[:begin] + row.insert
+
+
+def completion_still_current(
+    *,
+    expected_seq: int,
+    field: str,
+    prefix: str,
+    seq: int,
+) -> bool:
+    """True when an async Tab result still matches the field that requested it."""
+    return seq == expected_seq and field == prefix
 
 
 def completions_for(text: str, completer: Completer) -> list[CompletionRow]:
