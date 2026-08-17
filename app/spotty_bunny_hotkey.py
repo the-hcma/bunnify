@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 CONTROL_LEFT_KEYCODE = 59
 CONTROL_RIGHT_KEYCODE = 62
 
@@ -14,12 +17,14 @@ class ChordTracker:
     Pressing both from idle in a single update does not fire.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, monotonic: Callable[[], float] | None = None) -> None:
         self._held_left = False
         self._held_right = False
+        self._last_event_at = 0.0
         self._last_event_signature: tuple[int, bool, bool, bool, bool, bool] | None = (
             None
         )
+        self._monotonic = time.monotonic if monotonic is None else monotonic
 
     @property
     def held_left(self) -> bool:
@@ -32,9 +37,19 @@ class ChordTracker:
     def record_event_signature(
         self, signature: tuple[int, bool, bool, bool, bool, bool]
     ) -> bool:
-        """Return True when *signature* matches the previous tap event."""
-        if signature == self._last_event_signature:
+        """Return True when *signature* is a duplicate within the echo window.
+
+        HID-blind Control press and release can share the same sensor bits.
+        Ignore only echoes that arrive inside ``DUPLICATE_EVENT_WINDOW_S`` so a
+        later release or repress still toggles.
+        """
+        now = self._monotonic()
+        if (
+            signature == self._last_event_signature
+            and now - self._last_event_at < DUPLICATE_EVENT_WINDOW_S
+        ):
             return True
+        self._last_event_at = now
         self._last_event_signature = signature
         return False
 
@@ -51,6 +66,7 @@ class ChordTracker:
 # IOKit IOLLEvent.h: NX_DEVICELCTLKEYMASK / NX_DEVICERCTLKEYMASK in CGEvent flags.
 DEVICE_LEFT_CONTROL_MASK = 0x00000001
 DEVICE_RIGHT_CONTROL_MASK = 0x00002000
+DUPLICATE_EVENT_WINDOW_S = 0.05
 
 # Carbon HIToolbox Events.h kVK_* (ANSI US). Ordered by keycode.
 KEYCODE_NAMES: dict[int, str] = {
@@ -199,8 +215,9 @@ def apply_control_event(
     """Resolve and apply one tap event.
 
     ``keyDown`` / ``keyUp`` are ignored. Duplicate ``flagsChanged`` snapshots
-    (same keycode and sensor bits) are ignored so a HID-blind Control press
-    cannot toggle the chord off on the follow-up event.
+    (same keycode and sensor bits) inside ``DUPLICATE_EVENT_WINDOW_S`` are
+    ignored so a HID-blind Control press cannot toggle off on the echo event.
+    The same snapshot after that window is a real release or repress.
     """
     if not flags_changed:
         return False

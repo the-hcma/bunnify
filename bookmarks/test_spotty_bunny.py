@@ -19,6 +19,7 @@ from app.spotty_bunny_cli import (
 from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
+    DUPLICATE_EVENT_WINDOW_S,
     ChordTracker,
     apply_control_event,
     apply_hid_snapshot,
@@ -373,6 +374,63 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
         self.assertTrue(tracker.held_left)
         self.assertTrue(tracker.held_right)
 
+    def test_hid_miss_right_release_then_repress_fires(self) -> None:
+        clock = _FakeClock()
+        tracker = ChordTracker(monotonic=clock)
+        held_left = {
+            "hid_left": True,
+            "hid_right": False,
+            "flag_left": True,
+            "flag_right": False,
+            "control_flag": True,
+        }
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        clock.advance(0.001)
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        self.assertTrue(tracker.held_right)
+        clock.advance(DUPLICATE_EVENT_WINDOW_S)
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        self.assertTrue(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+        clock.advance(DUPLICATE_EVENT_WINDOW_S)
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+
     def test_hid_misses_both_controls_press_release_repress(self) -> None:
         tracker = ChordTracker()
         miss = {
@@ -567,3 +625,14 @@ class SpottyBunnyQuitTests(SimpleTestCase):
             "otherEventWithType_location_modifierFlags_timestamp_windowNumber"
             "_context_subtype_data1_data2_",
         )
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds
