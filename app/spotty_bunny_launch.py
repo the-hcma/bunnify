@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from app.config import run_dir
 logger = logging.getLogger(__name__)
 
 SPOTTY_BUNNY_PID_FILE = ".spotty-bunny.pid"
+SPOTTY_BUNNY_STARTUP_WAIT_S = 0.05
 
 
 def clear_spotty_bunny_pid(*, pid_dir: Path | None = None) -> None:
@@ -47,6 +49,10 @@ def ensure_spotty_bunny_running(
     if pid <= 0:
         logger.warning("spotty-bunny spawn returned invalid pid %s", pid)
         return False
+    time.sleep(SPOTTY_BUNNY_STARTUP_WAIT_S)
+    if not _spotty_bunny_process_alive(pid):
+        logger.warning("spotty-bunny exited immediately after spawn (pid %s)", pid)
+        return False
     write_spotty_bunny_pid(pid, pid_dir=directory)
     logger.info("started spotty-bunny (pid %s)", pid)
     return True
@@ -61,18 +67,14 @@ def spotty_bunny_command() -> list[str]:
 
 
 def spotty_bunny_is_running(*, pid_dir: Path | None = None) -> bool:
-    """True when the pid file points at a live process."""
+    """True when the pid file points at a live Spotty Bunny process."""
     path = spotty_bunny_pid_path(pid_dir=pid_dir)
     try:
         raw = path.read_text(encoding="utf-8").strip()
         pid = int(raw)
     except OSError, ValueError:
         return False
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
+    if not _spotty_bunny_process_alive(pid):
         path.unlink(missing_ok=True)
         return False
     return True
@@ -89,6 +91,36 @@ def write_spotty_bunny_pid(pid: int, *, pid_dir: Path | None = None) -> None:
     path = spotty_bunny_pid_path(pid_dir=pid_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"{pid}\n", encoding="utf-8")
+
+
+def _is_spotty_bunny_command(command: str) -> bool:
+    return "spotty-bunny" in command or "spotty_bunny_cli" in command
+
+
+def _process_command(pid: int) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    command = completed.stdout.strip()
+    return command or None
+
+
+def _spotty_bunny_process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    command = _process_command(pid)
+    return command is not None and _is_spotty_bunny_command(command)
 
 
 def _spawn_detached(command: Sequence[str]) -> int:
