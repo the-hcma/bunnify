@@ -63,7 +63,8 @@ from Quartz import (
     kCGSessionEventTap,
 )
 
-from app.client import fetch_key_entries, fetch_suggestions
+from app.cli import open_url
+from app.client import ClientError, fetch_key_entries, fetch_suggestions
 from app.config import resolve_base_url
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
@@ -75,6 +76,7 @@ from app.spotty_bunny_complete import (
 )
 from app.spotty_bunny_history import (
     HistoryNavigator,
+    append_history_line,
     apply_history_selector,
     load_history_lines,
 )
@@ -93,7 +95,7 @@ from app.spotty_bunny_quit import (
     post_application_wake_event,
     quit_ns_app,
 )
-from app.spotty_bunny_resolve import resolve_query
+from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
 
 PANEL_HEIGHT = 80.0
 PANEL_WIDTH = 640.0
@@ -166,6 +168,7 @@ class SpottyBunnyController(NSObject):
         self._io = ThreadIo()
         self._resolve_seq = 0
         self._resolving = False
+        self._shortcuts_load_failed = False
         self.callback = None
         self.chord = ChordTracker()
         self.field = None
@@ -186,6 +189,7 @@ class SpottyBunnyController(NSObject):
         self._history = HistoryNavigator(load_history_lines())
         self._hide_completions()
         self._set_status("")
+        self._shortcuts_load_failed = False
         if self.field is not None:
             self.field.setStringValue_("")
         self._center_panel()
@@ -320,10 +324,13 @@ class SpottyBunnyController(NSObject):
         def apply() -> None:
             if isinstance(result, Exception):
                 logger.warning("could not load shortcuts: %s", result)
+                self._shortcuts_load_failed = True
                 return
             completer, base_url = result  # type: ignore[misc]
             self._completer = completer
             self._base_url = base_url
+            self._shortcuts_load_failed = False
+            self._set_status("")
             logger.info("shortcut completer ready")
 
         _run_on_main(apply)
@@ -384,7 +391,7 @@ class SpottyBunnyController(NSObject):
     def _request_completions(self) -> None:
         if self._completer is None or self.field is None:
             logger.warning("tab ignored (completer not ready)")
-            if self._completer is None:
+            if self._completer is None and self._shortcuts_load_failed:
                 self._set_status("could not load shortcuts")
             return
         text = str(self.field.stringValue())
@@ -401,9 +408,9 @@ class SpottyBunnyController(NSObject):
             lambda result: self._completions_ready(result, seq=seq),
         )
 
-    def _resolve_ready(self, result: object, *, seq: int) -> None:
+    def _resolve_ready(self, result: object, *, query: str, seq: int) -> None:
         def apply() -> None:
-            if seq != self._resolve_seq:
+            if not resolve_still_current(expected_seq=seq, seq=self._resolve_seq):
                 return
             self._resolving = False
             if isinstance(result, Exception):
@@ -411,7 +418,21 @@ class SpottyBunnyController(NSObject):
                 self._hide_completions()
                 self._set_status(str(result))
                 return
-            logger.info("opened %s", result)
+            url = result if isinstance(result, str) else ""
+            if not url:
+                logger.warning("resolve failed: missing url")
+                self._hide_completions()
+                self._set_status("resolve response missing url")
+                return
+            try:
+                open_url(url)
+                append_history_line(query)
+            except ClientError as exc:
+                logger.warning("open failed: %s", exc)
+                self._hide_completions()
+                self._set_status(str(exc))
+                return
+            logger.info("opened %s", url)
             self.hide()
 
         _run_on_main(apply)
@@ -476,12 +497,17 @@ class SpottyBunnyController(NSObject):
         seq = self._resolve_seq
         self._resolving = True
         self._set_status("")
-        base_url = self._base_url or resolve_base_url(persist=False, allow_prompt=False)
+        cached_base = self._base_url
 
         def work() -> str:
-            return resolve_query(query, base_url=base_url)
+            base_url = cached_base or resolve_base_url(
+                persist=False, allow_prompt=False
+            )
+            return lookup_resolved_url(query, base_url=base_url)
 
-        self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
+        self._io.submit(
+            work, lambda result: self._resolve_ready(result, query=query, seq=seq)
+        )
 
 
 def run_spotty_bunny_app() -> int:

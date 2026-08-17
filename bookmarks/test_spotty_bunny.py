@@ -826,6 +826,28 @@ class SpottyBunnyResolveTests(SimpleTestCase):
                 )
             self.assertEqual(load_history_lines(path=path), [])
 
+    def test_lookup_does_not_open_or_append(self) -> None:
+        from app.client import ResolvedShortcut
+        from app.spotty_bunny_resolve import lookup_resolved_url
+
+        seen: dict[str, object] = {}
+
+        def resolve_fn(query: str, **kwargs: object) -> ResolvedShortcut:
+            seen.update(kwargs)
+            return ResolvedShortcut(
+                url="https://github.com",
+                kind="shortcut",
+                key=query,
+            )
+
+        url = lookup_resolved_url(
+            "  gh  ",
+            base_url="http://127.0.0.1:8000",
+            resolve_fn=resolve_fn,
+        )
+        self.assertEqual(url, "https://github.com")
+        self.assertIs(seen.get("strict"), True)
+
     def test_open_failure_does_not_append_history(self) -> None:
         from app.client import ClientError, ResolvedShortcut
         from app.spotty_bunny_resolve import resolve_query
@@ -852,6 +874,12 @@ class SpottyBunnyResolveTests(SimpleTestCase):
                     ),
                 )
             self.assertEqual(load_history_lines(path=path), [])
+
+    def test_resolve_still_current_requires_matching_seq(self) -> None:
+        from app.spotty_bunny_resolve import resolve_still_current
+
+        self.assertTrue(resolve_still_current(expected_seq=4, seq=4))
+        self.assertFalse(resolve_still_current(expected_seq=4, seq=5))
 
     def test_success_appends_shared_history_and_opens(self) -> None:
         from app.client import ResolvedShortcut
