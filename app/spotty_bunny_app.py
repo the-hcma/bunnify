@@ -60,6 +60,11 @@ from Quartz import (
 )
 
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
+from app.spotty_bunny_history import (
+    HistoryNavigator,
+    apply_history_selector,
+    load_history_lines,
+)
 from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
@@ -85,8 +90,17 @@ class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
 
     def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
-        """Dismiss on Esc/Return via the field editor (not NSTextField.keyDown_)."""
+        """History up/down; dismiss on Esc/Return via the field editor."""
         name = selector if isinstance(selector, str) else str(selector)
+        current = ""
+        if self.field is not None:
+            current = str(self.field.stringValue())
+        history_text = apply_history_selector(self._history, current, name)
+        if history_text is not None:
+            logger.debug("history %s → %r", name, history_text)
+            if self.field is not None:
+                self.field.setStringValue_(history_text)
+            return True
         if name in {"cancelOperation:", "insertNewline:"}:
             logger.info("field-editor command %s → hide", name)
             self.hide()
@@ -107,6 +121,7 @@ class SpottyBunnyController(NSObject):
         if self is None:
             return None
         self._became_key = False
+        self._history = HistoryNavigator()
         self.callback = None
         self.chord = ChordTracker()
         self.field = None
@@ -118,6 +133,7 @@ class SpottyBunnyController(NSObject):
         return self
 
     def show(self) -> None:
+        self._history = HistoryNavigator(load_history_lines())
         if self.field is not None:
             self.field.setStringValue_("")
         self._center_panel()
