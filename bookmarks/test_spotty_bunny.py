@@ -5,7 +5,7 @@ import os
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 from django.test import SimpleTestCase
@@ -20,9 +20,15 @@ from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
     ChordTracker,
+    apply_control_event,
     apply_hid_snapshot,
     describe_key,
     resolve_control_snapshot,
+)
+from app.spotty_bunny_quit import (
+    WAKE_EVENT_SELECTOR,
+    post_application_wake_event,
+    quit_ns_app,
 )
 
 
@@ -185,6 +191,21 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.assertIn("Accessibility", stderr.getvalue())
         self.assertIn("Input Monitoring", stderr.getvalue())
 
+    def test_unwritable_log_file_falls_back_to_stderr(self) -> None:
+        blocker = self.log_root / "not-a-directory"
+        blocker.write_text("x", encoding="utf-8")
+        custom = blocker / "spotty-bunny.log"
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main(["--log-file", str(custom)]), 1)
+        text = stderr.getvalue()
+        self.assertIn("cannot write log file", text)
+        self.assertIn("logging to stderr only", text)
+        self.assertIn("only available on macOS", text)
+
     def test_verbose_overrides_log_level(self) -> None:
         stderr = StringIO()
         with (
@@ -315,6 +336,141 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
             )
         )
 
+    def test_hid_miss_key_down_flags_key_up_fires_once(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                hid_left=True,
+                hid_right=False,
+                flag_left=True,
+                flag_right=False,
+                control_flag=True,
+                flags_changed=True,
+            )
+        )
+        right_kwargs = {
+            "keycode": CONTROL_RIGHT_KEYCODE,
+            "hid_left": True,
+            "hid_right": False,
+            "flag_left": True,
+            "flag_right": False,
+            "control_flag": True,
+        }
+        self.assertFalse(
+            apply_control_event(tracker, flags_changed=False, **right_kwargs)
+        )
+        self.assertTrue(
+            apply_control_event(tracker, flags_changed=True, **right_kwargs)
+        )
+        self.assertFalse(
+            apply_control_event(tracker, flags_changed=True, **right_kwargs)
+        )
+        self.assertFalse(
+            apply_control_event(tracker, flags_changed=False, **right_kwargs)
+        )
+        self.assertTrue(tracker.held_left)
+        self.assertTrue(tracker.held_right)
+
+    def test_hid_misses_both_controls_press_release_repress(self) -> None:
+        tracker = ChordTracker()
+        miss = {
+            "hid_left": False,
+            "hid_right": False,
+            "flag_left": False,
+            "flag_right": False,
+        }
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertTrue(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                control_flag=False,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertFalse(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+
+    def test_hid_misses_left_control_keycode_edge_fires(self) -> None:
+        tracker = ChordTracker()
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_RIGHT_KEYCODE,
+            hid_left=False,
+            hid_right=True,
+            flag_left=False,
+            flag_right=True,
+            held_left=False,
+            held_right=False,
+            control_flag=True,
+        )
+        self.assertFalse(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                left_down=left,
+                right_down=right,
+            )
+        )
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_LEFT_KEYCODE,
+            hid_left=False,
+            hid_right=True,
+            flag_left=False,
+            flag_right=True,
+            held_left=tracker.held_left,
+            held_right=tracker.held_right,
+            control_flag=True,
+        )
+        self.assertEqual((left, right), (True, True))
+        self.assertTrue(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                left_down=left,
+                right_down=right,
+            )
+        )
+
     def test_hold_left_then_right_fires_once(self) -> None:
         tracker = ChordTracker()
         self.assertFalse(tracker.sync(left_down=True, right_down=False))
@@ -338,3 +494,76 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
         self.assertFalse(tracker.sync(left_down=True, right_down=False))
         self.assertFalse(tracker.sync(left_down=False, right_down=False))
         self.assertFalse(tracker.sync(left_down=False, right_down=True))
+
+    def test_keycode_edge_skipped_when_not_flags_changed(self) -> None:
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_RIGHT_KEYCODE,
+            hid_left=True,
+            hid_right=False,
+            flag_left=True,
+            flag_right=False,
+            held_left=True,
+            held_right=False,
+            control_flag=True,
+            flags_changed=False,
+        )
+        self.assertEqual((left, right), (True, False))
+
+    def test_shift_flags_changed_does_not_drop_held_right(self) -> None:
+        left, right = resolve_control_snapshot(
+            keycode=56,
+            hid_left=True,
+            hid_right=False,
+            flag_left=True,
+            flag_right=False,
+            held_left=True,
+            held_right=True,
+            control_flag=True,
+            flags_changed=True,
+        )
+        self.assertEqual((left, right), (True, True))
+
+
+class SpottyBunnyQuitTests(SimpleTestCase):
+    def test_post_application_wake_event_posts_at_start(self) -> None:
+        ns_app = MagicMock()
+        other_event = MagicMock(return_value="wake")
+        post_application_wake_event(
+            event_type=15,
+            ns_app=ns_app,
+            other_event=other_event,
+        )
+        other_event.assert_called_once_with(
+            15,
+            (0.0, 0.0),
+            0,
+            0.0,
+            0,
+            None,
+            0,
+            0,
+            0,
+        )
+        ns_app.postEvent_atStart_.assert_called_once_with("wake", True)
+
+    def test_quit_ns_app_stops_then_wakes(self) -> None:
+        order: list[str] = []
+        ns_app = MagicMock()
+        ns_app.stop_.side_effect = lambda _sender: order.append("stop")
+
+        def post_wake() -> None:
+            order.append("wake")
+
+        quit_ns_app(ns_app=ns_app, post_wake=post_wake)
+        self.assertEqual(order, ["stop", "wake"])
+
+    def test_wake_event_selector_is_wired_in_app_module(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("WAKE_EVENT_SELECTOR", source)
+        self.assertEqual(
+            WAKE_EVENT_SELECTOR,
+            "otherEventWithType_location_modifierFlags_timestamp_windowNumber"
+            "_context_subtype_data1_data2_",
+        )

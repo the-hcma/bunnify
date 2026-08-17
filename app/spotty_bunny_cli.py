@@ -91,13 +91,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parsed = build_parser().parse_args(args)
     log_level = "DEBUG" if parsed.verbose else parsed.log_level
     log_file = _spotty_bunny_log_file(parsed.log_file)
-    _configure_spotty_bunny_logging(log_level, log_file)
+    active_log = _configure_spotty_bunny_logging(log_level, log_file)
     logging.getLogger(__name__).debug(
         "spotty-bunny starting (log_level=%s log_file=%s)",
         log_level,
-        log_file,
+        active_log or log_file,
     )
-    print(f"{COMMAND_NAME}: logging to {log_file}", file=sys.stderr)
+    if active_log is not None:
+        print(f"{COMMAND_NAME}: logging to {active_log}", file=sys.stderr)
+    else:
+        print(f"{COMMAND_NAME}: logging to stderr only", file=sys.stderr)
     return run_spotty_bunny()
 
 
@@ -120,31 +123,48 @@ def run_spotty_bunny() -> int:
         return 1
 
 
-def _configure_spotty_bunny_logging(log_level: str, log_file: Path) -> None:
-    """Send logs to a rotating file and stderr (same format as the server)."""
+def _configure_spotty_bunny_logging(log_level: str, log_file: Path) -> Path | None:
+    """Send logs to a rotating file and stderr (same format as the server).
+
+    Returns *log_file* when the rotating handler was attached. An unwritable
+    path falls back to stderr so later errors (not-macOS, missing PyObjC)
+    still print their hints.
+    """
     level = getattr(logging, log_level)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
     formatter = logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S", style="{")
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file,
-        maxBytes=LOG_MAX_BYTES,
-        backupCount=LOG_BACKUP_COUNT,
-        encoding="utf-8",
-    )
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(level)
+    handlers: list[logging.Handler] = []
+    active_log: Path | None = None
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(level)
+        handlers.append(file_handler)
+        active_log = log_file
+    except OSError as exc:
+        print(
+            f"{COMMAND_NAME}: cannot write log file {log_file}: {exc}",
+            file=sys.stderr,
+        )
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)
     stream_handler.setLevel(level)
+    handlers.append(stream_handler)
     for name in ("app.spotty_bunny_app", "app.spotty_bunny_cli"):
         logger = logging.getLogger(name)
         for handler in logger.handlers:
             handler.close()
         logger.handlers.clear()
-        logger.addHandler(file_handler)
-        logger.addHandler(stream_handler)
+        for handler in handlers:
+            logger.addHandler(handler)
         logger.setLevel(level)
         logger.propagate = False
+    return active_log
 
 
 def _load_run_spotty_bunny_app() -> Callable[[], int]:

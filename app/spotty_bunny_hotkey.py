@@ -17,6 +17,9 @@ class ChordTracker:
     def __init__(self) -> None:
         self._held_left = False
         self._held_right = False
+        self._last_event_signature: tuple[int, bool, bool, bool, bool, bool] | None = (
+            None
+        )
 
     @property
     def held_left(self) -> bool:
@@ -25,6 +28,15 @@ class ChordTracker:
     @property
     def held_right(self) -> bool:
         return self._held_right
+
+    def record_event_signature(
+        self, signature: tuple[int, bool, bool, bool, bool, bool]
+    ) -> bool:
+        """Return True when *signature* matches the previous tap event."""
+        if signature == self._last_event_signature:
+            return True
+        self._last_event_signature = signature
+        return False
 
     def sync(self, *, left_down: bool, right_down: bool) -> bool:
         """Update held state. Return True when the chord completes."""
@@ -173,6 +185,47 @@ MODIFIER_KEYCODES = frozenset(
 )
 
 
+def apply_control_event(
+    tracker: ChordTracker,
+    *,
+    control_flag: bool,
+    flag_left: bool,
+    flag_right: bool,
+    flags_changed: bool,
+    hid_left: bool,
+    hid_right: bool,
+    keycode: int,
+) -> bool:
+    """Resolve and apply one tap event.
+
+    ``keyDown`` / ``keyUp`` are ignored. Duplicate ``flagsChanged`` snapshots
+    (same keycode and sensor bits) are ignored so a HID-blind Control press
+    cannot toggle the chord off on the follow-up event.
+    """
+    if not flags_changed:
+        return False
+    signature = (keycode, hid_left, hid_right, flag_left, flag_right, control_flag)
+    if tracker.record_event_signature(signature):
+        return False
+    left_down, right_down = resolve_control_snapshot(
+        keycode=keycode,
+        hid_left=hid_left,
+        hid_right=hid_right,
+        flag_left=flag_left,
+        flag_right=flag_right,
+        held_left=tracker.held_left,
+        held_right=tracker.held_right,
+        control_flag=control_flag,
+        flags_changed=True,
+    )
+    return apply_hid_snapshot(
+        tracker,
+        keycode=keycode,
+        left_down=left_down,
+        right_down=right_down,
+    )
+
+
 def apply_hid_snapshot(
     tracker: ChordTracker,
     *,
@@ -235,18 +288,38 @@ def resolve_control_snapshot(
     flag_right: bool,
     held_left: bool,
     held_right: bool,
+    control_flag: bool = False,
+    flags_changed: bool = True,
 ) -> tuple[bool, bool]:
     """Merge HID, device-dependent flags, and the event keycode.
 
     ``CGEventSourceKeyState`` often stays False for right Control. Quartz
     still delivers ``flagsChanged`` with keycode 62 and may set
     ``NX_DEVICERCTLKEYMASK``. If both miss, treat that keycode as an edge
-    against the tracker's previous held state.
+    against the tracker's previous held state — only on ``flagsChanged``,
+    never on ``keyDown`` / ``keyUp``. A HID-blind held key stays down while
+    ``control_flag`` is set and the event names a different key. When the
+    Control modifier is fully up, both keys are released.
     """
-    left_down = hid_left or flag_left
-    right_down = hid_right or flag_right
-    if keycode == CONTROL_LEFT_KEYCODE and not left_down:
-        left_down = not held_left
-    if keycode == CONTROL_RIGHT_KEYCODE and not right_down:
-        right_down = not held_right
+    left_seen = hid_left or flag_left
+    right_seen = hid_right or flag_right
+    left_down = left_seen
+    right_down = right_seen
+    if flags_changed:
+        if keycode == CONTROL_LEFT_KEYCODE and not left_seen:
+            left_down = not held_left
+        if keycode == CONTROL_RIGHT_KEYCODE and not right_seen:
+            right_down = not held_right
+    if held_left and not left_down and keycode != CONTROL_LEFT_KEYCODE and control_flag:
+        left_down = True
+    if (
+        held_right
+        and not right_down
+        and keycode != CONTROL_RIGHT_KEYCODE
+        and control_flag
+    ):
+        right_down = True
+    if flags_changed and not control_flag and not left_seen and not right_seen:
+        left_down = False
+        right_down = False
     return left_down, right_down

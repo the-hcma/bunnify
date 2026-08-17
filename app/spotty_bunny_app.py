@@ -66,9 +66,13 @@ from app.spotty_bunny_hotkey import (
     DEVICE_LEFT_CONTROL_MASK,
     DEVICE_RIGHT_CONTROL_MASK,
     ChordTracker,
-    apply_hid_snapshot,
+    apply_control_event,
     describe_key,
-    resolve_control_snapshot,
+)
+from app.spotty_bunny_quit import (
+    WAKE_EVENT_SELECTOR,
+    post_application_wake_event,
+    quit_ns_app,
 )
 
 PANEL_HEIGHT = 80.0
@@ -277,10 +281,7 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
         flag_left = bool(flags & DEVICE_LEFT_CONTROL_MASK)
         flag_right = bool(flags & DEVICE_RIGHT_CONTROL_MASK)
         key_name = _describe_event_key(keycode, flags)
-        if event_type != kCGEventFlagsChanged and keycode not in {
-            CONTROL_LEFT_KEYCODE,
-            CONTROL_RIGHT_KEYCODE,
-        }:
+        if event_type != kCGEventFlagsChanged:
             logger.debug(
                 "tap %s %s keycode=%s hid left=%s right=%s (ignored for chord)",
                 _event_type_name(event_type),
@@ -290,24 +291,19 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
                 hid_right,
             )
             return event
-        left_down, right_down = resolve_control_snapshot(
+        fired = apply_control_event(
+            controller.chord,
             keycode=keycode,
             hid_left=hid_left,
             hid_right=hid_right,
             flag_left=flag_left,
             flag_right=flag_right,
-            held_left=controller.chord.held_left,
-            held_right=controller.chord.held_right,
-        )
-        fired = apply_hid_snapshot(
-            controller.chord,
-            keycode=keycode,
-            left_down=left_down,
-            right_down=right_down,
+            control_flag=bool(flags & kCGEventFlagMaskControl),
+            flags_changed=True,
         )
         logger.debug(
             "tap %s %s keycode=%s flags=0x%x hid L=%s R=%s flag L=%s R=%s "
-            "resolved L=%s R=%s tracker L=%s R=%s fired=%s",
+            "tracker L=%s R=%s fired=%s",
             _event_type_name(event_type),
             key_name,
             keycode,
@@ -316,19 +312,17 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
             hid_right,
             flag_left,
             flag_right,
-            left_down,
-            right_down,
             controller.chord.held_left,
             controller.chord.held_right,
             fired,
         )
         if fired:
             logger.info(
-                "chord complete %s keycode=%s resolved left=%s right=%s",
+                "chord complete %s keycode=%s tracker left=%s right=%s",
                 key_name,
                 keycode,
-                left_down,
-                right_down,
+                controller.chord.held_left,
+                controller.chord.held_right,
             )
             controller.toggle()
         return event
@@ -368,26 +362,14 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
 
 def _post_wake_event() -> None:
     """Wake NSApp.run() so NSApp.stop_ takes effect."""
-    other_event = getattr(
-        NSEvent,
-        "otherEventWithType_location_modifierFlags_timestamp_windowNumber"
-        "_context_subtype_data1_data2_",
+    other_event = getattr(NSEvent, WAKE_EVENT_SELECTOR)
+    post_application_wake_event(
+        event_type=NSEventTypeApplicationDefined,
+        ns_app=NSApp,
+        other_event=other_event,
     )
-    wake = other_event(
-        NSEventTypeApplicationDefined,
-        (0.0, 0.0),
-        0,
-        0.0,
-        0,
-        None,
-        0,
-        0,
-        0,
-    )
-    NSApp.postEvent_atStart_(wake, True)
 
 
 def _quit_on_sigint(_signum: int) -> None:
     logger.info("SIGINT received; stopping NSApp")
-    NSApp.stop_(None)
-    _post_wake_event()
+    quit_ns_app(ns_app=NSApp, post_wake=_post_wake_event)
