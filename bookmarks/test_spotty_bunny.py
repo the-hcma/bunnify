@@ -1,0 +1,637 @@
+from __future__ import annotations
+
+import logging
+import os
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import MagicMock, patch
+
+from click.testing import CliRunner
+from django.test import SimpleTestCase
+
+from app.spotty_bunny_cli import (
+    LOG_ENV_VAR,
+    SpottyBunnyEventTapError,
+    main,
+    run_spotty_bunny,
+)
+from app.spotty_bunny_hotkey import (
+    CONTROL_LEFT_KEYCODE,
+    CONTROL_RIGHT_KEYCODE,
+    ChordTracker,
+    apply_control_event,
+    apply_hid_snapshot,
+    describe_key,
+    resolve_control_snapshot,
+)
+from app.spotty_bunny_quit import (
+    WAKE_EVENT_SELECTOR,
+    post_application_wake_event,
+    quit_ns_app,
+)
+
+
+class SpottyBunnyCliTests(SimpleTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        log_dir = TemporaryDirectory()
+        self.addCleanup(log_dir.cleanup)
+        self.log_root = Path(log_dir.name)
+        self.log_file = self.log_root / "spotty-bunny.log"
+        env_patch = patch.dict(os.environ, {LOG_ENV_VAR: ""}, clear=False)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        data_patch = patch("app.spotty_bunny_cli.data_dir", return_value=self.log_root)
+        data_patch.start()
+        self.addCleanup(data_patch.stop)
+
+    def tearDown(self) -> None:
+        for name in ("app.spotty_bunny_app", "app.spotty_bunny_cli"):
+            logger = logging.getLogger(name)
+            for handler in logger.handlers:
+                handler.close()
+            logger.handlers.clear()
+        super().tearDown()
+
+    def test_default_log_file_is_created(self) -> None:
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main([]), 1)
+        self.assertTrue(self.log_file.is_file())
+        self.assertIn(str(self.log_file), stderr.getvalue())
+
+    def test_default_log_level_is_warning(self) -> None:
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main([]), 1)
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_app").level,
+            logging.WARNING,
+        )
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_cli").level,
+            logging.WARNING,
+        )
+
+    def test_env_log_file(self) -> None:
+        custom = self.log_root / "from-env.log"
+        stderr = StringIO()
+        with (
+            patch.dict(os.environ, {LOG_ENV_VAR: str(custom)}),
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main(["--verbose"]), 1)
+        self.assertIn("spotty-bunny starting", custom.read_text(encoding="utf-8"))
+
+    def test_explicit_log_file_receives_debug(self) -> None:
+        custom = self.log_root / "custom.log"
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main(["--verbose", "--log-file", str(custom)]), 1)
+        self.assertIn("spotty-bunny starting", custom.read_text(encoding="utf-8"))
+        self.assertIn("log_level=DEBUG", custom.read_text(encoding="utf-8"))
+
+    def test_help_exits_zero(self) -> None:
+        stdout = StringIO()
+        with (
+            patch("sys.stdout", stdout),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        help_text = stdout.getvalue()
+        self.assertIn("search box", help_text)
+        self.assertIn("spotty-bunny", help_text)
+        self.assertIn("--log-file", help_text)
+        self.assertIn("--log-level", help_text)
+        self.assertIn("--verbose", help_text)
+
+    def test_log_level_sets_logger(self) -> None:
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main(["--log-level", "INFO"]), 1)
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_app").level,
+            logging.INFO,
+        )
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_cli").level,
+            logging.INFO,
+        )
+
+    def test_missing_pyobjc_prints_extra_hint(self) -> None:
+        def boom() -> int:
+            raise ImportError("No module named 'Cocoa'")
+
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_cli._load_run_spotty_bunny_app", side_effect=boom),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(run_spotty_bunny(), 1)
+        self.assertIn("bunnify[macos]", stderr.getvalue())
+        self.assertIn("uv sync --extra macos", stderr.getvalue())
+
+    def test_not_macos_prints_hint(self) -> None:
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main([]), 1)
+        self.assertIn("only available on macOS", stderr.getvalue())
+
+    def test_spotty_bunny_shortcut_dispatches_extra_args(self) -> None:
+        from app.cli import main as cli_main
+
+        with patch("app.spotty_bunny_cli.main", return_value=1) as spotty:
+            result = CliRunner().invoke(cli_main, ["spotty-bunny", "foo"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        spotty.assert_called_once_with(["foo"])
+
+    def test_spotty_bunny_shortcut_dispatches_to_cli(self) -> None:
+        from app.cli import main as cli_main
+
+        with patch("app.spotty_bunny_cli.main", return_value=1) as spotty:
+            result = CliRunner().invoke(cli_main, ["spotty-bunny"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        spotty.assert_called_once_with([])
+
+    def test_tap_failure_prints_permission_hint(self) -> None:
+        def fail_tap() -> int:
+            raise SpottyBunnyEventTapError("event tap was not created")
+
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "darwin"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_app",
+                return_value=fail_tap,
+            ),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(run_spotty_bunny(), 1)
+        self.assertIn("Accessibility", stderr.getvalue())
+        self.assertIn("Input Monitoring", stderr.getvalue())
+
+    def test_unwritable_log_file_falls_back_to_stderr(self) -> None:
+        blocker = self.log_root / "not-a-directory"
+        blocker.write_text("x", encoding="utf-8")
+        custom = blocker / "spotty-bunny.log"
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main(["--log-file", str(custom)]), 1)
+        text = stderr.getvalue()
+        self.assertIn("cannot write log file", text)
+        self.assertIn("logging to stderr only", text)
+        self.assertIn("only available on macOS", text)
+
+    def test_verbose_overrides_log_level(self) -> None:
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main(["--verbose", "--log-level", "ERROR"]), 1)
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_app").level,
+            logging.DEBUG,
+        )
+        self.assertEqual(
+            logging.getLogger("app.spotty_bunny_cli").level,
+            logging.DEBUG,
+        )
+
+    def test_verbose_writes_debug_to_default_log_file(self) -> None:
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "linux"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main(["--verbose"]), 1)
+        logged = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("spotty-bunny starting", logged)
+        self.assertIn("log_level=DEBUG", logged)
+
+
+class SpottyBunnyHotkeyTests(SimpleTestCase):
+    def test_batched_hid_both_down_fires_on_completing_keycode(self) -> None:
+        tracker = ChordTracker()
+        self.assertTrue(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                left_down=True,
+                right_down=True,
+            )
+        )
+        tracker = ChordTracker()
+        self.assertTrue(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                left_down=True,
+                right_down=True,
+            )
+        )
+
+    def test_both_from_idle_does_not_fire(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(tracker.sync(left_down=True, right_down=True))
+
+    def test_describe_key_ctrl_a(self) -> None:
+        self.assertEqual(describe_key(0, control=True), "CTRL-A")
+
+    def test_describe_key_ctrl_shift_a(self) -> None:
+        self.assertEqual(
+            describe_key(0, control=True, shift=True),
+            "CTRL-SHIFT-A",
+        )
+
+    def test_describe_key_letter_a(self) -> None:
+        self.assertEqual(describe_key(0), "A")
+
+    def test_describe_key_letter_d(self) -> None:
+        self.assertEqual(describe_key(2), "D")
+
+    def test_describe_key_left_control_not_prefixed(self) -> None:
+        self.assertEqual(
+            describe_key(CONTROL_LEFT_KEYCODE, control=True),
+            "leftControl",
+        )
+
+    def test_describe_key_unknown_with_modifiers(self) -> None:
+        self.assertEqual(
+            describe_key(200, control=True, shift=True),
+            "CTRL-SHIFT-keycode:200",
+        )
+
+    def test_device_flag_sees_right_control_without_hid(self) -> None:
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_RIGHT_KEYCODE,
+            hid_left=True,
+            hid_right=False,
+            flag_left=True,
+            flag_right=True,
+            held_left=True,
+            held_right=False,
+        )
+        self.assertEqual((left, right), (True, True))
+
+    def test_hid_misses_right_control_keycode_edge_fires(self) -> None:
+        tracker = ChordTracker()
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_LEFT_KEYCODE,
+            hid_left=True,
+            hid_right=False,
+            flag_left=True,
+            flag_right=False,
+            held_left=False,
+            held_right=False,
+        )
+        self.assertFalse(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                left_down=left,
+                right_down=right,
+            )
+        )
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_RIGHT_KEYCODE,
+            hid_left=True,
+            hid_right=False,
+            flag_left=True,
+            flag_right=False,
+            held_left=tracker.held_left,
+            held_right=tracker.held_right,
+        )
+        self.assertEqual((left, right), (True, True))
+        self.assertTrue(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                left_down=left,
+                right_down=right,
+            )
+        )
+
+    def test_hid_miss_key_down_flags_key_up_fires_once(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                hid_left=True,
+                hid_right=False,
+                flag_left=True,
+                flag_right=False,
+                control_flag=True,
+                flags_changed=True,
+            )
+        )
+        right_kwargs = {
+            "keycode": CONTROL_RIGHT_KEYCODE,
+            "hid_left": True,
+            "hid_right": False,
+            "flag_left": True,
+            "flag_right": False,
+            "control_flag": True,
+        }
+        self.assertFalse(
+            apply_control_event(tracker, flags_changed=False, **right_kwargs)
+        )
+        self.assertTrue(
+            apply_control_event(tracker, flags_changed=True, **right_kwargs)
+        )
+        self.assertFalse(
+            apply_control_event(tracker, flags_changed=True, **right_kwargs)
+        )
+        self.assertFalse(
+            apply_control_event(tracker, flags_changed=False, **right_kwargs)
+        )
+        self.assertTrue(tracker.held_left)
+        self.assertTrue(tracker.held_right)
+
+    def test_hid_miss_right_release_then_repress_fires(self) -> None:
+        clock = _FakeClock()
+        tracker = ChordTracker(monotonic=clock)
+        held_left = {
+            "hid_left": True,
+            "hid_right": False,
+            "flag_left": True,
+            "flag_right": False,
+            "control_flag": True,
+        }
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        clock.advance(0.001)
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        self.assertTrue(tracker.held_right)
+        clock.advance(0.029)
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+        self.assertTrue(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+        clock.advance(0.07)
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                flags_changed=True,
+                **held_left,
+            )
+        )
+
+    def test_hid_misses_both_controls_press_release_repress(self) -> None:
+        tracker = ChordTracker()
+        miss = {
+            "hid_left": False,
+            "hid_right": False,
+            "flag_left": False,
+            "flag_right": False,
+        }
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertTrue(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                control_flag=False,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertFalse(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                control_flag=True,
+                flags_changed=True,
+                **miss,
+            )
+        )
+
+    def test_hid_misses_left_control_keycode_edge_fires(self) -> None:
+        tracker = ChordTracker()
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_RIGHT_KEYCODE,
+            hid_left=False,
+            hid_right=True,
+            flag_left=False,
+            flag_right=True,
+            held_left=False,
+            held_right=False,
+            control_flag=True,
+        )
+        self.assertFalse(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_RIGHT_KEYCODE,
+                left_down=left,
+                right_down=right,
+            )
+        )
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_LEFT_KEYCODE,
+            hid_left=False,
+            hid_right=True,
+            flag_left=False,
+            flag_right=True,
+            held_left=tracker.held_left,
+            held_right=tracker.held_right,
+            control_flag=True,
+        )
+        self.assertEqual((left, right), (True, True))
+        self.assertTrue(
+            apply_hid_snapshot(
+                tracker,
+                keycode=CONTROL_LEFT_KEYCODE,
+                left_down=left,
+                right_down=right,
+            )
+        )
+
+    def test_hold_left_then_right_fires_once(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(tracker.sync(left_down=True, right_down=False))
+        self.assertTrue(tracker.sync(left_down=True, right_down=True))
+        self.assertFalse(tracker.sync(left_down=True, right_down=True))
+
+    def test_hold_right_then_left_fires_once(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(tracker.sync(left_down=False, right_down=True))
+        self.assertTrue(tracker.sync(left_down=True, right_down=True))
+
+    def test_release_one_then_press_again_fires(self) -> None:
+        tracker = ChordTracker()
+        tracker.sync(left_down=True, right_down=False)
+        tracker.sync(left_down=True, right_down=True)
+        self.assertFalse(tracker.sync(left_down=True, right_down=False))
+        self.assertTrue(tracker.sync(left_down=True, right_down=True))
+
+    def test_sequential_singles_do_not_fire(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(tracker.sync(left_down=True, right_down=False))
+        self.assertFalse(tracker.sync(left_down=False, right_down=False))
+        self.assertFalse(tracker.sync(left_down=False, right_down=True))
+
+    def test_keycode_edge_skipped_when_not_flags_changed(self) -> None:
+        left, right = resolve_control_snapshot(
+            keycode=CONTROL_RIGHT_KEYCODE,
+            hid_left=True,
+            hid_right=False,
+            flag_left=True,
+            flag_right=False,
+            held_left=True,
+            held_right=False,
+            control_flag=True,
+            flags_changed=False,
+        )
+        self.assertEqual((left, right), (True, False))
+
+    def test_shift_flags_changed_does_not_drop_held_right(self) -> None:
+        left, right = resolve_control_snapshot(
+            keycode=56,
+            hid_left=True,
+            hid_right=False,
+            flag_left=True,
+            flag_right=False,
+            held_left=True,
+            held_right=True,
+            control_flag=True,
+            flags_changed=True,
+        )
+        self.assertEqual((left, right), (True, True))
+
+
+class SpottyBunnyQuitTests(SimpleTestCase):
+    def test_post_application_wake_event_posts_at_start(self) -> None:
+        ns_app = MagicMock()
+        other_event = MagicMock(return_value="wake")
+        post_application_wake_event(
+            event_type=15,
+            ns_app=ns_app,
+            other_event=other_event,
+        )
+        other_event.assert_called_once_with(
+            15,
+            (0.0, 0.0),
+            0,
+            0.0,
+            0,
+            None,
+            0,
+            0,
+            0,
+        )
+        ns_app.postEvent_atStart_.assert_called_once_with("wake", True)
+
+    def test_quit_ns_app_stops_then_wakes(self) -> None:
+        order: list[str] = []
+        ns_app = MagicMock()
+        ns_app.stop_.side_effect = lambda _sender: order.append("stop")
+
+        def post_wake() -> None:
+            order.append("wake")
+
+        quit_ns_app(ns_app=ns_app, post_wake=post_wake)
+        self.assertEqual(order, ["stop", "wake"])
+
+    def test_wake_event_selector_is_wired_in_app_module(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("WAKE_EVENT_SELECTOR", source)
+        self.assertEqual(
+            WAKE_EVENT_SELECTOR,
+            "otherEventWithType_location_modifierFlags_timestamp_windowNumber"
+            "_context_subtype_data1_data2_",
+        )
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds

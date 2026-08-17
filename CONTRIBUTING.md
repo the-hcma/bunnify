@@ -49,7 +49,7 @@ Individual gates: `uv run ruff check .`, `uv run ruff format --check .`,
   (see `.github/stacking-tool` and [AGENTS.md](AGENTS.md))
 - Update user-facing docs when behavior or install paths change
 - Keep `./scripts/bunnify`, `./scripts/bunnify-server`, and
-  `./scripts/bunnify-overlay` as thin wrappers around the installed entry
+  `./scripts/spotty-bunny` as thin wrappers around the installed entry
   points
 
 ## Questions
