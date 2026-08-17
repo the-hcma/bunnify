@@ -928,7 +928,29 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("gh, c, search hello", source)
+        self.assertIn("gh, c, yt, docs", source)
+
+    def test_primary_screen_uses_menu_bar_display(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("screens[0]", source)
+        self.assertNotIn("mainScreen()", source)
+
+    def test_about_panel_constants(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_about.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Copyright © 2026 thehcma", source)
+        self.assertIn("Quick shortcut overlay for Bunnify", source)
+        self.assertIn("https://github.com/the-hcma/bunnify", source)
+
+    def test_search_panel_has_no_title_bar_label(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('setTitle_("spotty-bunny")', source)
+        self.assertIn("showAbout:", source)
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):

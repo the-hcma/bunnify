@@ -113,7 +113,8 @@ in that terminal quits. Startup prints the log file path on stderr
 for per-key tap debug).
 
 The search box is centered on the **main display** (menu-bar monitor), with a
-small bunny icon beside the field.
+small bunny icon beside the field. Click the icon for version, commit, and
+project links (domesti-bot-style about panel).
 
 If the chord does nothing, run with `--verbose` and watch stderr. Lines
 named `tap …` show whether key events arrive. If none appear while you press

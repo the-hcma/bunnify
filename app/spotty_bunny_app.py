@@ -13,13 +13,14 @@ from Cocoa import (
     NSApplication,
     NSApplicationActivationPolicyAccessory,
     NSBackingStoreBuffered,
+    NSBezelStyleShadowlessSquare,
+    NSButton,
     NSColor,
     NSEvent,
     NSEventTypeApplicationDefined,
     NSFloatingWindowLevel,
     NSFont,
     NSImageScaleProportionallyUpOrDown,
-    NSImageView,
     NSMakeRect,
     NSObject,
     NSPanel,
@@ -30,9 +31,8 @@ from Cocoa import (
     NSTextField,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
-    NSWindowStyleMaskFullSizeContentView,
+    NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
-    NSWindowStyleMaskTitled,
 )
 from Foundation import NSIndexSet, NSOperationQueue, NSThread
 from PyObjCTools import MachSignals
@@ -68,6 +68,7 @@ from Quartz import (
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
 from app.config import resolve_base_url
+from app.spotty_bunny_about import build_about_panel, position_about_panel
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
@@ -101,10 +102,10 @@ from app.spotty_bunny_quit import (
 )
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
 
-FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, search hello)"
+FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, yt, docs)"
 LOGO_LEFT = 16.0
 LOGO_SIZE = 40.0
-LOGO_TOP = 24.0
+LOGO_TOP = 16.0
 PANEL_HEIGHT = 80.0
 PANEL_WIDTH = 640.0
 TABLE_HEIGHT = 140.0
@@ -160,6 +161,7 @@ class SpottyBunnyController(NSObject):
         logger.info("hide panel (was visible=%s)", self.visible)
         self._resolve_seq += 1
         self._resolving = False
+        self._hide_about_panel()
         self._hide_completions()
         self._set_status("")
         panel = getattr(self, "panel", None)
@@ -172,6 +174,7 @@ class SpottyBunnyController(NSObject):
         self = objc.super(SpottyBunnyController, self).init()
         if self is None:
             return None
+        self._about_panel = None
         self._applying_completion = False
         self._became_key = False
         self._base_url = ""
@@ -201,8 +204,12 @@ class SpottyBunnyController(NSObject):
     def numberOfRowsInTableView_(self, _table) -> int:
         return len(self._completion_rows)
 
+    def showAbout_(self, _sender) -> None:
+        self._toggle_about_panel()
+
     def show(self) -> None:
         self._history = HistoryNavigator(load_history_lines())
+        self._hide_about_panel()
         self._hide_completions()
         self._set_status("")
         self._shortcuts_load_failed = False
@@ -251,19 +258,14 @@ class SpottyBunnyController(NSObject):
             self.hide()
 
     def _build_panel(self) -> None:
-        style = (
-            NSWindowStyleMaskTitled
-            | NSWindowStyleMaskFullSizeContentView
-            | NSWindowStyleMaskNonactivatingPanel
-        )
+        style = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
         panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0.0, 0.0, PANEL_WIDTH, PANEL_HEIGHT),
             style,
             NSBackingStoreBuffered,
             False,
         )
-        panel.setTitle_("spotty-bunny")
-        panel.setTitlebarAppearsTransparent_(True)
+        panel.setBackgroundColor_(NSColor.windowBackgroundColor())
         panel.setLevel_(NSFloatingWindowLevel)
         panel.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -275,11 +277,15 @@ class SpottyBunnyController(NSObject):
         panel.setReleasedWhenClosed_(False)
         panel.setDelegate_(self)
 
-        logo = NSImageView.alloc().initWithFrame_(
+        logo = NSButton.alloc().initWithFrame_(
             NSMakeRect(LOGO_LEFT, LOGO_TOP, LOGO_SIZE, LOGO_SIZE)
         )
+        logo.setBezelStyle_(NSBezelStyleShadowlessSquare)
+        logo.setBordered_(False)
         logo.setImage_(make_spotty_bunny_icon(LOGO_SIZE))
         logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+        logo.setTarget_(self)
+        logo.setAction_("showAbout:")
         panel.contentView().addSubview_(logo)
 
         field = NSTextField.alloc().initWithFrame_(
@@ -340,9 +346,15 @@ class SpottyBunnyController(NSObject):
             return
         visible = screen.visibleFrame()
         frame = self.panel.frame()
-        origin_x = visible.origin.x + (visible.size.width - frame.size.width) / 2.0
-        origin_y = visible.origin.y + (visible.size.height - frame.size.height) * 0.55
-        self.panel.setFrameOrigin_((origin_x, origin_y))
+        frame.origin.x = (
+            visible.origin.x + (visible.size.width - frame.size.width) / 2.0
+        )
+        frame.origin.y = (
+            visible.origin.y + (visible.size.height - frame.size.height) * 0.55
+        )
+        self.panel.setFrame_display_(frame, True)
+        if self._about_panel is not None and self._about_panel.isVisible():
+            position_about_panel(self._about_panel, anchor_frame=frame)
 
     def _completer_loaded(self, result: object) -> None:
         def apply() -> None:
@@ -377,6 +389,20 @@ class SpottyBunnyController(NSObject):
             self._show_completions(result)  # type: ignore[arg-type]
 
         _run_on_main(apply)
+
+    def _hide_about_panel(self) -> None:
+        if self._about_panel is not None:
+            self._about_panel.orderOut_(None)
+
+    def _toggle_about_panel(self) -> None:
+        if self._about_panel is None:
+            self._about_panel = build_about_panel()
+        if self._about_panel.isVisible():
+            self._about_panel.orderOut_(None)
+            return
+        if self.panel is not None:
+            position_about_panel(self._about_panel, anchor_frame=self.panel.frame())
+        self._about_panel.orderFrontRegardless()
 
     def _hide_completions(self) -> None:
         self._completion_seq += 1
@@ -524,10 +550,7 @@ class SpottyBunnyController(NSObject):
 
 
 def _primary_screen():
-    """Return the menu-bar (main) display, not a secondary monitor."""
-    main = NSScreen.mainScreen()
-    if main is not None:
-        return main
+    """Return the menu-bar display (screens[0]), not the keyboard-focus screen."""
     screens = NSScreen.screens()
     return screens[0] if screens else None
 
