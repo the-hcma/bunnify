@@ -64,7 +64,7 @@ from Quartz import (
 )
 
 from app.cli import open_url
-from app.client import ClientError, fetch_key_entries, fetch_suggestions
+from app.client import fetch_key_entries, fetch_suggestions
 from app.config import resolve_base_url
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
@@ -408,7 +408,7 @@ class SpottyBunnyController(NSObject):
             lambda result: self._completions_ready(result, seq=seq),
         )
 
-    def _resolve_ready(self, result: object, *, query: str, seq: int) -> None:
+    def _resolve_ready(self, result: object, *, seq: int) -> None:
         def apply() -> None:
             if not resolve_still_current(expected_seq=seq, seq=self._resolve_seq):
                 return
@@ -418,21 +418,7 @@ class SpottyBunnyController(NSObject):
                 self._hide_completions()
                 self._set_status(str(result))
                 return
-            url = result if isinstance(result, str) else ""
-            if not url:
-                logger.warning("resolve failed: missing url")
-                self._hide_completions()
-                self._set_status("resolve response missing url")
-                return
-            try:
-                open_url(url)
-                append_history_line(query)
-            except ClientError as exc:
-                logger.warning("open failed: %s", exc)
-                self._hide_completions()
-                self._set_status(str(exc))
-                return
-            logger.info("opened %s", url)
+            logger.info("opened %s", result)
             self.hide()
 
         _run_on_main(apply)
@@ -503,11 +489,14 @@ class SpottyBunnyController(NSObject):
             base_url = cached_base or resolve_base_url(
                 persist=False, allow_prompt=False
             )
-            return lookup_resolved_url(query, base_url=base_url)
+            url = lookup_resolved_url(query, base_url=base_url)
+            if not resolve_still_current(expected_seq=seq, seq=self._resolve_seq):
+                return url
+            open_url(url)
+            append_history_line(query)
+            return url
 
-        self._io.submit(
-            work, lambda result: self._resolve_ready(result, query=query, seq=seq)
-        )
+        self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
 
 
 def run_spotty_bunny_app() -> int:
