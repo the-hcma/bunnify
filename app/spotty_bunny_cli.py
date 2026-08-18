@@ -54,7 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog=COMMAND_NAME,
         description=(
             "Spotty Bunny: macOS Spotlight-style search box. Hold one Control, "
-            "press the other to show it. Shortcut completion is not wired yet."
+            "press the other to show it. Subcommands: install, uninstall, "
+            "status, upgrade (login LaunchAgent). Bare invocation is foreground."
         ),
     )
     parser.add_argument(
@@ -89,7 +90,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the installed Spotty Bunny command."""
-    args = list(argv) if argv is not None else None
+    args = list(argv) if argv is not None else sys.argv[1:]
+    if args:
+        from app.spotty_bunny_agent import (
+            AGENT_COMMANDS,
+            UNKNOWN_COMMAND_MESSAGE,
+            run_agent_command,
+        )
+
+        token = args[0]
+        if token in AGENT_COMMANDS:
+            return run_agent_command(token, args[1:])
+        if not token.startswith("-"):
+            print(UNKNOWN_COMMAND_MESSAGE.format(command=token), file=sys.stderr)
+            return 2
     parsed = build_parser().parse_args(args)
     log_level = "DEBUG" if parsed.verbose else parsed.log_level
     log_file = _spotty_bunny_log_file(parsed.log_file)
