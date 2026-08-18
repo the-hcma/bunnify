@@ -953,6 +953,14 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("_CenteredFieldCell", source)
         self.assertIn("LOGO_LEFT = PANEL_WIDTH - FIELD_LEFT - LOGO_SIZE", source)
 
+    def test_search_panel_can_become_key_for_typing(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("class SpottyBunnyPanel", source)
+        self.assertIn("canBecomeKeyWindow", source)
+        self.assertIn("SpottyBunnyPanel.alloc()", source)
+
     def test_search_panel_has_no_title_bar_label(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
@@ -1086,6 +1094,43 @@ class SpottyBunnyResolveTests(SimpleTestCase):
             self.assertEqual(opened, ["https://github.com"])
             self.assertEqual(load_history_lines(path=path), ["gh"])
             self.assertIs(seen.get("strict"), True)
+
+
+class SpottyBunnyStatusTests(SimpleTestCase):
+    def test_connection_error_tells_user_to_start_server(self) -> None:
+        from app.spotty_bunny_status import (
+            SHORTCUTS_LOAD_FAILED,
+            format_spotty_bunny_status,
+        )
+
+        line = format_spotty_bunny_status(
+            "Cannot reach Bunnify server at 'http://127.0.0.1:8000/api/keys/': "
+            "Connection refused. Is `./scripts/bunnify-server` running?"
+        )
+        self.assertEqual(line, SHORTCUTS_LOAD_FAILED)
+        self.assertIn("bunnify setup", line)
+
+    def test_empty_error_uses_shortcuts_load_copy(self) -> None:
+        from app.spotty_bunny_status import (
+            SHORTCUTS_LOAD_FAILED,
+            format_spotty_bunny_status,
+        )
+
+        self.assertEqual(format_spotty_bunny_status(""), SHORTCUTS_LOAD_FAILED)
+
+    def test_unknown_shortcut_suggests_tab(self) -> None:
+        from app.spotty_bunny_status import format_spotty_bunny_status
+
+        line = format_spotty_bunny_status("Unknown shortcut")
+        self.assertIn("Unknown shortcut", line)
+        self.assertIn("Tab", line)
+
+    def test_status_band_is_taller_than_one_line(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("STATUS_HEIGHT = 40.0", source)
+        self.assertIn("NSLineBreakByWordWrapping", source)
 
 
 class _FakeClock:

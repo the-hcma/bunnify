@@ -21,6 +21,7 @@ from Cocoa import (
     NSFloatingWindowLevel,
     NSFont,
     NSImageScaleProportionallyUpOrDown,
+    NSLineBreakByWordWrapping,
     NSMakeRect,
     NSObject,
     NSPanel,
@@ -103,6 +104,10 @@ from app.spotty_bunny_quit import (
     quit_ns_app,
 )
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
+from app.spotty_bunny_status import (
+    SHORTCUTS_LOAD_FAILED,
+    format_spotty_bunny_status,
+)
 from app.version import get_build_info
 
 FIELD_HEIGHT = 40.0
@@ -112,6 +117,8 @@ LOGO_GAP = 12.0
 LOGO_SIZE = 40.0
 PANEL_HEIGHT = 80.0
 PANEL_WIDTH = 640.0
+STATUS_GAP = 8.0
+STATUS_HEIGHT = 40.0
 TABLE_HEIGHT = 140.0
 LOGO_LEFT = PANEL_WIDTH - FIELD_LEFT - LOGO_SIZE
 FIELD_WIDTH = LOGO_LEFT - FIELD_LEFT - LOGO_GAP
@@ -278,7 +285,7 @@ class SpottyBunnyController(NSObject):
 
     def _build_panel(self) -> None:
         style = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
-        panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+        panel = SpottyBunnyPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0.0, 0.0, PANEL_WIDTH, PANEL_HEIGHT),
             style,
             NSBackingStoreBuffered,
@@ -310,7 +317,12 @@ class SpottyBunnyController(NSObject):
         field = NSTextField.alloc().initWithFrame_(
             NSMakeRect(FIELD_LEFT, 16.0, FIELD_WIDTH, FIELD_HEIGHT)
         )
-        field.setCell_(_CenteredFieldCell.alloc().initTextCell_(""))
+        cell = _CenteredFieldCell.alloc().initTextCell_("")
+        cell.setEditable_(True)
+        cell.setSelectable_(True)
+        cell.setScrollable_(True)
+        cell.setWraps_(False)
+        field.setCell_(cell)
         field.setEditable_(True)
         field.setSelectable_(True)
         field.setBezeled_(True)
@@ -319,16 +331,21 @@ class SpottyBunnyController(NSObject):
         field.setPlaceholderString_(FIELD_PLACEHOLDER)
         field.setBackgroundColor_(NSColor.textBackgroundColor())
         field.setDelegate_(self)
+        field.setRefusesFirstResponder_(False)
         panel.contentView().addSubview_(field)
 
         status = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(16.0, 4.0, PANEL_WIDTH - 32.0, 14.0)
+            NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, STATUS_HEIGHT)
         )
         status.setEditable_(False)
         status.setSelectable_(False)
         status.setBezeled_(False)
         status.setDrawsBackground_(False)
-        status.setFont_(NSFont.systemFontOfSize_(11.0))
+        status.setHidden_(True)
+        status.setUsesSingleLineMode_(False)
+        status.setLineBreakMode_(NSLineBreakByWordWrapping)
+        status.cell().setWraps_(True)
+        status.setFont_(NSFont.systemFontOfSize_(13.0))
         status.setStringValue_("")
         panel.contentView().addSubview_(status)
 
@@ -382,6 +399,7 @@ class SpottyBunnyController(NSObject):
             if isinstance(result, Exception):
                 logger.warning("could not load shortcuts: %s", result)
                 self._shortcuts_load_failed = True
+                self._set_status(format_spotty_bunny_status(result))
                 return
             completer, base_url = result  # type: ignore[misc]
             self._completer = completer
@@ -436,14 +454,25 @@ class SpottyBunnyController(NSObject):
             self.table.reloadData()
         self._set_table_visible(False)
 
-    def _layout_search_chrome(self, *, table_visible: bool) -> None:
-        origin_y = 16.0 + (TABLE_HEIGHT if table_visible else 0.0)
+    def _layout_search_chrome(
+        self, *, table_visible: bool, status_message: str | None = None
+    ) -> None:
+        status_band = self._status_band_height(status_message)
+        table = TABLE_HEIGHT if table_visible else 0.0
+        origin_y = 16.0 + table + status_band
         if self.field is not None:
             self.field.setFrame_(
                 NSMakeRect(FIELD_LEFT, origin_y, FIELD_WIDTH, FIELD_HEIGHT)
             )
         if self.logo is not None:
             self.logo.setFrame_(NSMakeRect(LOGO_LEFT, origin_y, LOGO_SIZE, LOGO_SIZE))
+        if self.status is not None:
+            has_status = status_band > 0.0
+            self.status.setHidden_(not has_status)
+            if has_status:
+                self.status.setFrame_(
+                    NSMakeRect(16.0, 16.0 + table, PANEL_WIDTH - 32.0, STATUS_HEIGHT)
+                )
 
     def _load_completer(self) -> object:
         base_url = resolve_base_url(persist=False, allow_prompt=False)
@@ -474,7 +503,7 @@ class SpottyBunnyController(NSObject):
         if self._completer is None or self.field is None:
             logger.warning("tab ignored (completer not ready)")
             if self._completer is None and self._shortcuts_load_failed:
-                self._set_status("could not load shortcuts")
+                self._set_status(SHORTCUTS_LOAD_FAILED)
             return
         text = str(self.field.stringValue())
         self._completion_rows = []
@@ -498,7 +527,7 @@ class SpottyBunnyController(NSObject):
             if isinstance(result, Exception):
                 logger.warning("resolve failed: %s", result)
                 self._hide_completions()
-                self._set_status(str(result))
+                self._set_status(format_spotty_bunny_status(result))
                 return
             logger.info("opened %s", result)
             self.hide()
@@ -520,13 +549,28 @@ class SpottyBunnyController(NSObject):
         self.status.setStringValue_(message)
         color = NSColor.systemRedColor() if message else NSColor.secondaryLabelColor()
         self.status.setTextColor_(color)
+        table_visible = self.scroll is not None and not self.scroll.isHidden()
+        if self.panel is not None:
+            frame = self.panel.frame()
+            frame.size.height = (
+                PANEL_HEIGHT
+                + (TABLE_HEIGHT if table_visible else 0.0)
+                + self._status_band_height(message)
+            )
+            self.panel.setFrame_display_(frame, True)
+        self._layout_search_chrome(table_visible=table_visible, status_message=message)
+        self._center_panel()
 
     def _set_table_visible(self, visible: bool) -> None:
         if self.scroll is None or self.panel is None or self.field is None:
             return
         self.scroll.setHidden_(not visible)
         frame = self.panel.frame()
-        frame.size.height = PANEL_HEIGHT + (TABLE_HEIGHT if visible else 0.0)
+        frame.size.height = (
+            PANEL_HEIGHT
+            + (TABLE_HEIGHT if visible else 0.0)
+            + self._status_band_height()
+        )
         self.panel.setFrame_display_(frame, True)
         self._layout_search_chrome(table_visible=visible)
         if visible:
@@ -550,6 +594,14 @@ class SpottyBunnyController(NSObject):
             )
             self.table.scrollRowToVisible_(0)
         self._set_table_visible(len(rows) > 1)
+
+    def _status_band_height(self, message: str | None = None) -> float:
+        text = message
+        if text is None and self.status is not None:
+            text = str(self.status.stringValue())
+        if not text:
+            return 0.0
+        return STATUS_GAP + STATUS_HEIGHT
 
     def _submit_query(self) -> None:
         if self.field is None or self._resolving:
@@ -576,6 +628,13 @@ class SpottyBunnyController(NSObject):
             return url
 
         self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
+
+
+class SpottyBunnyPanel(NSPanel):
+    """Borderless floating panel that can still host a key field editor."""
+
+    def canBecomeKeyWindow(self) -> bool:
+        return True
 
 
 def _primary_screen():
