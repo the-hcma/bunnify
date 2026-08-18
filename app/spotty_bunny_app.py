@@ -7,7 +7,6 @@ import logging
 import math
 import signal
 import sys
-import time
 
 import objc
 from Cocoa import (
@@ -141,7 +140,6 @@ from app.spotty_bunny_status import (
 )
 from app.version import get_build_info
 
-ESCAPE_DISMISS_WINDOW_S = 0.2
 FIELD_CORNER_RADIUS = 8.0
 FIELD_HEIGHT = 56.0
 FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, yt, docs). Tab is your friend :)"
@@ -214,11 +212,10 @@ class SpottyBunnyController(NSObject):
         return False
 
     def dismissWithEscape_(self, _sender) -> None:
-        """Hide About first, then the overlay. Debounce tap + field-editor doubles."""
-        now = time.monotonic()
-        if now - self._escape_at < ESCAPE_DISMISS_WINDOW_S:
+        """Hide About first, then the overlay. Ignore repeats until key-up."""
+        if self._escape_held:
             return
-        self._escape_at = now
+        self._escape_held = True
         if not self.visible:
             return
         if self._about_open:
@@ -262,7 +259,7 @@ class SpottyBunnyController(NSObject):
         self._completion_prefix = ""
         self._completion_rows: list[CompletionRow] = []
         self._completion_seq = 0
-        self._escape_at = 0.0
+        self._escape_held = False
         self._history = HistoryNavigator()
         self._io = ThreadIo()
         self._resolve_seq = 0
@@ -286,10 +283,15 @@ class SpottyBunnyController(NSObject):
     def numberOfRowsInTableView_(self, _table) -> int:
         return len(self._completion_rows)
 
+    def releaseEscape_(self, _sender) -> None:
+        """Arm the next Esc after the key-up of a tap or field-editor dismiss."""
+        self._escape_held = False
+
     def showAbout_(self, _sender) -> None:
         self._toggle_about_panel()
 
     def show(self) -> None:
+        self._escape_held = False
         self._history = HistoryNavigator(load_history_lines())
         self._hide_about_panel()
         self._hide_completions()
@@ -879,6 +881,14 @@ class SpottyBunnyPanel(NSPanel):
             return
         objc.super(SpottyBunnyPanel, self).keyDown_(event)
 
+    def keyUp_(self, event) -> None:
+        if int(event.keyCode()) == ESCAPE_KEYCODE:
+            delegate = self.delegate()
+            if delegate is not None:
+                delegate.releaseEscape_(self)
+            return
+        objc.super(SpottyBunnyPanel, self).keyUp_(event)
+
     def performKeyEquivalent_(self, event) -> bool:
         if int(event.keyCode()) == ESCAPE_KEYCODE:
             self.cancelOperation_(self)
@@ -1088,10 +1098,12 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
         flag_left = bool(flags & DEVICE_LEFT_CONTROL_MASK)
         flag_right = bool(flags & DEVICE_RIGHT_CONTROL_MASK)
         key_name = _describe_event_key(keycode, flags)
-        if event_type == kCGEventKeyDown and keycode == ESCAPE_KEYCODE:
-            if controller.visible:
+        if keycode == ESCAPE_KEYCODE:
+            if event_type == kCGEventKeyDown and controller.visible:
                 logger.info("tap Escape → dismiss")
                 _run_on_main(lambda: controller.dismissWithEscape_(None))
+            elif event_type == kCGEventKeyUp:
+                _run_on_main(lambda: controller.releaseEscape_(None))
             return event
         if event_type != kCGEventFlagsChanged:
             logger.debug(

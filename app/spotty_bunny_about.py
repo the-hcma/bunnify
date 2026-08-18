@@ -82,6 +82,14 @@ class SpottyBunnyAboutPanel(NSPanel):
             return
         objc.super(SpottyBunnyAboutPanel, self).keyDown_(event)
 
+    def keyUp_(self, event) -> None:
+        if int(event.keyCode()) == ESCAPE_KEYCODE:
+            delegate = self.delegate()
+            if delegate is not None:
+                delegate.releaseEscape_(self)
+            return
+        objc.super(SpottyBunnyAboutPanel, self).keyUp_(event)
+
     def performKeyEquivalent_(self, event) -> bool:
         if int(event.keyCode()) == ESCAPE_KEYCODE:
             self.cancelOperation_(self)
