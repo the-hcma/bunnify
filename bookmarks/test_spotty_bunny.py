@@ -1679,6 +1679,34 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 )
             bootout.assert_called_once()
 
+    def test_ensure_spotty_bunny_running_does_not_spawn_after_install_timeout(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import ensure_spotty_bunny_running
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch("app.spotty_bunny_agent.install_agent", return_value=0),
+                patch(
+                    "app.spotty_bunny_launch.SPOTTY_BUNNY_LAUNCHD_WAIT_S",
+                    0,
+                ),
+                patch(
+                    "app.spotty_bunny_launch.spotty_bunny_is_running",
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        installed=True,
+                        loaded=False,
+                        spawn=lambda _cmd: self.fail("should not spawn"),
+                    )
+                )
+
     def test_ensure_spotty_bunny_running_installs_when_agent_present(self) -> None:
         from app.spotty_bunny_launch import ensure_spotty_bunny_running
 
@@ -1704,6 +1732,38 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                     )
                 )
             install.assert_called_once()
+
+    def test_ensure_spotty_bunny_running_polls_until_launchd_overlay_is_live(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import ensure_spotty_bunny_running
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch("app.spotty_bunny_agent.install_agent", return_value=0),
+                patch(
+                    "app.spotty_bunny_launch.SPOTTY_BUNNY_LAUNCHD_WAIT_S",
+                    1.0,
+                ),
+                patch(
+                    "app.spotty_bunny_launch.SPOTTY_BUNNY_STARTUP_WAIT_S",
+                    0,
+                ),
+                patch(
+                    "app.spotty_bunny_launch.spotty_bunny_is_running",
+                    side_effect=[False, False, True],
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        installed=True,
+                        loaded=False,
+                        spawn=lambda _cmd: self.fail("should not spawn"),
+                    )
+                )
 
     def test_ensure_spotty_bunny_running_spawns_when_install_fails(self) -> None:
         from app.spotty_bunny_launch import (

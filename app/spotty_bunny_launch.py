@@ -18,6 +18,7 @@ from app.version import git_commit
 logger = logging.getLogger(__name__)
 
 RestartFn = Callable[[str | None, str], bool]
+SPOTTY_BUNNY_LAUNCHD_WAIT_S = 2.0
 SPOTTY_BUNNY_PID_FILE = ".spotty-bunny.pid"
 SPOTTY_BUNNY_STARTUP_WAIT_S = 0.05
 
@@ -95,13 +96,20 @@ def ensure_spotty_bunny_running(
         from app.spotty_bunny_agent import install_agent
 
         if install_agent() == 0:
-            time.sleep(SPOTTY_BUNNY_STARTUP_WAIT_S)
-            if spotty_bunny_is_running(pid_dir=directory):
-                logger.info("started spotty-bunny via LaunchAgent")
-                return True
-            logger.warning("LaunchAgent bootstrap did not produce a live overlay")
-        else:
-            logger.warning("LaunchAgent install failed; falling back to spawn")
+            deadline = time.monotonic() + SPOTTY_BUNNY_LAUNCHD_WAIT_S
+            while True:
+                if spotty_bunny_is_running(pid_dir=directory):
+                    logger.info("started spotty-bunny via LaunchAgent")
+                    return True
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(SPOTTY_BUNNY_STARTUP_WAIT_S)
+            logger.warning(
+                "LaunchAgent bootstrap did not produce a live overlay; "
+                "not spawning a second one"
+            )
+            return False
+        logger.warning("LaunchAgent install failed; falling back to spawn")
     command = spotty_bunny_command()
     spawn_fn = spawn or _spawn_detached
     try:
