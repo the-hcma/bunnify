@@ -928,7 +928,52 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("gh, c, search hello", source)
+        self.assertIn("gh, c, yt, docs", source)
+
+    def test_primary_screen_uses_menu_bar_display(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("screens[0]", source)
+        self.assertNotIn("mainScreen()", source)
+
+    def test_about_panel_constants(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_about.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Copyright © 2026 thehcma", source)
+        self.assertIn("Quick shortcut overlay for Bunnify", source)
+        self.assertIn("https://github.com/the-hcma/bunnify", source)
+
+    def test_search_field_is_centered_with_logo_on_right(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("NSTextAlignmentCenter", source)
+        self.assertIn("_CenteredFieldCell", source)
+        self.assertIn("LOGO_LEFT = PANEL_WIDTH - FIELD_LEFT - LOGO_SIZE", source)
+
+    def test_search_panel_has_no_title_bar_label(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('setTitle_("spotty-bunny")', source)
+        self.assertIn("showAbout:", source)
+
+    def test_about_panel_build_info_prewarmed(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("self._io.submit(get_build_info", source)
+
+    def test_about_panel_resign_does_not_dismiss_main_while_visible(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("resigning is self._about_panel", source)
+        self.assertIn("NSApp.keyWindow() is self._about_panel", source)
+        self.assertIn("self._about_panel.setDelegate_(self)", source)
+        self.assertIn("self._about_open", source)
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):
