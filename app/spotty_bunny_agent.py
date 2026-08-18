@@ -161,6 +161,11 @@ def interpreter_for_program(program: Path) -> Path:
     return executable
 
 
+def is_agent_installed(*, home: Path | None = None) -> bool:
+    """True when the LaunchAgent plist is present under *home*."""
+    return agent_plist_path(home=home).is_file()
+
+
 def is_agent_loaded(
     *,
     launchctl: LaunchctlFn | None = None,
@@ -447,13 +452,12 @@ def _launchd_log_paths(plist: Path) -> tuple[str | None, str | None]:
 
 
 def _pid_text(*, pid_dir: Path | None) -> str:
-    from app.spotty_bunny_launch import spotty_bunny_pid_path
+    from app.spotty_bunny_launch import read_spotty_bunny_runtime
 
-    path = spotty_bunny_pid_path(pid_dir=pid_dir)
-    try:
-        return path.read_text(encoding="utf-8").strip() or "none"
-    except OSError:
+    runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
+    if runtime is None:
         return "none"
+    return str(runtime[0])
 
 
 def _plist_string(text: str, key: str) -> str | None:

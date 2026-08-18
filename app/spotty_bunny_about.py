@@ -37,7 +37,11 @@ from Cocoa import (
 )
 from Foundation import NSAttributedString, NSMakeRange, NSMutableAttributedString
 
-from app.spotty_bunny_about_info import load_about_runtime_info
+from app.spotty_bunny_about_info import (
+    load_about_runtime_info,
+    open_path_in_text_editor,
+    path_from_file_uri,
+)
 from app.spotty_bunny_hotkey import ESCAPE_KEYCODE
 from app.spotty_bunny_update import UpdateStatus, read_cached_update_status
 from app.version import get_build_info
@@ -58,6 +62,7 @@ ABOUT_LINK_RGB = (0.08, 0.28, 0.58)
 ABOUT_MUTED_RGB = (0.38, 0.30, 0.22)
 ABOUT_PANEL_MAX_WIDTH = 640.0
 ABOUT_PANEL_MIN_WIDTH = 320.0
+ABOUT_ROW_GAP = 8.0
 ABOUT_SUMMARY = (
     "Search and open your Bunnify shortcuts from anywhere on macOS. "
     "Hold one Control and tap the other to show this box, type a shortcut "
@@ -132,7 +137,8 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         if not status.outdated or not status.latest
         else f"Update available: {status.latest}"
     )
-    repo_text = "github.com/the-hcma/bunnify"
+    repo_text = "Repository: github.com/the-hcma/bunnify"
+    license_text = f"License: {ABOUT_LICENSE}"
     bookmarks_text = f"Bookmarks: {runtime.bookmarks_display}"
     github_text = (
         None if runtime.github_display is None else f"GitHub: {runtime.github_display}"
@@ -142,6 +148,7 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         _measure_text("Spotty Bunny", title_font, max_width=inner_cap)[0],
         _measure_text(ABOUT_COPYRIGHT, body_font, max_width=inner_cap)[0],
         _measure_text(bookmarks_text, body_font, max_width=inner_cap)[0],
+        _measure_text(license_text, body_font, max_width=inner_cap)[0],
         _measure_text(repo_text, body_font, max_width=inner_cap)[0],
         _measure_text(runtime.server_display, body_font, max_width=inner_cap)[0],
         _measure_text(version_text, body_font, max_width=inner_cap)[0],
@@ -168,6 +175,11 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
     bookmarks_height = max(
         18.0,
         _measure_text(bookmarks_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
+    )
+    repo_license_height = max(
+        36.0,
+        _measure_text(f"{repo_text}\n{license_text}", body_font, max_width=inner)[1]
+        + ABOUT_CELL_PAD,
     )
     github_height = (
         0.0
@@ -232,21 +244,14 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
                 ),
             ),
             (
-                18.0,
-                lambda y, h: _link_field(
+                repo_license_height,
+                lambda y, h: _multi_link_field(
                     NSMakeRect(ABOUT_INSET, y, inner, h),
-                    ABOUT_LICENSE,
-                    ABOUT_LICENSE,
-                    ABOUT_LICENSE_URL,
-                ),
-            ),
-            (
-                18.0,
-                lambda y, h: _link_field(
-                    NSMakeRect(ABOUT_INSET, y, inner, h),
-                    repo_text,
-                    repo_text,
-                    SPOTTY_BUNNY_REPO_URL,
+                    f"{repo_text}\n{license_text}",
+                    (
+                        ("github.com/the-hcma/bunnify", SPOTTY_BUNNY_REPO_URL),
+                        (ABOUT_LICENSE, ABOUT_LICENSE_URL),
+                    ),
                 ),
             ),
             (
@@ -290,7 +295,7 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
             ),
         )
     )
-    gap = 8.0
+    gap = ABOUT_ROW_GAP
     height = ABOUT_INSET * 2.0 + sum(row_h for row_h, _ in rows) + gap * (len(rows) - 1)
 
     panel = SpottyBunnyAboutPanel.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -355,6 +360,12 @@ class _AboutLinkField(NSTextField):
     def resetCursorRects(self) -> None:
         objc.super(_AboutLinkField, self).resetCursorRects()
         self.addCursorRect_cursor_(self.bounds(), NSCursor.pointingHandCursor())
+
+    def textView_clickedOnLink_atIndex_(self, _view, link, _index) -> bool:
+        path = path_from_file_uri(str(link))
+        if path is None:
+            return False
+        return open_path_in_text_editor(path)
 
     def updateTrackingAreas(self) -> None:
         objc.super(_AboutLinkField, self).updateTrackingAreas()
@@ -444,6 +455,51 @@ def _measure_text(text: str, font, *, max_width: float) -> tuple[float, float]:
         NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading,
     )
     return float(math.ceil(bounds.size.width)), float(math.ceil(bounds.size.height))
+
+
+def _multi_link_field(
+    frame,
+    text: str,
+    links: tuple[tuple[str, str], ...],
+) -> NSTextField:
+    """Return a wrapping label with each *(link_text, url)* span as a hyperlink."""
+    field = _AboutLinkField.alloc().initWithFrame_(frame)
+    field.setEditable_(False)
+    field.setSelectable_(True)
+    field.setBezeled_(False)
+    field.setDrawsBackground_(False)
+    field.setAllowsEditingTextAttributes_(True)
+    field.setUsesSingleLineMode_(False)
+    field.setLineBreakMode_(NSLineBreakByWordWrapping)
+    field.cell().setWraps_(True)
+    field.setFont_(NSFont.systemFontOfSize_(13.0))
+    attributed = NSMutableAttributedString.alloc().initWithString_(text)
+    attributed.addAttribute_value_range_(
+        NSForegroundColorAttributeName,
+        _srgb_color(ABOUT_LABEL_RGB),
+        NSMakeRange(0, len(text)),
+    )
+    search_from = 0
+    for link_text, url in links:
+        start = text.find(link_text, search_from)
+        if start < 0:
+            continue
+        span = NSMakeRange(start, len(link_text))
+        attributed.addAttribute_value_range_(NSLinkAttributeName, url, span)
+        attributed.addAttribute_value_range_(
+            NSForegroundColorAttributeName,
+            _srgb_color(ABOUT_LINK_RGB),
+            span,
+        )
+        attributed.addAttribute_value_range_(
+            NSUnderlineStyleAttributeName,
+            NSUnderlineStyleSingle,
+            span,
+        )
+        search_from = start + len(link_text)
+    field.setAttributedStringValue_(attributed)
+    field.setDelegate_(field)
+    return field
 
 
 def _srgb_color(rgb: tuple[float, float, float]):

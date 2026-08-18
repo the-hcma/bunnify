@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+INSTALL_MENU_TITLE = "Install Spotty Bunny"
+INSTALL_STATUS = "Installing LaunchAgent…"
 QUIT_MENU_TITLE = "Quit Spotty Bunny"
 UNINSTALL_INFORMATIVE = (
     "Removes the login LaunchAgent and stops Spotty Bunny. "
@@ -12,16 +14,21 @@ UPGRADE_MENU_TITLE = "Upgrade Spotty Bunny"
 UPGRADE_STATUS = "Upgrading Bunnify from PyPI…"
 
 
-def logo_menu_specs(*, outdated: bool) -> tuple[tuple[str, str], ...]:
+def logo_menu_specs(
+    *,
+    installed: bool,
+    outdated: bool,
+) -> tuple[tuple[str, str], ...]:
     """Return logo menu (title, action) pairs in lexicographic title order.
 
-    Upgrade is included only when a newer PyPI version is known.
+    Install is shown when the LaunchAgent is missing. Upgrade is shown only
+    when the agent is installed and a newer PyPI version is known.
     """
-    items = (
-        (QUIT_MENU_TITLE, "quitSpottyBunny:"),
-        (UNINSTALL_MENU_TITLE, "uninstallSpottyBunny:"),
-        (UPGRADE_MENU_TITLE, "upgradeSpottyBunny:"),
-    )
-    if outdated:
-        return items
-    return tuple(item for item in items if item[0] != UPGRADE_MENU_TITLE)
+    items: list[tuple[str, str]] = [(QUIT_MENU_TITLE, "quitSpottyBunny:")]
+    if installed:
+        items.append((UNINSTALL_MENU_TITLE, "uninstallSpottyBunny:"))
+        if outdated:
+            items.append((UPGRADE_MENU_TITLE, "upgradeSpottyBunny:"))
+    else:
+        items.append((INSTALL_MENU_TITLE, "installSpottyBunny:"))
+    return tuple(sorted(items, key=lambda item: item[0]))

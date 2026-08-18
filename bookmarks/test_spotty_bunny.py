@@ -373,6 +373,28 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             )
             self.assertEqual(info.server_url, "https://bun.example.com")
 
+    def test_open_path_in_text_editor_uses_open_t(self) -> None:
+        from app.spotty_bunny_about_info import open_path_in_text_editor
+
+        calls: list[list[str]] = []
+
+        def run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        path = Path("/tmp/bookmarks.json")
+        self.assertTrue(open_path_in_text_editor(path, run=run))
+        self.assertEqual(calls, [["open", "-t", str(path)]])
+
+    def test_path_from_file_uri_decodes_path(self) -> None:
+        from app.spotty_bunny_about_info import path_from_file_uri
+
+        self.assertEqual(
+            path_from_file_uri("file:///tmp/bookmarks.json"),
+            Path("/tmp/bookmarks.json"),
+        )
+        self.assertIsNone(path_from_file_uri("https://example.com/x"))
+
 
 class SpottyBunnyAgentTests(SimpleTestCase):
     def test_bootout_loaded_agent_issues_bootout_when_loaded(self) -> None:
@@ -569,6 +591,17 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 interpreter_for_program(script),
                 Path("/opt/pipx/venvs/bunnify/bin/python"),
             )
+
+    def test_is_agent_installed_checks_plist(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, is_agent_installed
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self.assertFalse(is_agent_installed(home=home))
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text("plist", encoding="utf-8")
+            self.assertTrue(is_agent_installed(home=home))
 
     def test_status_reports_log_version_and_tcc(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
@@ -1443,6 +1476,10 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             with (
                 patch("app.spotty_bunny_launch.sys.platform", "darwin"),
                 patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="abc1234",
+                ),
+                patch(
                     "app.spotty_bunny_launch._spotty_bunny_process_alive",
                     return_value=True,
                 ),
@@ -1455,7 +1492,87 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 )
             self.assertEqual(
                 (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
-                "4242\n",
+                "4242\nabc1234\n",
+            )
+
+    def test_ensure_spotty_bunny_running_keeps_mismatch_when_declined(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            (pid_dir / SPOTTY_BUNNY_PID_FILE).write_text(
+                "4242\noldcommit\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="newcommit",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        restart=lambda _recorded, _current: False,
+                        spawn=lambda _cmd: self.fail("should not spawn"),
+                    )
+                )
+
+    def test_ensure_spotty_bunny_running_restarts_on_commit_mismatch(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        spawned: list[int] = []
+
+        def spawn(_cmd: object) -> int:
+            spawned.append(99)
+            return 99
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            (pid_dir / SPOTTY_BUNNY_PID_FILE).write_text(
+                "4242\noldcommit\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="newcommit",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+                patch("app.spotty_bunny_launch._terminate_pid"),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        restart=lambda recorded, current: (
+                            recorded == "oldcommit" and current == "newcommit"
+                        ),
+                        spawn=spawn,
+                    )
+                )
+            self.assertEqual(spawned, [99])
+            self.assertEqual(
+                (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
+                "99\nnewcommit\n",
             )
 
     def test_ensure_spotty_bunny_running_fails_when_child_exits(self) -> None:
@@ -1504,6 +1621,10 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             with (
                 patch("app.spotty_bunny_launch.sys.platform", "darwin"),
                 patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="abc1234",
+                ),
+                patch(
                     "app.spotty_bunny_launch._spotty_bunny_process_alive",
                     return_value=True,
                 ),
@@ -1512,7 +1633,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                     ensure_spotty_bunny_running(pid_dir=pid_dir, spawn=spawn)
                 )
             self.assertEqual(len(spawned), 1)
-            self.assertEqual(pid_path.read_text(encoding="utf-8"), "4242\n")
+            self.assertEqual(pid_path.read_text(encoding="utf-8"), "4242\nabc1234\n")
 
     def test_stop_spotty_bunny_clears_pid_file(self) -> None:
         from app.spotty_bunny_launch import (
@@ -1582,11 +1703,16 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("load_about_runtime_info", source)
         self.assertIn("Bookmarks:", source)
         self.assertIn("GitHub:", source)
+        self.assertIn("License:", source)
+        self.assertIn("Repository:", source)
+        self.assertIn("_multi_link_field", source)
+        self.assertIn("textView_clickedOnLink_atIndex_", source)
         info_source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_about_info.py"
         ).read_text(encoding="utf-8")
         self.assertIn("Local server", info_source)
         self.assertIn("Remote server", info_source)
+        self.assertIn('["open", "-t", str(path)]', info_source)
 
     def test_search_field_is_centered_with_logo_on_right(self) -> None:
         source = (
@@ -1625,17 +1751,21 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertNotIn('setTitle_("spotty-bunny")', source)
         self.assertIn("showAbout:", source)
         self.assertIn("SpottyBunnyLogoButton", source)
+        self.assertIn("def installSpottyBunny_", source)
         self.assertIn("def quitSpottyBunny_", source)
         self.assertIn("def uninstallSpottyBunny_", source)
         self.assertIn("def upgradeSpottyBunny_", source)
         self.assertIn("menuNeedsUpdate_", source)
-        self.assertIn("outdated=outdated", source)
+        self.assertIn("installed=is_agent_installed()", source)
+        self.assertIn("outdated=self._update_status.outdated", source)
         menu_source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_menu.py"
         ).read_text(encoding="utf-8")
+        self.assertIn("Install Spotty Bunny", menu_source)
         self.assertIn("Quit Spotty Bunny", menu_source)
         self.assertIn("Uninstall Spotty Bunny", menu_source)
         self.assertIn("Upgrade Spotty Bunny", menu_source)
+        self.assertIn("installSpottyBunny:", menu_source)
         self.assertIn("quitSpottyBunny:", menu_source)
         self.assertIn("uninstallSpottyBunny:", menu_source)
         self.assertIn("upgradeSpottyBunny:", menu_source)
@@ -1939,20 +2069,25 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
 
     def test_logo_menu_specs_are_sorted_and_hide_upgrade_when_current(self) -> None:
         from app.spotty_bunny_menu import (
+            INSTALL_MENU_TITLE,
             QUIT_MENU_TITLE,
             UNINSTALL_MENU_TITLE,
             UPGRADE_MENU_TITLE,
             logo_menu_specs,
         )
 
-        current = logo_menu_specs(outdated=False)
+        missing = logo_menu_specs(installed=False, outdated=True)
+        missing_titles = [title for title, _action in missing]
+        self.assertEqual(missing_titles, sorted(missing_titles))
+        self.assertEqual(missing_titles, [INSTALL_MENU_TITLE, QUIT_MENU_TITLE])
+        current = logo_menu_specs(installed=True, outdated=False)
         titles = [title for title, _action in current]
         self.assertEqual(titles, sorted(titles))
         self.assertEqual(
             titles,
             [QUIT_MENU_TITLE, UNINSTALL_MENU_TITLE],
         )
-        outdated = logo_menu_specs(outdated=True)
+        outdated = logo_menu_specs(installed=True, outdated=True)
         outdated_titles = [title for title, _action in outdated]
         self.assertEqual(outdated_titles, sorted(outdated_titles))
         self.assertEqual(

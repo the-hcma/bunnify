@@ -133,11 +133,12 @@ def ensure_ready_base_url(
         print_fn=log,
     )
     preferred_port = preferences.local_port
+    pid_dir = run_dir(environ=environ)
     while True:
         try:
             base_url, actual_port = ensure_local_server(
                 port=preferred_port,
-                pid_dir=run_dir(environ=environ),
+                pid_dir=pid_dir,
                 bookmarks=bookmarks,
             )
         except (OSError, RuntimeError, ValueError) as exc:
@@ -154,6 +155,15 @@ def ensure_ready_base_url(
             ):
                 raise ClientError(message)
             continue
+        if interactive:
+            base_url, actual_port = _restart_local_server_if_build_mismatch(
+                base_url=base_url,
+                bookmarks=bookmarks,
+                pid_dir=pid_dir,
+                port=actual_port,
+                print_fn=log,
+                prompt_fn=ask,
+            )
         if actual_port != preferences.local_port or base_url != preferences.base_url:
             path = env_path if env_path is not None else env_file_path(environ=environ)
             save_preferences(
@@ -810,6 +820,39 @@ def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
     return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
 
 
+def _restart_local_server_if_build_mismatch(
+    *,
+    base_url: str,
+    bookmarks: Path,
+    pid_dir: Path,
+    port: int,
+    print_fn: Callable[[str], None],
+    prompt_fn: Callable[[str], str],
+    theme: Theme | None = None,
+) -> tuple[str, int]:
+    """Reuse a healthy local server, or restart it when the CLI commit differs."""
+    colors = theme if theme is not None else Theme(enabled=False)
+    health = fetch_health(base_url)
+    if not health.ok or _builds_match(health):
+        return base_url, port
+    chosen = _offer_restart_mismatched_server(
+        prompt_fn,
+        port=port,
+        health=health,
+        pid_dir=pid_dir,
+        print_fn=print_fn,
+        theme=colors,
+    )
+    if chosen is None or check_health(base_url):
+        return base_url, port
+    started_url, started_port = ensure_local_server(
+        port=chosen,
+        pid_dir=pid_dir,
+        bookmarks=bookmarks,
+    )
+    return started_url, started_port
+
+
 def _wait_for_healthy_remote(
     base_url: str,
     *,
@@ -936,7 +979,24 @@ def _run_repl(
     if sys.platform == "darwin" and input_fn is None:
         from app.spotty_bunny_launch import ensure_spotty_bunny_running
 
-        if ensure_spotty_bunny_running():
+        def offer_restart(recorded: str | None, current: str) -> bool:
+            running = recorded or "unknown"
+            click.echo(
+                theme.warn(
+                    f"Spotty Bunny is running commit {running}; this CLI is {current}."
+                ),
+                err=True,
+            )
+            return _confirm_explicit_yes(
+                lambda message: click.prompt(
+                    message.rstrip(": "),
+                    default="",
+                    show_default=False,
+                ),
+                "Restart Spotty Bunny with this CLI? [y/N]: ",
+            )
+
+        if ensure_spotty_bunny_running(restart=offer_restart):
             click.echo(
                 theme.dim(
                     "Spotty Bunny overlay ready (hold one Control, tap the other)"

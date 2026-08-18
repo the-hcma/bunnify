@@ -157,10 +157,17 @@ icon and choose **Quit Spotty Bunny**. That exits the process and boots the
 agent out so KeepAlive cannot immediately respawn it. The plist stays; the
 agent starts again at next login (`RunAtLoad`) until you `uninstall`.
 
-The same menu lists **Uninstall Spotty Bunny** (confirms, then removes the
-plist before booting the agent out) and, when a newer PyPI release is known,
-**Upgrade Spotty Bunny** (`pipx upgrade`, rewrite the plist, then quit so
-KeepAlive relaunches). Items are listed A–Z by title.
+The same menu lists **Install Spotty Bunny** when the LaunchAgent is missing
+(then quits so launchd owns the overlay). When the agent is installed it
+offers **Uninstall Spotty Bunny** (confirms, then removes the plist before
+booting the agent out) and, when a newer PyPI release is known, **Upgrade
+Spotty Bunny** (`pipx upgrade`, rewrite the plist, then quit so KeepAlive
+relaunches). Items are listed A–Z by title.
+
+Invoking `bunnify` reuses a running local server and Spotty Bunny overlay
+when they match this CLI's commit. If either is missing it is started; if
+either is running an older or different commit, the CLI offers to restart
+it.
 
 Spotty Bunny checks PyPI at most once per day (cached as
 `pypi-latest.json` under the data directory). When this install is behind,

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from app.config import (
     default_bookmarks_path,
@@ -125,6 +125,34 @@ def load_about_runtime_info(
         server_display=f"{label} · {base_url}",
         server_url=base_url,
     )
+
+
+def open_path_in_text_editor(
+    path: Path,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> bool:
+    """Open *path* in the default text editor (``open -t`` on macOS)."""
+    runner = run if run is not None else subprocess.run
+    try:
+        completed = runner(
+            ["open", "-t", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return False
+    return completed.returncode == 0
+
+
+def path_from_file_uri(uri: str) -> Path | None:
+    """Return a filesystem path for a ``file:`` URI, or None."""
+    parsed = urlparse(uri.strip())
+    if parsed.scheme != "file" or not parsed.path:
+        return None
+    return Path(unquote(parsed.path))
 
 
 _GIT_REMOTE_TIMEOUT_S = 2

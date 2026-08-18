@@ -185,8 +185,9 @@ bunnify spotty-bunny uninstall
 
 That boots the agent out, removes the plist, and stops a leftover overlay
 process. Bookmarks and `config.env` are unchanged. Right-click the bunny icon
-for **Quit Spotty Bunny**, **Uninstall Spotty Bunny**, and (when a newer
-PyPI version is known) **Upgrade Spotty Bunny**. An up-arrow badge on the
+for **Install Spotty Bunny** (when the LaunchAgent is missing), **Quit Spotty
+Bunny**, **Uninstall Spotty Bunny**, and (when installed and a newer PyPI
+version is known) **Upgrade Spotty Bunny**. An up-arrow badge on the
 icon and an About line mark an outdated install (PyPI is checked at most
 once a day).
 
