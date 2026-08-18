@@ -730,6 +730,66 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertGreaterEqual(tcc.probes, 2)
             self.assertFalse(any(call[1] == "kickstart" for call in ctl.calls))
 
+    def test_refresh_agent_plist_rewrites_without_bootout(self) -> None:
+        from app.spotty_bunny_agent import (
+            AGENT_LABEL,
+            format_agent_plist,
+            refresh_agent_plist,
+        )
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=["/old/spotty-bunny"],
+                ),
+                encoding="utf-8",
+            )
+            new_program = Path("/new/spotty-bunny")
+            code = refresh_agent_plist(
+                home=home,
+                platform="darwin",
+                print_err=lambda _m: None,
+                program=new_program,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
+            self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
+
+    def test_uninstall_removes_plist_before_bootout(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, uninstall_agent
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text("plist", encoding="utf-8")
+
+            class _OrderLaunchctl(_FakeLaunchctl):
+                def __call__(
+                    self, argv: list[str], **kwargs: object
+                ) -> subprocess.CompletedProcess[str]:
+                    if len(argv) >= 2 and argv[1] == "bootout":
+                        self.plist_existed_at_bootout = plist.exists()
+                    return super().__call__(argv, **kwargs)
+
+            ctl = _OrderLaunchctl()
+            ctl.loaded = True
+            ctl.plist_existed_at_bootout = True
+            with patch("app.spotty_bunny_agent.stop_spotty_bunny"):
+                code = uninstall_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                )
+            self.assertEqual(code, 0)
+            self.assertFalse(plist.exists())
+            self.assertIs(ctl.plist_existed_at_bootout, False)
+
 
 class _FakeLaunchctl:
     def __init__(self) -> None:
@@ -1581,6 +1641,8 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("upgradeSpottyBunny:", menu_source)
         self.assertIn("setMenu_(menu)", source)
         self.assertIn("rightMouseDown_", source)
+        self.assertIn("refresh_agent_plist", source)
+        self.assertIn("if refresh_agent_plist() != 0", source)
         self.assertIn("bootout_loaded_agent", source)
         self.assertIn("self._about_panel.close()", source)
 
@@ -1869,6 +1931,12 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
         self.assertFalse(is_version_outdated("0.7.0", "0.6.1"))
         self.assertFalse(is_version_outdated("0.6.1", None))
 
+    def test_is_version_outdated_unparseable_current_is_not_outdated(self) -> None:
+        from app.spotty_bunny_update import is_version_outdated
+
+        self.assertFalse(is_version_outdated("unknown", "0.7.0"))
+        self.assertFalse(is_version_outdated("0.7.0", "not-a-version"))
+
     def test_logo_menu_specs_are_sorted_and_hide_upgrade_when_current(self) -> None:
         from app.spotty_bunny_menu import (
             QUIT_MENU_TITLE,
@@ -1907,6 +1975,36 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
 
         latest = pypi_latest_version(urlopen=lambda *_a, **_k: _Response())
         self.assertEqual(latest, "1.2.3")
+
+    def test_read_cached_update_status_malformed_cache(self) -> None:
+        from app.spotty_bunny_update import read_cached_update_status
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            cache.write_text("{not json", encoding="utf-8")
+            status = read_cached_update_status(cache_path=cache, current="1.0.0")
+            self.assertIsNone(status.checked_at)
+            self.assertIsNone(status.latest)
+            self.assertFalse(status.outdated)
+
+    def test_read_cached_update_status_round_trip(self) -> None:
+        from app.spotty_bunny_update import (
+            read_cached_update_status,
+            refresh_update_status,
+        )
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            refresh_update_status(
+                cache_path=cache,
+                current="1.0.0",
+                fetch=lambda: "2.0.0",
+                now=10.0,
+            )
+            status = read_cached_update_status(cache_path=cache, current="1.0.0")
+            self.assertEqual(status.checked_at, 10.0)
+            self.assertEqual(status.latest, "2.0.0")
+            self.assertTrue(status.outdated)
 
     def test_refresh_update_status_caches_and_skips_fresh_fetch(self) -> None:
         from app.spotty_bunny_update import (
@@ -1967,8 +2065,41 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
                 now=99.0,
             )
             self.assertEqual(failed.latest, "2.0.0")
-            self.assertEqual(failed.checked_at, 50.0)
+            self.assertEqual(failed.checked_at, 99.0)
             self.assertTrue(failed.outdated)
+
+    def test_refresh_throttles_after_failed_fetch(self) -> None:
+        from app.spotty_bunny_update import (
+            CHECK_INTERVAL_S,
+            refresh_update_status,
+        )
+
+        fetches: list[int] = []
+
+        def fetch() -> str | None:
+            fetches.append(1)
+            return None
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            first = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=fetch,
+                now=10.0,
+            )
+            self.assertIsNone(first.latest)
+            self.assertEqual(first.checked_at, 10.0)
+            self.assertFalse(first.outdated)
+            self.assertEqual(len(fetches), 1)
+            second = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=fetch,
+                now=10.0 + CHECK_INTERVAL_S - 1,
+            )
+            self.assertEqual(len(fetches), 1)
+            self.assertEqual(second.checked_at, 10.0)
 
 
 class _FakeClock:

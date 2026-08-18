@@ -44,7 +44,7 @@ def is_version_outdated(current: str, latest: str | None) -> bool:
     try:
         return Version(current) < Version(latest)
     except InvalidVersion:
-        return current != latest
+        return False
 
 
 def read_cached_update_status(
@@ -97,19 +97,14 @@ def refresh_update_status(
         )
     getter = fetch if fetch is not None else pypi_latest_version
     latest = getter()
+    previous_latest = cached.latest if cached is not None else None
     if latest is None:
-        if cached is None:
-            return UpdateStatus(
-                checked_at=None,
-                current=version,
-                latest=None,
-                outdated=False,
-            )
+        _write_cache(path, checked_at=moment, latest=previous_latest)
         return UpdateStatus(
-            checked_at=cached.checked_at,
+            checked_at=moment,
             current=version,
-            latest=cached.latest,
-            outdated=is_version_outdated(version, cached.latest),
+            latest=previous_latest,
+            outdated=is_version_outdated(version, previous_latest),
         )
     _write_cache(path, checked_at=moment, latest=latest)
     return UpdateStatus(
@@ -128,7 +123,7 @@ def update_cache_path(*, environ: dict[str, str] | None = None) -> Path:
 @dataclass(frozen=True)
 class _CacheRecord:
     checked_at: float
-    latest: str
+    latest: str | None
 
 
 def _read_cache(path: Path) -> _CacheRecord | None:
@@ -138,16 +133,20 @@ def _read_cache(path: Path) -> _CacheRecord | None:
         return None
     if not isinstance(payload, dict):
         return None
-    latest = payload.get("latest")
     checked_at = payload.get("checked_at")
-    if not isinstance(latest, str) or not latest:
-        return None
     if not isinstance(checked_at, int | float):
+        return None
+    latest_raw = payload.get("latest")
+    if latest_raw is None:
+        latest: str | None = None
+    elif isinstance(latest_raw, str) and latest_raw:
+        latest = latest_raw
+    else:
         return None
     return _CacheRecord(checked_at=float(checked_at), latest=latest)
 
 
-def _write_cache(path: Path, *, checked_at: float, latest: str) -> None:
+def _write_cache(path: Path, *, checked_at: float, latest: str | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(
         {"checked_at": checked_at, "latest": latest},

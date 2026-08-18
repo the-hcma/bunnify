@@ -158,8 +158,9 @@ agent out so KeepAlive cannot immediately respawn it. The plist stays; the
 agent starts again at next login (`RunAtLoad`) until you `uninstall`.
 
 The same menu lists **Uninstall Spotty Bunny** (confirms, then removes the
-LaunchAgent) and, when a newer PyPI release is known, **Upgrade Spotty Bunny**
-(`pipx upgrade` plus a LaunchAgent refresh). Items are listed A–Z by title.
+plist before booting the agent out) and, when a newer PyPI release is known,
+**Upgrade Spotty Bunny** (`pipx upgrade`, rewrite the plist, then quit so
+KeepAlive relaunches). Items are listed A–Z by title.
 
 Spotty Bunny checks PyPI at most once per day (cached as
 `pypi-latest.json` under the data directory). When this install is behind,

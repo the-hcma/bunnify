@@ -105,8 +105,8 @@ from app.spotty_bunny_about import (
 )
 from app.spotty_bunny_agent import (
     bootout_loaded_agent,
+    refresh_agent_plist,
     uninstall_agent,
-    upgrade_agent,
 )
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
@@ -378,7 +378,7 @@ class SpottyBunnyController(NSObject):
         quit_ns_app(ns_app=NSApp, post_wake=_post_wake_event)
 
     def upgradeSpottyBunny_(self, _sender) -> None:
-        """Upgrade the pipx install, refresh the agent, then quit to relaunch."""
+        """Upgrade via pipx, rewrite the plist, then quit so KeepAlive relaunches."""
         logger.info("upgrade from logo menu")
         self._set_status(UPGRADE_STATUS)
         self._io.submit(self._perform_upgrade, self._upgrade_ready)
@@ -719,7 +719,8 @@ class SpottyBunnyController(NSObject):
         from app.cli import run_upgrade
 
         run_upgrade(print_fn=lambda message: logger.info("%s", message))
-        upgrade_agent()
+        if refresh_agent_plist() != 0:
+            raise RuntimeError("LaunchAgent plist refresh failed")
 
     def _present_about_panel(self) -> None:
         if self._about_panel is not None:
