@@ -119,7 +119,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{COMMAND_NAME}: logging to stderr only", file=sys.stderr)
     if sys.platform == "darwin":
         write_spotty_bunny_pid(os.getpid())
-        atexit.register(clear_spotty_bunny_pid)
+        pid = os.getpid()
+        atexit.register(lambda: clear_spotty_bunny_pid(only_pid=pid))
     return run_spotty_bunny()
 
 

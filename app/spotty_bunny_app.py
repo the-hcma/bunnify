@@ -105,6 +105,8 @@ from app.spotty_bunny_about import (
 )
 from app.spotty_bunny_agent import (
     bootout_loaded_agent,
+    install_agent,
+    is_agent_installed,
     refresh_agent_plist,
     uninstall_agent,
 )
@@ -136,6 +138,7 @@ from app.spotty_bunny_hotkey import (
 from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
 from app.spotty_bunny_menu import (
+    INSTALL_STATUS,
     UNINSTALL_INFORMATIVE,
     UNINSTALL_MENU_TITLE,
     UPGRADE_STATUS,
@@ -306,6 +309,12 @@ class SpottyBunnyController(NSObject):
         self._io.submit(get_build_info, lambda _result: None)
         self._schedule_update_check()
         return self
+
+    def installSpottyBunny_(self, _sender) -> None:
+        """Install the login LaunchAgent, then quit so launchd owns the overlay."""
+        logger.info("install from logo menu")
+        self._set_status(INSTALL_STATUS)
+        self._io.submit(self._perform_install, self._install_ready)
 
     def menuNeedsUpdate_(self, menu) -> None:
         self._rebuild_logo_menu(menu)
@@ -636,6 +645,17 @@ class SpottyBunnyController(NSObject):
             self.table.reloadData()
         self._set_table_visible(False)
 
+    def _install_ready(self, result: object) -> None:
+        def apply() -> None:
+            if isinstance(result, Exception):
+                logger.warning("install failed: %s", result)
+                self._set_status(format_spotty_bunny_status(result))
+                return
+            logger.info("install finished; quitting for LaunchAgent")
+            quit_ns_app(ns_app=NSApp, post_wake=_post_wake_event)
+
+        _run_on_main(apply)
+
     def _layout_search_chrome(
         self, *, table_visible: bool, status_message: str | None = None
     ) -> None:
@@ -715,6 +735,10 @@ class SpottyBunnyController(NSObject):
         if container is not None:
             container.setLineFragmentPadding_(0.0)
 
+    def _perform_install(self) -> None:
+        if install_agent() != 0:
+            raise RuntimeError("LaunchAgent install failed")
+
     def _perform_upgrade(self) -> None:
         from app.cli import run_upgrade
 
@@ -738,7 +762,10 @@ class SpottyBunnyController(NSObject):
 
     def _rebuild_logo_menu(self, menu) -> None:
         menu.removeAllItems()
-        for title, action in logo_menu_specs(outdated=self._update_status.outdated):
+        for title, action in logo_menu_specs(
+            installed=is_agent_installed(),
+            outdated=self._update_status.outdated,
+        ):
             item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                 title,
                 action,
@@ -987,7 +1014,7 @@ class SpottyBunnyController(NSObject):
 
 
 class SpottyBunnyLogoButton(NSButton):
-    """Bunny icon: left-click About; right-click Quit / Uninstall / Upgrade."""
+    """Bunny icon: left-click About; right-click Install/Quit/Uninstall/Upgrade."""
 
     def rightMouseDown_(self, event) -> None:
         menu = self.menu()
