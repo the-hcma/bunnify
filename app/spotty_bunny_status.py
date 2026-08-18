@@ -29,10 +29,10 @@ def format_spotty_bunny_status(error: object) -> str:
     """Turn a load/resolve failure into a wrapping overlay status line."""
     text = str(error).strip()
     lowered = text.lower()
+    if isinstance(error, TimeoutError) or "timed out" in lowered:
+        return TIMEOUT_CONTACTING_SERVER
     if _server_unreachable(error, lowered):
         return SHORTCUTS_LOAD_FAILED
-    if "timed out" in lowered:
-        return TIMEOUT_CONTACTING_SERVER
     if "unknown shortcut" in lowered:
         return UNKNOWN_SHORTCUT_HINT
     return text or SHORTCUTS_LOAD_FAILED
@@ -77,7 +77,7 @@ _STATUS_PUNCT_BREAK = re.compile(r"(?<=[.!?:;—–])\s+")
 
 
 def _server_unreachable(error: object, lowered: str) -> bool:
-    if isinstance(error, ConnectionError | TimeoutError):
+    if isinstance(error, ConnectionError):
         return True
     markers = (
         "cannot reach",

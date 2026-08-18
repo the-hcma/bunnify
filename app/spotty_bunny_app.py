@@ -176,6 +176,8 @@ class SpottyBunnyController(NSObject):
     def controlTextDidChange_(self, _notification) -> None:
         if self._applying_completion:
             return
+        if self.status is not None and str(self.status.stringValue()):
+            self._set_status("")
         if self._completion_rows:
             self._hide_completions()
 

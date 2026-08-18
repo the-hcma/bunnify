@@ -1166,6 +1166,32 @@ class SpottyBunnyStatusTests(SimpleTestCase):
 
         self.assertEqual(format_spotty_bunny_status(""), SHORTCUTS_LOAD_FAILED)
 
+    def test_timeout_client_error_uses_timeout_copy(self) -> None:
+        from app.client import ClientError
+        from app.spotty_bunny_status import (
+            TIMEOUT_CONTACTING_SERVER,
+            format_spotty_bunny_status,
+        )
+
+        line = format_spotty_bunny_status(
+            ClientError(
+                "Timed out contacting Bunnify server at "
+                "'http://127.0.0.1:8000/api/keys/'"
+            )
+        )
+        self.assertEqual(line, TIMEOUT_CONTACTING_SERVER)
+
+    def test_timeout_error_instance_uses_timeout_copy(self) -> None:
+        from app.spotty_bunny_status import (
+            TIMEOUT_CONTACTING_SERVER,
+            format_spotty_bunny_status,
+        )
+
+        self.assertEqual(
+            format_spotty_bunny_status(TimeoutError("timed out")),
+            TIMEOUT_CONTACTING_SERVER,
+        )
+
     def test_unknown_shortcut_suggests_tab(self) -> None:
         from app.spotty_bunny_status import (
             UNKNOWN_SHORTCUT_HINT,
@@ -1242,6 +1268,8 @@ class SpottyBunnyStatusTests(SimpleTestCase):
         self.assertIn("_CenteredWrappingFieldCell", source)
         self.assertIn("drawWithRect_options_", source)
         self.assertIn("hideAbout_", source)
+        self.assertIn("str(self.status.stringValue())", source)
+        self.assertIn("_status_text_height", source)
         self.assertIn("apply_spotty_chrome", source)
         self.assertIn("fill_rgb=PANEL_FILL_RGB", source)
         self.assertIn("frame_rgb=PANEL_FRAME_RGB", source)
