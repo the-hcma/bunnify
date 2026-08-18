@@ -1941,6 +1941,7 @@ class ConfigUnitTests(TestCase):
         self.assertIn("CHROME_SETUP.md", result.output)
         self.assertIn("bunnify upgrade", result.output)
         self.assertIn("preferred", result.output.lower())
+        self.assertIn("spotty-bunny install", result.output)
 
         flagged = CliRunner().invoke(main, ["--onboard"])
         self.assertEqual(flagged.exit_code, 0)

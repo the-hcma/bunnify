@@ -70,6 +70,21 @@ def agent_plist_path(*, home: Path | None = None) -> Path:
     return root / "Library" / "LaunchAgents" / AGENT_PLIST_NAME
 
 
+def bootout_loaded_agent(
+    *,
+    launchctl: LaunchctlFn | None = None,
+    uid: int | None = None,
+) -> bool:
+    """Unload the LaunchAgent when loaded so KeepAlive cannot respawn.
+
+    Returns True when a bootout was issued.
+    """
+    if not is_agent_loaded(launchctl=launchctl, uid=uid):
+        return False
+    _bootout_agent(launchctl=launchctl, uid=uid)
+    return True
+
+
 def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
     """Return the LaunchAgent plist for *program_arguments* and *home*."""
     args_xml = "\n".join(
@@ -157,6 +172,40 @@ def is_agent_loaded(
         launchctl=launchctl,
     )
     return completed.returncode == 0
+
+
+def refresh_agent_plist(
+    *,
+    home: Path | None = None,
+    platform: str | None = None,
+    print_err: Callable[[str], None] | None = None,
+    program: Path | None = None,
+) -> int:
+    """Rewrite the LaunchAgent plist for this binary without bouncing launchd."""
+    err = print_err or _print_err
+    if not _is_darwin(platform):
+        err(NOT_MACOS_MESSAGE)
+        return 1
+    root = home if home is not None else Path.home()
+    plist = agent_plist_path(home=root)
+    if not plist.is_file():
+        err(
+            f"{COMMAND_NAME}: LaunchAgent is not installed. Run: {COMMAND_NAME} install"
+        )
+        return 1
+    binary = program if program is not None else spotty_bunny_program()
+    program_argv = (
+        [str(program.resolve())]
+        if program is not None
+        else spotty_bunny_program_arguments()
+    )
+    if program_argv is None or binary is None:
+        err(f"{COMMAND_NAME}: could not find the spotty-bunny binary on PATH.")
+        return 1
+    _write_plist(plist, home=root, program_arguments=program_argv)
+    err(f"{COMMAND_NAME}: refreshed LaunchAgent plist {plist}")
+    err(f"{COMMAND_NAME}: binary {binary}")
+    return 0
 
 
 def run_agent_command(
@@ -267,16 +316,18 @@ def uninstall_agent(
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
 ) -> int:
-    """Boot out the agent, remove the plist, stop the process, clear the pid."""
+    """Remove the plist, then boot out, stop leftovers, and clear the pid."""
     err = print_err or _print_err
     if not _is_darwin(platform):
         err(NOT_MACOS_MESSAGE)
         return 1
     root = home if home is not None else Path.home()
     plist = agent_plist_path(home=root)
-    if plist.is_file() or is_agent_loaded(launchctl=launchctl):
-        _bootout_agent(launchctl=launchctl)
+    loaded = is_agent_loaded(launchctl=launchctl)
+    # Unlink first so an in-process bootout cannot leave the plist behind.
     plist.unlink(missing_ok=True)
+    if loaded:
+        _bootout_agent(launchctl=launchctl)
     stop_spotty_bunny(pid_dir=pid_dir)
     clear_spotty_bunny_pid(pid_dir=pid_dir)
     err(f"{COMMAND_NAME}: uninstalled LaunchAgent {AGENT_LABEL}")

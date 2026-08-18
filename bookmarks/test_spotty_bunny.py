@@ -267,7 +267,131 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.assertIn("log_level=DEBUG", logged)
 
 
+class SpottyBunnyAboutInfoTests(SimpleTestCase):
+    def test_display_user_path_uses_tilde_for_home(self) -> None:
+        from app.spotty_bunny_about_info import display_user_path
+
+        home = Path.home()
+        nested = home / ".config" / "bunnify" / "bookmarks.json"
+        self.assertEqual(
+            display_user_path(nested),
+            "~/.config/bunnify/bookmarks.json",
+        )
+
+    def test_github_https_url_normalizes_remotes(self) -> None:
+        from app.spotty_bunny_about_info import github_https_url
+
+        expected = "https://github.com/acme/dots"
+        self.assertEqual(github_https_url("git@github.com:acme/dots.git"), expected)
+        self.assertEqual(
+            github_https_url("https://github.com/acme/dots.git"),
+            expected,
+        )
+        self.assertEqual(
+            github_https_url("ssh://git@github.com/acme/dots.git"),
+            expected,
+        )
+        self.assertEqual(
+            github_https_url("git://github.com/acme/dots"),
+            expected,
+        )
+        self.assertIsNone(github_https_url("https://gitlab.com/acme/dots.git"))
+
+    def test_github_repo_url_for_path_reads_origin(self) -> None:
+        from app.spotty_bunny_about_info import github_repo_url_for_path
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            (root / ".git").mkdir()
+            self.assertEqual(
+                github_repo_url_for_path(
+                    bookmarks,
+                    origin_url_for=lambda _workdir: "git@github.com:acme/dots.git",
+                ),
+                "https://github.com/acme/dots",
+            )
+
+    def test_github_repo_url_for_path_skips_non_git_dirs(self) -> None:
+        from app.spotty_bunny_about_info import github_repo_url_for_path
+
+        with TemporaryDirectory() as tmp:
+            bookmarks = Path(tmp) / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            self.assertIsNone(github_repo_url_for_path(bookmarks))
+
+    def test_load_about_runtime_info_local_server_and_file_link(self) -> None:
+        from app.spotty_bunny_about_info import load_about_runtime_info
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            env = {
+                "BUNNIFY_BASE_URL": "http://127.0.0.1:9000",
+                "BUNNIFY_BOOKMARKS": str(bookmarks),
+                "BUNNIFY_MODE": "local",
+                "XDG_CONFIG_HOME": str(root / "cfg"),
+            }
+            info = load_about_runtime_info(
+                environ=env,
+                origin_url_for=lambda _workdir: None,
+            )
+            self.assertTrue(info.bookmarks_uri.startswith("file:"))
+            self.assertIn("bookmarks.json", info.bookmarks_display)
+            self.assertIsNone(info.github_url)
+            self.assertEqual(
+                info.server_display,
+                "Local server · http://127.0.0.1:9000",
+            )
+            self.assertEqual(info.server_url, "http://127.0.0.1:9000")
+
+    def test_load_about_runtime_info_remote_server_and_github(self) -> None:
+        from app.spotty_bunny_about_info import load_about_runtime_info
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            env = {
+                "BUNNIFY_BASE_URL": "https://bun.example.com",
+                "BUNNIFY_BOOKMARKS": str(bookmarks),
+                "BUNNIFY_MODE": "remote",
+                "XDG_CONFIG_HOME": str(root / "cfg"),
+            }
+            info = load_about_runtime_info(
+                environ=env,
+                origin_url_for=lambda _workdir: "https://github.com/acme/dots.git",
+            )
+            self.assertEqual(info.github_url, "https://github.com/acme/dots")
+            self.assertEqual(info.github_display, "github.com/acme/dots")
+            self.assertEqual(
+                info.server_display,
+                "Remote server · https://bun.example.com",
+            )
+            self.assertEqual(info.server_url, "https://bun.example.com")
+
+
 class SpottyBunnyAgentTests(SimpleTestCase):
+    def test_bootout_loaded_agent_issues_bootout_when_loaded(self) -> None:
+        from app.spotty_bunny_agent import bootout_loaded_agent
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        self.assertTrue(bootout_loaded_agent(launchctl=ctl))
+        self.assertTrue(any(call[1] == "bootout" for call in ctl.calls))
+        self.assertFalse(ctl.loaded)
+
+    def test_bootout_loaded_agent_skips_when_not_loaded(self) -> None:
+        from app.spotty_bunny_agent import bootout_loaded_agent
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = False
+        self.assertFalse(bootout_loaded_agent(launchctl=ctl))
+        self.assertFalse(any(call[1] == "bootout" for call in ctl.calls))
+
     def test_format_agent_plist_matches_example_placeholders(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist
 
@@ -605,6 +729,66 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(tcc.requests, 1)
             self.assertGreaterEqual(tcc.probes, 2)
             self.assertFalse(any(call[1] == "kickstart" for call in ctl.calls))
+
+    def test_refresh_agent_plist_rewrites_without_bootout(self) -> None:
+        from app.spotty_bunny_agent import (
+            AGENT_LABEL,
+            format_agent_plist,
+            refresh_agent_plist,
+        )
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=["/old/spotty-bunny"],
+                ),
+                encoding="utf-8",
+            )
+            new_program = Path("/new/spotty-bunny")
+            code = refresh_agent_plist(
+                home=home,
+                platform="darwin",
+                print_err=lambda _m: None,
+                program=new_program,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
+            self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
+
+    def test_uninstall_removes_plist_before_bootout(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, uninstall_agent
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text("plist", encoding="utf-8")
+
+            class _OrderLaunchctl(_FakeLaunchctl):
+                def __call__(
+                    self, argv: list[str], **kwargs: object
+                ) -> subprocess.CompletedProcess[str]:
+                    if len(argv) >= 2 and argv[1] == "bootout":
+                        self.plist_existed_at_bootout = plist.exists()
+                    return super().__call__(argv, **kwargs)
+
+            ctl = _OrderLaunchctl()
+            ctl.loaded = True
+            ctl.plist_existed_at_bootout = True
+            with patch("app.spotty_bunny_agent.stop_spotty_bunny"):
+                code = uninstall_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                )
+            self.assertEqual(code, 0)
+            self.assertFalse(plist.exists())
+            self.assertIs(ctl.plist_existed_at_bootout, False)
 
 
 class _FakeLaunchctl:
@@ -1380,6 +1564,8 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("ABOUT_FRAME_RGB", source)
         self.assertIn("ABOUT_LABEL_RGB", source)
         self.assertIn("ABOUT_LINK_RGB", source)
+        self.assertIn("ABOUT_WARN_RGB", source)
+        self.assertIn("Update available:", source)
         self.assertIn("SpottyBunnyAboutPanel", source)
         self.assertIn("cancelOperation_", source)
         self.assertIn("performKeyEquivalent_", source)
@@ -1393,6 +1579,14 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("pointingHandCursor", source)
         self.assertIn("NSTrackingActiveAlways", source)
         self.assertIn("_AboutLinkField", source)
+        self.assertIn("load_about_runtime_info", source)
+        self.assertIn("Bookmarks:", source)
+        self.assertIn("GitHub:", source)
+        info_source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_about_info.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Local server", info_source)
+        self.assertIn("Remote server", info_source)
 
     def test_search_field_is_centered_with_logo_on_right(self) -> None:
         source = (
@@ -1430,6 +1624,27 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn('setTitle_("spotty-bunny")', source)
         self.assertIn("showAbout:", source)
+        self.assertIn("SpottyBunnyLogoButton", source)
+        self.assertIn("def quitSpottyBunny_", source)
+        self.assertIn("def uninstallSpottyBunny_", source)
+        self.assertIn("def upgradeSpottyBunny_", source)
+        self.assertIn("menuNeedsUpdate_", source)
+        self.assertIn("outdated=outdated", source)
+        menu_source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_menu.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Quit Spotty Bunny", menu_source)
+        self.assertIn("Uninstall Spotty Bunny", menu_source)
+        self.assertIn("Upgrade Spotty Bunny", menu_source)
+        self.assertIn("quitSpottyBunny:", menu_source)
+        self.assertIn("uninstallSpottyBunny:", menu_source)
+        self.assertIn("upgradeSpottyBunny:", menu_source)
+        self.assertIn("setMenu_(menu)", source)
+        self.assertIn("rightMouseDown_", source)
+        self.assertIn("refresh_agent_plist", source)
+        self.assertIn("if refresh_agent_plist() != 0", source)
+        self.assertIn("bootout_loaded_agent", source)
+        self.assertIn("self._about_panel.close()", source)
 
     def test_about_panel_build_info_prewarmed(self) -> None:
         source = (
@@ -1698,6 +1913,193 @@ class SpottyBunnyStatusTests(SimpleTestCase):
         self.assertIn("apply_spotty_chrome", source)
         self.assertIn("fill_rgb=PANEL_FILL_RGB", source)
         self.assertIn("frame_rgb=PANEL_FRAME_RGB", source)
+
+
+class SpottyBunnyUpdateTests(SimpleTestCase):
+    def test_cache_is_stale_after_a_day(self) -> None:
+        from app.spotty_bunny_update import CHECK_INTERVAL_S, cache_is_stale
+
+        self.assertTrue(cache_is_stale(None, now=100.0))
+        self.assertFalse(cache_is_stale(100.0, now=100.0 + CHECK_INTERVAL_S - 1))
+        self.assertTrue(cache_is_stale(100.0, now=100.0 + CHECK_INTERVAL_S))
+
+    def test_is_version_outdated_compares_pep440(self) -> None:
+        from app.spotty_bunny_update import is_version_outdated
+
+        self.assertTrue(is_version_outdated("0.6.1", "0.7.0"))
+        self.assertFalse(is_version_outdated("0.7.0", "0.7.0"))
+        self.assertFalse(is_version_outdated("0.7.0", "0.6.1"))
+        self.assertFalse(is_version_outdated("0.6.1", None))
+
+    def test_is_version_outdated_unparseable_current_is_not_outdated(self) -> None:
+        from app.spotty_bunny_update import is_version_outdated
+
+        self.assertFalse(is_version_outdated("unknown", "0.7.0"))
+        self.assertFalse(is_version_outdated("0.7.0", "not-a-version"))
+
+    def test_logo_menu_specs_are_sorted_and_hide_upgrade_when_current(self) -> None:
+        from app.spotty_bunny_menu import (
+            QUIT_MENU_TITLE,
+            UNINSTALL_MENU_TITLE,
+            UPGRADE_MENU_TITLE,
+            logo_menu_specs,
+        )
+
+        current = logo_menu_specs(outdated=False)
+        titles = [title for title, _action in current]
+        self.assertEqual(titles, sorted(titles))
+        self.assertEqual(
+            titles,
+            [QUIT_MENU_TITLE, UNINSTALL_MENU_TITLE],
+        )
+        outdated = logo_menu_specs(outdated=True)
+        outdated_titles = [title for title, _action in outdated]
+        self.assertEqual(outdated_titles, sorted(outdated_titles))
+        self.assertEqual(
+            outdated_titles,
+            [QUIT_MENU_TITLE, UNINSTALL_MENU_TITLE, UPGRADE_MENU_TITLE],
+        )
+
+    def test_pypi_latest_version_reads_info_version(self) -> None:
+        from app.pypi import pypi_latest_version
+
+        class _Response:
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"info": {"version": "1.2.3"}}'
+
+        latest = pypi_latest_version(urlopen=lambda *_a, **_k: _Response())
+        self.assertEqual(latest, "1.2.3")
+
+    def test_read_cached_update_status_malformed_cache(self) -> None:
+        from app.spotty_bunny_update import read_cached_update_status
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            cache.write_text("{not json", encoding="utf-8")
+            status = read_cached_update_status(cache_path=cache, current="1.0.0")
+            self.assertIsNone(status.checked_at)
+            self.assertIsNone(status.latest)
+            self.assertFalse(status.outdated)
+
+    def test_read_cached_update_status_round_trip(self) -> None:
+        from app.spotty_bunny_update import (
+            read_cached_update_status,
+            refresh_update_status,
+        )
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            refresh_update_status(
+                cache_path=cache,
+                current="1.0.0",
+                fetch=lambda: "2.0.0",
+                now=10.0,
+            )
+            status = read_cached_update_status(cache_path=cache, current="1.0.0")
+            self.assertEqual(status.checked_at, 10.0)
+            self.assertEqual(status.latest, "2.0.0")
+            self.assertTrue(status.outdated)
+
+    def test_refresh_update_status_caches_and_skips_fresh_fetch(self) -> None:
+        from app.spotty_bunny_update import (
+            CHECK_INTERVAL_S,
+            refresh_update_status,
+        )
+
+        fetches: list[int] = []
+
+        def fetch() -> str:
+            fetches.append(1)
+            return "9.9.9"
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            first = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=fetch,
+                now=1_000.0,
+            )
+            self.assertTrue(first.outdated)
+            self.assertEqual(first.latest, "9.9.9")
+            self.assertEqual(len(fetches), 1)
+            second = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=fetch,
+                now=1_000.0 + CHECK_INTERVAL_S - 1,
+            )
+            self.assertEqual(len(fetches), 1)
+            self.assertTrue(second.outdated)
+            third = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=fetch,
+                now=1_000.0 + CHECK_INTERVAL_S,
+            )
+            self.assertEqual(len(fetches), 2)
+            self.assertTrue(third.outdated)
+
+    def test_refresh_keeps_cache_when_fetch_fails(self) -> None:
+        from app.spotty_bunny_update import refresh_update_status
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=lambda: "2.0.0",
+                now=50.0,
+            )
+            failed = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=lambda: None,
+                force=True,
+                now=99.0,
+            )
+            self.assertEqual(failed.latest, "2.0.0")
+            self.assertEqual(failed.checked_at, 99.0)
+            self.assertTrue(failed.outdated)
+
+    def test_refresh_throttles_after_failed_fetch(self) -> None:
+        from app.spotty_bunny_update import (
+            CHECK_INTERVAL_S,
+            refresh_update_status,
+        )
+
+        fetches: list[int] = []
+
+        def fetch() -> str | None:
+            fetches.append(1)
+            return None
+
+        with TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pypi-latest.json"
+            first = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=fetch,
+                now=10.0,
+            )
+            self.assertIsNone(first.latest)
+            self.assertEqual(first.checked_at, 10.0)
+            self.assertFalse(first.outdated)
+            self.assertEqual(len(fetches), 1)
+            second = refresh_update_status(
+                cache_path=cache,
+                current="0.1.0",
+                fetch=fetch,
+                now=10.0 + CHECK_INTERVAL_S - 1,
+            )
+            self.assertEqual(len(fetches), 1)
+            self.assertEqual(second.checked_at, 10.0)
 
 
 class _FakeClock:

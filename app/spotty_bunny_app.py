@@ -10,6 +10,9 @@ import sys
 
 import objc
 from Cocoa import (
+    NSAlert,
+    NSAlertFirstButtonReturn,
+    NSAlertStyleWarning,
     NSApp,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
@@ -30,6 +33,8 @@ from Cocoa import (
     NSLineBreakByWordWrapping,
     NSMakeRect,
     NSMakeSize,
+    NSMenu,
+    NSMenuItem,
     NSMutableParagraphStyle,
     NSObject,
     NSPanel,
@@ -98,6 +103,11 @@ from app.spotty_bunny_about import (
     build_about_panel,
     position_about_panel,
 )
+from app.spotty_bunny_agent import (
+    bootout_loaded_agent,
+    refresh_agent_plist,
+    uninstall_agent,
+)
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
@@ -125,6 +135,12 @@ from app.spotty_bunny_hotkey import (
 )
 from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
+from app.spotty_bunny_menu import (
+    UNINSTALL_INFORMATIVE,
+    UNINSTALL_MENU_TITLE,
+    UPGRADE_STATUS,
+    logo_menu_specs,
+)
 from app.spotty_bunny_quit import (
     WAKE_EVENT_SELECTOR,
     post_application_wake_event,
@@ -137,6 +153,12 @@ from app.spotty_bunny_status import (
     format_spotty_bunny_status,
     status_text_runs,
     wrap_status_preferring_punctuation,
+)
+from app.spotty_bunny_update import (
+    UpdateStatus,
+    cache_is_stale,
+    read_cached_update_status,
+    refresh_update_status,
 )
 from app.version import get_build_info
 
@@ -262,9 +284,12 @@ class SpottyBunnyController(NSObject):
         self._escape_held = False
         self._history = HistoryNavigator()
         self._io = ThreadIo()
+        self._logo_menu = None
         self._resolve_seq = 0
         self._resolving = False
         self._shortcuts_load_failed = False
+        self._update_check_pending = False
+        self._update_status = read_cached_update_status()
         self.callback = None
         self.chord = ChordTracker()
         self.field = None
@@ -277,11 +302,22 @@ class SpottyBunnyController(NSObject):
         self.tap = None
         self.visible = False
         self._build_panel()
+        self._apply_update_status()
         self._io.submit(get_build_info, lambda _result: None)
+        self._schedule_update_check()
         return self
+
+    def menuNeedsUpdate_(self, menu) -> None:
+        self._rebuild_logo_menu(menu)
 
     def numberOfRowsInTableView_(self, _table) -> int:
         return len(self._completion_rows)
+
+    def quitSpottyBunny_(self, _sender) -> None:
+        """Stop this process; boot out the LaunchAgent so KeepAlive cannot respawn."""
+        logger.info("quit from logo menu")
+        bootout_loaded_agent()
+        quit_ns_app(ns_app=NSApp, post_wake=_post_wake_event)
 
     def releaseEscape_(self, _sender) -> None:
         """Arm the next Esc after the key-up of a tap or field-editor dismiss."""
@@ -312,6 +348,8 @@ class SpottyBunnyController(NSObject):
             self.panel.makeFirstResponder_(self.field)
             self._paint_search_editor()
         self._io.submit(self._load_completer, self._completer_loaded)
+        if cache_is_stale(self._update_status.checked_at):
+            self._schedule_update_check()
 
     def tableView_objectValueForTableColumn_row_(self, _table, column, row: int):
         if row < 0 or row >= len(self._completion_rows):
@@ -331,6 +369,20 @@ class SpottyBunnyController(NSObject):
         else:
             self.show()
 
+    def uninstallSpottyBunny_(self, _sender) -> None:
+        """Confirm, remove the LaunchAgent, and quit this process."""
+        if not _confirm_uninstall():
+            return
+        logger.info("uninstall from logo menu")
+        uninstall_agent()
+        quit_ns_app(ns_app=NSApp, post_wake=_post_wake_event)
+
+    def upgradeSpottyBunny_(self, _sender) -> None:
+        """Upgrade via pipx, rewrite the plist, then quit so KeepAlive relaunches."""
+        logger.info("upgrade from logo menu")
+        self._set_status(UPGRADE_STATUS)
+        self._io.submit(self._perform_upgrade, self._upgrade_ready)
+
     def windowDidBecomeKey_(self, _notification) -> None:
         logger.debug("windowDidBecomeKey")
         self._became_key = True
@@ -349,6 +401,15 @@ class SpottyBunnyController(NSObject):
         resigning = notification.object()
         if resigning is self.panel and self._became_key:
             self.hide()
+
+    def _apply_update_status(self) -> None:
+        outdated = self._update_status.outdated
+        if self.logo is not None:
+            self.logo.setImage_(make_spotty_bunny_icon(LOGO_SIZE, outdated=outdated))
+        if self._logo_menu is not None:
+            self._rebuild_logo_menu(self._logo_menu)
+        if self._about_open:
+            self._present_about_panel()
 
     def _build_panel(self) -> None:
         style = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
@@ -382,7 +443,7 @@ class SpottyBunnyController(NSObject):
         )
         panel.setContentView_(chrome)
 
-        logo = NSButton.alloc().initWithFrame_(
+        logo = SpottyBunnyLogoButton.alloc().initWithFrame_(
             NSMakeRect(
                 LOGO_LEFT,
                 PANEL_INSET + (FIELD_HEIGHT - LOGO_SIZE) / 2.0,
@@ -392,10 +453,17 @@ class SpottyBunnyController(NSObject):
         )
         logo.setBezelStyle_(NSBezelStyleShadowlessSquare)
         logo.setBordered_(False)
-        logo.setImage_(make_spotty_bunny_icon(LOGO_SIZE))
+        logo.setImage_(
+            make_spotty_bunny_icon(LOGO_SIZE, outdated=self._update_status.outdated)
+        )
         logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
         logo.setTarget_(self)
         logo.setAction_("showAbout:")
+        menu = NSMenu.alloc().initWithTitle_("")
+        menu.setDelegate_(self)
+        self._logo_menu = menu
+        self._rebuild_logo_menu(menu)
+        logo.setMenu_(menu)
         panel.contentView().addSubview_(logo)
 
         field = NSTextField.alloc().initWithFrame_(
@@ -555,17 +623,10 @@ class SpottyBunnyController(NSObject):
         self._about_open = False
 
     def _toggle_about_panel(self) -> None:
-        if self._about_panel is None:
-            self._about_panel = build_about_panel()
-            self._about_panel.setDelegate_(self)
         if self._about_open:
             self.hideAbout_(None)
             return
-        if self.panel is not None:
-            position_about_panel(self._about_panel, anchor_frame=self.panel.frame())
-        self._about_open = True
-        self._about_panel.orderFrontRegardless()
-        self._about_panel.makeKeyAndOrderFront_(None)
+        self._present_about_panel()
 
     def _hide_completions(self) -> None:
         self._completion_seq += 1
@@ -654,6 +715,38 @@ class SpottyBunnyController(NSObject):
         if container is not None:
             container.setLineFragmentPadding_(0.0)
 
+    def _perform_upgrade(self) -> None:
+        from app.cli import run_upgrade
+
+        run_upgrade(print_fn=lambda message: logger.info("%s", message))
+        if refresh_agent_plist() != 0:
+            raise RuntimeError("LaunchAgent plist refresh failed")
+
+    def _present_about_panel(self) -> None:
+        if self._about_panel is not None:
+            self._about_panel.setDelegate_(None)
+            self._about_panel.orderOut_(None)
+            self._about_panel.close()
+            self._about_panel = None
+        self._about_panel = build_about_panel(update=self._update_status)
+        self._about_panel.setDelegate_(self)
+        if self.panel is not None:
+            position_about_panel(self._about_panel, anchor_frame=self.panel.frame())
+        self._about_open = True
+        self._about_panel.orderFrontRegardless()
+        self._about_panel.makeKeyAndOrderFront_(None)
+
+    def _rebuild_logo_menu(self, menu) -> None:
+        menu.removeAllItems()
+        for title, action in logo_menu_specs(outdated=self._update_status.outdated):
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                title,
+                action,
+                "",
+            )
+            item.setTarget_(self)
+            menu.addItem_(item)
+
     def _request_completions(self) -> None:
         if self._completer is None or self.field is None:
             logger.warning("tab ignored (completer not ready)")
@@ -741,6 +834,12 @@ class SpottyBunnyController(NSObject):
                 )
             )
         self._center_panel()
+
+    def _schedule_update_check(self) -> None:
+        if self._update_check_pending:
+            return
+        self._update_check_pending = True
+        self._io.submit(refresh_update_status, self._update_check_ready)
 
     def _show_completions(self, rows: list[CompletionRow]) -> None:
         self._completion_rows = rows
@@ -862,6 +961,40 @@ class SpottyBunnyController(NSObject):
             return url
 
         self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
+
+    def _update_check_ready(self, result: object) -> None:
+        def apply() -> None:
+            self._update_check_pending = False
+            if isinstance(result, Exception):
+                logger.warning("PyPI version check failed: %s", result)
+                return
+            if isinstance(result, UpdateStatus):
+                self._update_status = result
+                self._apply_update_status()
+
+        _run_on_main(apply)
+
+    def _upgrade_ready(self, result: object) -> None:
+        def apply() -> None:
+            if isinstance(result, Exception):
+                logger.warning("upgrade failed: %s", result)
+                self._set_status(format_spotty_bunny_status(result))
+                return
+            logger.info("upgrade finished; quitting for relaunch")
+            quit_ns_app(ns_app=NSApp, post_wake=_post_wake_event)
+
+        _run_on_main(apply)
+
+
+class SpottyBunnyLogoButton(NSButton):
+    """Bunny icon: left-click About; right-click Quit / Uninstall / Upgrade."""
+
+    def rightMouseDown_(self, event) -> None:
+        menu = self.menu()
+        if menu is None:
+            objc.super(SpottyBunnyLogoButton, self).rightMouseDown_(event)
+            return
+        NSMenu.popUpContextMenu_withEvent_forView_(menu, event, self)
 
 
 class SpottyBunnyPanel(NSPanel):
@@ -1039,6 +1172,17 @@ class _CenteredWrappingFieldCell(NSTextFieldCell):
             rect.size.width,
             text_height,
         )
+
+
+def _confirm_uninstall() -> bool:
+    """Ask before removing the LaunchAgent. Uninstall is the first button."""
+    alert = NSAlert.alloc().init()
+    alert.setAlertStyle_(NSAlertStyleWarning)
+    alert.setMessageText_(UNINSTALL_MENU_TITLE)
+    alert.setInformativeText_(UNINSTALL_INFORMATIVE)
+    alert.addButtonWithTitle_(UNINSTALL_MENU_TITLE)
+    alert.addButtonWithTitle_("Cancel")
+    return int(alert.runModal()) == int(NSAlertFirstButtonReturn)
 
 
 def _control_key_down(keycode: int) -> bool:

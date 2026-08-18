@@ -40,6 +40,25 @@ bunnify spotty-bunny upgrade    # refresh agent after `bunnify upgrade`
 bunnify spotty-bunny uninstall
 ```
 
+## Spotty Bunny (macOS)
+
+Requires `pipx install 'bunnify[macos]'`. Hold one Control, tap the other.
+
+```bash
+bunnify spotty-bunny install     # login LaunchAgent (TCC + KeepAlive)
+bunnify spotty-bunny status
+bunnify upgrade && bunnify spotty-bunny upgrade
+bunnify spotty-bunny uninstall
+spotty-bunny                     # foreground (debug)
+```
+
+Left-click the bunny for About (bookmarks file, GitHub repo if that file is in
+a GitHub checkout, local vs remote server + URL, update available). Right-click
+for **Quit**, **Uninstall**, and **Upgrade** (Upgrade only when PyPI is newer).
+An up-arrow badge on the bunny means this install is behind PyPI.
+
+Details: [docs/LOCAL.md](docs/LOCAL.md)
+
 ## Server
 
 ```bash
