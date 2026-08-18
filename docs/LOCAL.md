@@ -128,8 +128,9 @@ Accessibility / Input Monitoring yes/no. Exit `0` only when the plist exists,
 the agent is loaded, and the process is running.
 
 `upgrade` rewrites the plist if `command -v spotty-bunny` moved (pipx venv
-path / shebang), re-verifies TCC for that interpreter, and
-`launchctl kickstart -k "gui/$(id -u)/com.thehcma.bunnify.spotty-bunny"`.
+path / shebang), re-verifies TCC for that interpreter, then reloads the agent
+with `launchctl bootout` and `launchctl bootstrap` so launchd picks up the new
+ProgramArguments.
 Package updates stay on `bunnify upgrade` (`pipx upgrade bunnify`); run that
 first, then `bunnify spotty-bunny upgrade` so launchd does not keep a stale
 binary path.

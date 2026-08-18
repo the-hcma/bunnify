@@ -30,6 +30,7 @@ AGENT_COMMANDS = frozenset({"install", "status", "uninstall", "upgrade"})
 AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
+LAUNCHD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 TCC_INSTRUCTIONS = f"""\
 {COMMAND_NAME}: Accessibility and Input Monitoring must be granted to the
 Python interpreter launchd will exec (the pipx/venv interpreter behind
@@ -69,9 +70,12 @@ def agent_plist_path(*, home: Path | None = None) -> Path:
     return root / "Library" / "LaunchAgents" / AGENT_PLIST_NAME
 
 
-def format_agent_plist(*, program: Path, home: Path) -> str:
-    """Return the LaunchAgent plist for *program* and *home*."""
-    return _PLIST_TEMPLATE.replace("__SPOTTY_BUNNY__", escape(str(program))).replace(
+def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
+    """Return the LaunchAgent plist for *program_arguments* and *home*."""
+    args_xml = "\n".join(
+        f"    <string>{escape(arg)}</string>" for arg in program_arguments
+    )
+    return _PLIST_TEMPLATE.replace("__PROGRAM_ARGUMENTS__", args_xml).replace(
         "__HOME__", escape(str(home))
     )
 
@@ -92,10 +96,15 @@ def install_agent(
         err(NOT_MACOS_MESSAGE)
         return 1
     binary = program if program is not None else spotty_bunny_program()
-    if binary is None:
+    program_argv = (
+        [str(program.resolve())]
+        if program is not None
+        else spotty_bunny_program_arguments()
+    )
+    if program_argv is None or binary is None:
         err(f"{COMMAND_NAME}: could not find the spotty-bunny binary on PATH.")
         return 1
-    interpreter = interpreter_for_program(binary)
+    interpreter = interpreter_for_program(Path(program_argv[0]))
     status = _require_current_tcc(
         interpreter,
         err=err,
@@ -106,7 +115,7 @@ def install_agent(
         return 1
     root = home if home is not None else Path.home()
     plist = agent_plist_path(home=root)
-    _write_plist(plist, program=binary, home=root)
+    _write_plist(plist, home=root, program_arguments=program_argv)
     _bootout_agent(launchctl=launchctl)
     if not _bootstrap_agent(plist, launchctl=launchctl):
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
@@ -130,8 +139,10 @@ def interpreter_for_program(program: Path) -> Path:
         return program
     executable = Path(parts[0])
     if executable.name == "env" and len(parts) >= 2:
-        resolved = shutil.which(parts[1])
-        return Path(resolved) if resolved else Path(parts[1])
+        resolved = shutil.which(parts[1], path=LAUNCHD_PATH)
+        if resolved is None:
+            return Path(parts[1])
+        return Path(resolved)
     return executable
 
 
@@ -173,15 +184,30 @@ def run_agent_command(
 
 
 def spotty_bunny_program() -> Path | None:
-    """Absolute path launchd should exec (`command -v spotty-bunny`)."""
+    """Primary executable path for status display (first ProgramArguments entry)."""
+    argv = spotty_bunny_program_arguments()
+    if not argv:
+        return None
+    return Path(argv[0])
+
+
+def spotty_bunny_program_arguments() -> list[str] | None:
+    """Absolute argv launchd should use in ProgramArguments."""
     command = spotty_bunny_command()
     if not command:
         return None
-    path = Path(command[0]).expanduser()
-    if path.is_absolute():
-        return path
-    resolved = shutil.which(command[0])
-    return Path(resolved) if resolved else path.resolve()
+    resolved: list[str] = []
+    for index, part in enumerate(command):
+        if index == 0:
+            path = Path(part).expanduser()
+            if path.is_absolute():
+                resolved.append(str(path))
+                continue
+            found = shutil.which(part)
+            resolved.append(found if found else str(path.resolve()))
+            continue
+        resolved.append(part)
+    return resolved
 
 
 def status_agent(
@@ -211,10 +237,10 @@ def status_agent(
         pid_text = _pid_text(pid_dir=pid_dir)
     installed = plist.is_file()
     interpreter = interpreter_for_program(binary) if binary is not None else None
-    tcc = (
-        (probe_tcc or _probe_tcc)(interpreter)
-        if interpreter is not None
-        else TccStatus(False, False)
+    tcc = _probe_tcc_for_status(
+        interpreter,
+        err=err,
+        probe_tcc=probe_tcc,
     )
     stdout_path, stderr_path = _launchd_log_paths(plist)
     out(f"running: {'yes' if running else 'no'}")
@@ -280,10 +306,15 @@ def upgrade_agent(
         )
         return 1
     binary = program if program is not None else spotty_bunny_program()
-    if binary is None:
+    program_argv = (
+        [str(program.resolve())]
+        if program is not None
+        else spotty_bunny_program_arguments()
+    )
+    if program_argv is None or binary is None:
         err(f"{COMMAND_NAME}: could not find the spotty-bunny binary on PATH.")
         return 1
-    interpreter = interpreter_for_program(binary)
+    interpreter = interpreter_for_program(Path(program_argv[0]))
     status = _require_current_tcc(
         interpreter,
         err=err,
@@ -292,12 +323,14 @@ def upgrade_agent(
     )
     if status is None:
         return 1
-    _write_plist(plist, program=binary, home=root)
-    if is_agent_loaded(launchctl=launchctl):
-        _kickstart_agent(launchctl=launchctl)
-    elif not _bootstrap_agent(plist, launchctl=launchctl):
-        err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
-        return 1
+    was_loaded = is_agent_loaded(launchctl=launchctl)
+    _write_plist(plist, home=root, program_arguments=program_argv)
+    if was_loaded:
+        _bootout_agent(launchctl=launchctl)
+    if was_loaded or not is_agent_loaded(launchctl=launchctl):
+        if not _bootstrap_agent(plist, launchctl=launchctl):
+            err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
+            return 1
     err(f"{COMMAND_NAME}: refreshed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: binary {binary}")
     return 0
@@ -328,15 +361,6 @@ def _gui_domain(uid: int | None = None) -> str:
 
 def _is_darwin(platform: str | None) -> bool:
     return (sys.platform if platform is None else platform) == "darwin"
-
-
-def _kickstart_agent(
-    *, launchctl: LaunchctlFn | None = None, uid: int | None = None
-) -> None:
-    _launchctl(
-        ["kickstart", "-k", f"{_gui_domain(uid)}/{AGENT_LABEL}"],
-        launchctl=launchctl,
-    )
 
 
 def _launchctl(
@@ -423,7 +447,7 @@ def _require_current_tcc(
     except ImportError:
         err(MACOS_EXTRA_HINT)
         return None
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
         err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
         return None
     if not status.ok:
@@ -452,16 +476,42 @@ def _run_tcc_probe(interpreter: Path, *, prompt: bool) -> TccStatus:
         raise OSError(
             completed.stderr.strip() or completed.stdout.strip() or "tcc probe failed"
         )
-    payload = json.loads(completed.stdout)
-    return TccStatus(
-        accessibility=bool(payload["accessibility"]),
-        input_monitoring=bool(payload["input_monitoring"]),
-    )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
+    try:
+        return TccStatus(
+            accessibility=bool(payload["accessibility"]),
+            input_monitoring=bool(payload["input_monitoring"]),
+        )
+    except (KeyError, TypeError) as exc:
+        raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
 
 
-def _write_plist(plist: Path, *, program: Path, home: Path) -> None:
+def _probe_tcc_for_status(
+    interpreter: Path | None,
+    *,
+    err: Callable[[str], None],
+    probe_tcc: TccFn | None,
+) -> TccStatus:
+    if interpreter is None:
+        return TccStatus(False, False)
+    try:
+        return (probe_tcc or _probe_tcc)(interpreter)
+    except ImportError:
+        err(MACOS_EXTRA_HINT)
+        return TccStatus(False, False)
+    except OSError, subprocess.SubprocessError, ValueError:
+        return TccStatus(False, False)
+
+
+def _write_plist(plist: Path, *, home: Path, program_arguments: Sequence[str]) -> None:
     plist.parent.mkdir(parents=True, exist_ok=True)
-    plist.write_text(format_agent_plist(program=program, home=home), encoding="utf-8")
+    plist.write_text(
+        format_agent_plist(home=home, program_arguments=program_arguments),
+        encoding="utf-8",
+    )
 
 
 _PLIST_TEMPLATE = """\
@@ -475,7 +525,7 @@ _PLIST_TEMPLATE = """\
 
   <key>ProgramArguments</key>
   <array>
-    <string>__SPOTTY_BUNNY__</string>
+__PROGRAM_ARGUMENTS__
   </array>
 
   <key>KeepAlive</key>

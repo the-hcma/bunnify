@@ -275,19 +275,73 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         example = (
             root / "etc" / "launchd" / "com.thehcma.bunnify.spotty-bunny.plist.example"
         ).read_text(encoding="utf-8")
-        expected = example.replace("__SPOTTY_BUNNY__", "/opt/spotty-bunny").replace(
-            "__HOME__", "/Users/test"
-        )
+        expected = example.replace(
+            "    <string>__SPOTTY_BUNNY__</string>",
+            "    <string>/opt/spotty-bunny</string>",
+        ).replace("__HOME__", "/Users/test")
         self.assertEqual(
             format_agent_plist(
-                program=Path("/opt/spotty-bunny"),
                 home=Path("/Users/test"),
+                program_arguments=["/opt/spotty-bunny"],
             ),
             expected,
         )
         self.assertIn(AGENT_LABEL, expected)
         self.assertIn("<key>KeepAlive</key>", expected)
         self.assertIn("<key>RunAtLoad</key>", expected)
+
+    def test_format_agent_plist_supports_module_argv(self) -> None:
+        from app.spotty_bunny_agent import format_agent_plist
+
+        text = format_agent_plist(
+            home=Path("/Users/test"),
+            program_arguments=[
+                "/usr/bin/python3",
+                "-m",
+                "app.spotty_bunny_cli",
+            ],
+        )
+        self.assertIn("<string>/usr/bin/python3</string>", text)
+        self.assertIn("<string>-m</string>", text)
+        self.assertIn("<string>app.spotty_bunny_cli</string>", text)
+
+    def test_status_handles_missing_macos_extra(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+
+        def _raise_import(_program: Path) -> TccStatus:
+            raise ImportError("PyObjC")
+
+        ctl = _FakeLaunchctl()
+        stderr = StringIO()
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            program = Path("/opt/spotty-bunny")
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[str(program)],
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "app.spotty_bunny_agent.spotty_bunny_is_running",
+                return_value=False,
+            ):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=stderr.write,
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=_raise_import,
+                    program=program,
+                )
+            self.assertEqual(code, 1)
+            self.assertIn("macos", stderr.getvalue().lower())
+            self.assertIn("accessibility: no", stdout.getvalue())
 
     def test_install_bootstraps_when_tcc_is_current(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, install_agent
@@ -405,7 +459,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             plist.parent.mkdir(parents=True)
             program = Path("/opt/spotty-bunny")
             plist.write_text(
-                format_agent_plist(program=program, home=home),
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[str(program)],
+                ),
                 encoding="utf-8",
             )
             pid_dir = home / "run"
@@ -492,7 +549,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
             plist.write_text(
-                format_agent_plist(program=Path("/old/spotty-bunny"), home=home),
+                format_agent_plist(
+                    home=home,
+                    program_arguments=["/old/spotty-bunny"],
+                ),
                 encoding="utf-8",
             )
             new_program = Path("/new/spotty-bunny")
@@ -508,7 +568,9 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(code, 0)
             self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
             self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
-            self.assertTrue(any(call[1] == "kickstart" for call in ctl.calls))
+            self.assertTrue(any(call[1] == "bootout" for call in ctl.calls))
+            self.assertTrue(any(call[1] == "bootstrap" for call in ctl.calls))
+            self.assertFalse(any(call[1] == "kickstart" for call in ctl.calls))
 
     def test_upgrade_rechecks_tcc(self) -> None:
         from app.spotty_bunny_agent import (
@@ -524,7 +586,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
             plist.write_text(
-                format_agent_plist(program=Path("/opt/spotty-bunny"), home=home),
+                format_agent_plist(
+                    home=home,
+                    program_arguments=["/opt/spotty-bunny"],
+                ),
                 encoding="utf-8",
             )
             code = upgrade_agent(
