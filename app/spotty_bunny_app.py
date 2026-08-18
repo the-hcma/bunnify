@@ -28,7 +28,9 @@ from Cocoa import (
     NSScrollView,
     NSTableColumn,
     NSTableView,
+    NSTextAlignmentCenter,
     NSTextField,
+    NSTextFieldCell,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowStyleMaskBorderless,
@@ -103,15 +105,16 @@ from app.spotty_bunny_quit import (
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
 from app.version import get_build_info
 
+FIELD_HEIGHT = 40.0
+FIELD_LEFT = 16.0
 FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, yt, docs)"
-LOGO_LEFT = 16.0
+LOGO_GAP = 12.0
 LOGO_SIZE = 40.0
-LOGO_TOP = 16.0
 PANEL_HEIGHT = 80.0
 PANEL_WIDTH = 640.0
 TABLE_HEIGHT = 140.0
-FIELD_LEFT = LOGO_LEFT + LOGO_SIZE + 12.0
-FIELD_WIDTH = PANEL_WIDTH - FIELD_LEFT - 16.0
+LOGO_LEFT = PANEL_WIDTH - FIELD_LEFT - LOGO_SIZE
+FIELD_WIDTH = LOGO_LEFT - FIELD_LEFT - LOGO_GAP
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +297,7 @@ class SpottyBunnyController(NSObject):
         panel.setDelegate_(self)
 
         logo = NSButton.alloc().initWithFrame_(
-            NSMakeRect(LOGO_LEFT, LOGO_TOP, LOGO_SIZE, LOGO_SIZE)
+            NSMakeRect(LOGO_LEFT, 16.0, LOGO_SIZE, LOGO_SIZE)
         )
         logo.setBezelStyle_(NSBezelStyleShadowlessSquare)
         logo.setBordered_(False)
@@ -305,11 +308,13 @@ class SpottyBunnyController(NSObject):
         panel.contentView().addSubview_(logo)
 
         field = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(FIELD_LEFT, 16.0, FIELD_WIDTH, 40.0)
+            NSMakeRect(FIELD_LEFT, 16.0, FIELD_WIDTH, FIELD_HEIGHT)
         )
+        field.setCell_(_CenteredFieldCell.alloc().initTextCell_(""))
         field.setEditable_(True)
         field.setSelectable_(True)
         field.setBezeled_(True)
+        field.setAlignment_(NSTextAlignmentCenter)
         field.setFont_(NSFont.systemFontOfSize_(20.0))
         field.setPlaceholderString_(FIELD_PLACEHOLDER)
         field.setBackgroundColor_(NSColor.textBackgroundColor())
@@ -431,6 +436,15 @@ class SpottyBunnyController(NSObject):
             self.table.reloadData()
         self._set_table_visible(False)
 
+    def _layout_search_chrome(self, *, table_visible: bool) -> None:
+        origin_y = 16.0 + (TABLE_HEIGHT if table_visible else 0.0)
+        if self.field is not None:
+            self.field.setFrame_(
+                NSMakeRect(FIELD_LEFT, origin_y, FIELD_WIDTH, FIELD_HEIGHT)
+            )
+        if self.logo is not None:
+            self.logo.setFrame_(NSMakeRect(LOGO_LEFT, origin_y, LOGO_SIZE, LOGO_SIZE))
+
     def _load_completer(self) -> object:
         base_url = resolve_base_url(persist=False, allow_prompt=False)
         entries = fetch_key_entries(base_url=base_url)
@@ -514,15 +528,11 @@ class SpottyBunnyController(NSObject):
         frame = self.panel.frame()
         frame.size.height = PANEL_HEIGHT + (TABLE_HEIGHT if visible else 0.0)
         self.panel.setFrame_display_(frame, True)
+        self._layout_search_chrome(table_visible=visible)
         if visible:
-            self.field.setFrame_(
-                NSMakeRect(FIELD_LEFT, 16.0 + TABLE_HEIGHT, FIELD_WIDTH, 40.0)
-            )
             self.scroll.setFrame_(
                 NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, TABLE_HEIGHT - 8.0)
             )
-        else:
-            self.field.setFrame_(NSMakeRect(FIELD_LEFT, 16.0, FIELD_WIDTH, 40.0))
         self._center_panel()
 
     def _show_completions(self, rows: list[CompletionRow]) -> None:
@@ -593,6 +603,23 @@ def run_spotty_bunny_app() -> int:
     NSApp.run()
     logger.info("event loop exited")
     return 0
+
+
+class _CenteredFieldCell(NSTextFieldCell):
+    """Center placeholder and typed text horizontally and vertically."""
+
+    def drawingRectForBounds_(self, rect):
+        drawn = objc.super(_CenteredFieldCell, self).drawingRectForBounds_(rect)
+        font = self.font()
+        if font is None:
+            return drawn
+        text_height = float(font.boundingRectForFont().size.height)
+        if drawn.size.height <= text_height:
+            return drawn
+        inset = (drawn.size.height - text_height) / 2.0
+        drawn.origin.y += inset
+        drawn.size.height = text_height
+        return drawn
 
 
 def _control_key_down(keycode: int) -> bool:

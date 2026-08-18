@@ -945,6 +945,14 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("Quick shortcut overlay for Bunnify", source)
         self.assertIn("https://github.com/the-hcma/bunnify", source)
 
+    def test_search_field_is_centered_with_logo_on_right(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("NSTextAlignmentCenter", source)
+        self.assertIn("_CenteredFieldCell", source)
+        self.assertIn("LOGO_LEFT = PANEL_WIDTH - FIELD_LEFT - LOGO_SIZE", source)
+
     def test_search_panel_has_no_title_bar_label(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"

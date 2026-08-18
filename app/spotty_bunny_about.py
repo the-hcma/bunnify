@@ -114,9 +114,11 @@ def build_about_panel() -> NSPanel:
 
 
 def position_about_panel(panel: NSPanel, *, anchor_frame) -> None:
-    """Place *panel* just below the logo area on the anchor window."""
+    """Place *panel* just below the logo (right side of the search window)."""
     frame = panel.frame()
-    frame.origin.x = anchor_frame.origin.x + 8.0
+    frame.origin.x = (
+        anchor_frame.origin.x + anchor_frame.size.width - frame.size.width - 8.0
+    )
     frame.origin.y = anchor_frame.origin.y - frame.size.height - 8.0
     panel.setFrame_display_(frame, True)
 
