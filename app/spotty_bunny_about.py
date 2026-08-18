@@ -38,9 +38,9 @@ from Cocoa import (
 from Foundation import NSAttributedString, NSMakeRange, NSMutableAttributedString
 
 from app.spotty_bunny_about_info import (
+    about_link_spans,
+    handle_about_link_click,
     load_about_runtime_info,
-    open_path_in_text_editor,
-    path_from_file_uri,
 )
 from app.spotty_bunny_hotkey import ESCAPE_KEYCODE
 from app.spotty_bunny_update import UpdateStatus, read_cached_update_status
@@ -362,10 +362,7 @@ class _AboutLinkField(NSTextField):
         self.addCursorRect_cursor_(self.bounds(), NSCursor.pointingHandCursor())
 
     def textView_clickedOnLink_atIndex_(self, _view, link, _index) -> bool:
-        path = path_from_file_uri(str(link))
-        if path is None:
-            return False
-        return open_path_in_text_editor(path)
+        return handle_about_link_click(str(link))
 
     def updateTrackingAreas(self) -> None:
         objc.super(_AboutLinkField, self).updateTrackingAreas()
@@ -479,12 +476,8 @@ def _multi_link_field(
         _srgb_color(ABOUT_LABEL_RGB),
         NSMakeRange(0, len(text)),
     )
-    search_from = 0
-    for link_text, url in links:
-        start = text.find(link_text, search_from)
-        if start < 0:
-            continue
-        span = NSMakeRange(start, len(link_text))
+    for start, length, url in about_link_spans(text, links):
+        span = NSMakeRange(start, length)
         attributed.addAttribute_value_range_(NSLinkAttributeName, url, span)
         attributed.addAttribute_value_range_(
             NSForegroundColorAttributeName,
@@ -496,7 +489,6 @@ def _multi_link_field(
             NSUnderlineStyleSingle,
             span,
         )
-        search_from = start + len(link_text)
     field.setAttributedStringValue_(attributed)
     field.setDelegate_(field)
     return field

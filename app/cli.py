@@ -156,14 +156,22 @@ def ensure_ready_base_url(
                 raise ClientError(message)
             continue
         if interactive:
-            base_url, actual_port = _restart_local_server_if_build_mismatch(
-                base_url=base_url,
-                bookmarks=bookmarks,
-                pid_dir=pid_dir,
-                port=actual_port,
-                print_fn=log,
-                prompt_fn=ask,
-            )
+            try:
+                base_url, actual_port = _restart_local_server_if_build_mismatch(
+                    base_url=base_url,
+                    bookmarks=bookmarks,
+                    pid_dir=pid_dir,
+                    port=actual_port,
+                    print_fn=log,
+                    prompt_fn=ask,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                if not interactive or not _retry_requested(
+                    ask, f"Local server failed: {exc}\nRetry? [Y/n]: "
+                ):
+                    raise ClientError(str(exc)) from exc
+                preferred_port = None
+                continue
         if actual_port != preferences.local_port or base_url != preferences.base_url:
             path = env_path if env_path is not None else env_file_path(environ=environ)
             save_preferences(
@@ -635,18 +643,19 @@ def _offer_restart_mismatched_server(
     pid_dir: Path,
     print_fn: Callable[[str], None],
     theme: Theme,
-) -> int | None:
+) -> tuple[int, bool] | None:
     """Offer a restart when a busy port serves a different Bunnify build.
 
-    Returns the port when the caller should reuse or restart into it, or
-    ``None`` when the prompt loop should continue (stop failed / still busy).
+    Returns ``(port, restart)`` when the caller should reuse (*restart* False)
+    or start this CLI's build on *port* (*restart* True). ``None`` means stop
+    failed and the prompt loop should continue.
     """
     local_version, local_commit = get_build_info()
     local_label = f"{local_version} ({local_commit})"
     running_label = _format_running_build(health)
     print_fn(theme.ok(f"✓ Port {port} is already serving Bunnify {running_label}"))
     if _builds_match(health):
-        return port
+        return port, False
     if health.version is None or health.commit is None:
         print_fn(
             theme.warn(
@@ -676,7 +685,7 @@ def _offer_restart_mismatched_server(
             )
     if not _confirm_explicit_yes(prompt_fn, prompt):
         print_fn(theme.dim(f"Reusing the running server ({running_label})."))
-        return port
+        return port, False
     try:
         stop_local_server(
             pid_dir,
@@ -687,7 +696,7 @@ def _offer_restart_mismatched_server(
         print_fn(theme.warn(f"Could not stop the managed server: {exc}"))
         return None
     print_fn(theme.ok(f"✓ Stopped previous server; port {port} is free"))
-    return port
+    return port, True
 
 
 def _parse_version_line(output: str) -> str | None:
@@ -778,7 +787,7 @@ def _prompt_local_port(
                 theme=colors,
             )
             if chosen is not None:
-                return chosen
+                return chosen[0]
             continue
         log(colors.warn(f"Port {port} is already in use. Searching for a free port…"))
         found = _find_usable_local_port(port + 1)
@@ -835,7 +844,7 @@ def _restart_local_server_if_build_mismatch(
     health = fetch_health(base_url)
     if not health.ok or _builds_match(health):
         return base_url, port
-    chosen = _offer_restart_mismatched_server(
+    decided = _offer_restart_mismatched_server(
         prompt_fn,
         port=port,
         health=health,
@@ -843,7 +852,12 @@ def _restart_local_server_if_build_mismatch(
         print_fn=print_fn,
         theme=colors,
     )
-    if chosen is None or check_health(base_url):
+    if decided is None:
+        if check_health(base_url):
+            return base_url, port
+        raise RuntimeError(f"Could not stop the mismatched server on port {port}")
+    chosen, restart = decided
+    if not restart:
         return base_url, port
     started_url, started_port = ensure_local_server(
         port=chosen,

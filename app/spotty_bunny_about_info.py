@@ -32,6 +32,22 @@ class AboutRuntimeInfo:
 OriginUrlFor = Callable[[Path], str | None]
 
 
+def about_link_spans(
+    text: str,
+    links: tuple[tuple[str, str], ...],
+) -> tuple[tuple[int, int, str], ...]:
+    """Return ``(start, length, url)`` for each link span, searched left to right."""
+    spans: list[tuple[int, int, str]] = []
+    search_from = 0
+    for link_text, url in links:
+        start = text.find(link_text, search_from)
+        if start < 0:
+            continue
+        spans.append((start, len(link_text), url))
+        search_from = start + len(link_text)
+    return tuple(spans)
+
+
 def display_user_path(path: Path) -> str:
     """Return *path* with the home directory replaced by ``~`` when possible."""
     expanded = path.expanduser()
@@ -82,6 +98,21 @@ def github_repo_url_for_path(
     if not remote:
         return None
     return github_https_url(remote)
+
+
+def handle_about_link_click(
+    link: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> bool:
+    """Handle an About-panel click. True when a local file was opened.
+
+    Returning False leaves http(s) links to AppKit's default URL handler.
+    """
+    path = path_from_file_uri(str(link))
+    if path is None:
+        return False
+    return open_path_in_text_editor(path, run=run)
 
 
 def load_about_runtime_info(

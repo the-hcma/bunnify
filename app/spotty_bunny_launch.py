@@ -22,13 +22,27 @@ SPOTTY_BUNNY_PID_FILE = ".spotty-bunny.pid"
 SPOTTY_BUNNY_STARTUP_WAIT_S = 0.05
 
 
-def clear_spotty_bunny_pid(*, pid_dir: Path | None = None) -> None:
-    """Remove the recorded Spotty Bunny PID file."""
+def clear_spotty_bunny_pid(
+    *,
+    only_pid: int | None = None,
+    pid_dir: Path | None = None,
+) -> None:
+    """Remove the recorded Spotty Bunny PID file.
+
+    When *only_pid* is set, the file is left in place if it records a
+    different process (so a successor overlay's pid is not erased).
+    """
+    if only_pid is not None:
+        runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
+        if runtime is None or runtime[0] != only_pid:
+            return
     spotty_bunny_pid_path(pid_dir=pid_dir).unlink(missing_ok=True)
 
 
 def ensure_spotty_bunny_running(
     *,
+    installed: bool | None = None,
+    loaded: bool | None = None,
     pid_dir: Path | None = None,
     restart: RestartFn | None = None,
     spawn: Callable[[Sequence[str]], int] | None = None,
@@ -43,14 +57,19 @@ def ensure_spotty_bunny_running(
         return False
     directory = pid_dir if pid_dir is not None else run_dir()
     current = git_commit()
-    inspect_launchd = pid_dir is None
-    loaded = False
-    installed = False
-    if inspect_launchd:
-        from app.spotty_bunny_agent import is_agent_installed, is_agent_loaded
+    if loaded is None or installed is None:
+        if pid_dir is None:
+            from app.spotty_bunny_agent import is_agent_installed, is_agent_loaded
 
-        loaded = is_agent_loaded()
-        installed = is_agent_installed()
+            if loaded is None:
+                loaded = is_agent_loaded()
+            if installed is None:
+                installed = is_agent_installed()
+        else:
+            if loaded is None:
+                loaded = False
+            if installed is None:
+                installed = False
     runtime = read_spotty_bunny_runtime(pid_dir=directory)
     pid_alive = runtime is not None and _spotty_bunny_process_alive(runtime[0])
     if pid_alive or loaded:
@@ -75,7 +94,14 @@ def ensure_spotty_bunny_running(
     if installed:
         from app.spotty_bunny_agent import install_agent
 
-        return install_agent() == 0
+        if install_agent() == 0:
+            time.sleep(SPOTTY_BUNNY_STARTUP_WAIT_S)
+            if spotty_bunny_is_running(pid_dir=directory):
+                logger.info("started spotty-bunny via LaunchAgent")
+                return True
+            logger.warning("LaunchAgent bootstrap did not produce a live overlay")
+        else:
+            logger.warning("LaunchAgent install failed; falling back to spawn")
     command = spotty_bunny_command()
     spawn_fn = spawn or _spawn_detached
     try:

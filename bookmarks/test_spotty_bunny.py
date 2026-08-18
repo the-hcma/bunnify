@@ -268,6 +268,44 @@ class SpottyBunnyCliTests(SimpleTestCase):
 
 
 class SpottyBunnyAboutInfoTests(SimpleTestCase):
+    def test_about_link_spans_search_left_to_right(self) -> None:
+        from app.spotty_bunny_about_info import about_link_spans
+
+        text = "Repository: github.com/the-hcma/bunnify\nLicense: MIT License"
+        spans = about_link_spans(
+            text,
+            (
+                ("github.com/the-hcma/bunnify", "https://github.com/the-hcma/bunnify"),
+                ("MIT License", "https://example.com/license"),
+            ),
+        )
+        self.assertEqual(
+            spans,
+            (
+                (
+                    text.index("github.com/the-hcma/bunnify"),
+                    len("github.com/the-hcma/bunnify"),
+                    "https://github.com/the-hcma/bunnify",
+                ),
+                (
+                    text.index("MIT License"),
+                    len("MIT License"),
+                    "https://example.com/license",
+                ),
+            ),
+        )
+        nested = about_link_spans(
+            "github.com/the-hcma/bunnify",
+            (
+                ("github.com/the-hcma/bunnify", "https://repo"),
+                ("bunnify", "https://skipped-if-before-cursor"),
+            ),
+        )
+        self.assertEqual(
+            nested,
+            ((0, len("github.com/the-hcma/bunnify"), "https://repo"),),
+        )
+
     def test_display_user_path_uses_tilde_for_home(self) -> None:
         from app.spotty_bunny_about_info import display_user_path
 
@@ -320,6 +358,31 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             bookmarks = Path(tmp) / "bookmarks.json"
             bookmarks.write_text("{}", encoding="utf-8")
             self.assertIsNone(github_repo_url_for_path(bookmarks))
+
+    def test_handle_about_link_click_leaves_https_to_appkit(self) -> None:
+        from app.spotty_bunny_about_info import handle_about_link_click
+
+        def run(
+            _argv: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            self.fail("https links must not call open -t")
+            return subprocess.CompletedProcess([], 1, "", "")
+
+        self.assertFalse(
+            handle_about_link_click("https://github.com/the-hcma/bunnify", run=run)
+        )
+
+    def test_handle_about_link_click_opens_file_uri(self) -> None:
+        from app.spotty_bunny_about_info import handle_about_link_click
+
+        calls: list[list[str]] = []
+
+        def run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        self.assertTrue(handle_about_link_click("file:///tmp/bookmarks.json", run=run))
+        self.assertEqual(calls, [["open", "-t", "/tmp/bookmarks.json"]])
 
     def test_load_about_runtime_info_local_server_and_file_link(self) -> None:
         from app.spotty_bunny_about_info import load_about_runtime_info
@@ -1575,6 +1638,113 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 "99\nnewcommit\n",
             )
 
+    def test_ensure_spotty_bunny_running_bootout_then_installs(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            (pid_dir / SPOTTY_BUNNY_PID_FILE).write_text(
+                "4242\noldcommit\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="newcommit",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+                patch("app.spotty_bunny_launch._terminate_pid"),
+                patch("app.spotty_bunny_agent.bootout_loaded_agent") as bootout,
+                patch("app.spotty_bunny_agent.install_agent", return_value=0),
+                patch(
+                    "app.spotty_bunny_launch.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        installed=True,
+                        loaded=True,
+                        restart=lambda _recorded, _current: True,
+                        spawn=lambda _cmd: self.fail("should not spawn"),
+                    )
+                )
+            bootout.assert_called_once()
+
+    def test_ensure_spotty_bunny_running_installs_when_agent_present(self) -> None:
+        from app.spotty_bunny_launch import ensure_spotty_bunny_running
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_agent.install_agent",
+                    return_value=0,
+                ) as install,
+                patch(
+                    "app.spotty_bunny_launch.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        installed=True,
+                        loaded=False,
+                        spawn=lambda _cmd: self.fail("should not spawn"),
+                    )
+                )
+            install.assert_called_once()
+
+    def test_ensure_spotty_bunny_running_spawns_when_install_fails(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        spawned: list[int] = []
+
+        def spawn(_cmd: object) -> int:
+            spawned.append(99)
+            return 99
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="abc1234",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+                patch("app.spotty_bunny_agent.install_agent", return_value=1),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        pid_dir=pid_dir,
+                        installed=True,
+                        loaded=False,
+                        spawn=spawn,
+                    )
+                )
+            self.assertEqual(spawned, [99])
+            self.assertEqual(
+                (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
+                "99\nabc1234\n",
+            )
+
     def test_ensure_spotty_bunny_running_fails_when_child_exits(self) -> None:
         from app.spotty_bunny_launch import (
             SPOTTY_BUNNY_PID_FILE,
@@ -1634,6 +1804,21 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 )
             self.assertEqual(len(spawned), 1)
             self.assertEqual(pid_path.read_text(encoding="utf-8"), "4242\nabc1234\n")
+
+    def test_clear_spotty_bunny_pid_leaves_successor(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            clear_spotty_bunny_pid,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            pid_path = pid_dir / SPOTTY_BUNNY_PID_FILE
+            pid_path.write_text("99\nnewcommit\n", encoding="utf-8")
+            clear_spotty_bunny_pid(only_pid=1, pid_dir=pid_dir)
+            self.assertTrue(pid_path.exists())
+            clear_spotty_bunny_pid(only_pid=99, pid_dir=pid_dir)
+            self.assertFalse(pid_path.exists())
 
     def test_stop_spotty_bunny_clears_pid_file(self) -> None:
         from app.spotty_bunny_launch import (
@@ -1707,12 +1892,15 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("Repository:", source)
         self.assertIn("_multi_link_field", source)
         self.assertIn("textView_clickedOnLink_atIndex_", source)
+        self.assertIn("handle_about_link_click", source)
         info_source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_about_info.py"
         ).read_text(encoding="utf-8")
         self.assertIn("Local server", info_source)
         self.assertIn("Remote server", info_source)
         self.assertIn('["open", "-t", str(path)]', info_source)
+        self.assertIn("def about_link_spans", info_source)
+        self.assertIn("def handle_about_link_click", info_source)
 
     def test_search_field_is_centered_with_logo_on_right(self) -> None:
         source = (

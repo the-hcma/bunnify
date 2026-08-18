@@ -830,6 +830,153 @@ class ConfigUnitTests(TestCase):
             self.assertIn("already serving Bunnify 0.2.0 (oldoldoldold)", joined)
             self.assertIn("older than this CLI", joined)
 
+    def test_ensure_ready_base_url_retries_when_restart_start_fails(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.client import ClientError
+        from app.config import ServerPreferences, save_preferences
+
+        remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
+        responses = iter(["y", "n"])
+        starts = {"count": 0}
+
+        def ensure_server(**_kwargs: object) -> tuple[str, int]:
+            starts["count"] += 1
+            if starts["count"] == 1:
+                return ("http://127.0.0.1:8123", 8123)
+            raise RuntimeError("failed to start")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            with (
+                patch(
+                    "app.cli.ensure_user_bookmarks",
+                    return_value=bookmarks,
+                ),
+                patch("app.cli.ensure_local_server", side_effect=ensure_server),
+                patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.stop_local_server"),
+            ):
+                with self.assertRaises(ClientError) as raised:
+                    ensure_ready_base_url(
+                        environ={"XDG_CONFIG_HOME": tmp},
+                        env_path=path,
+                        allow_prompt=True,
+                        prompt_fn=lambda _message: next(responses),
+                        print_fn=lambda _message: None,
+                    )
+
+            self.assertIn("failed to start", str(raised.exception))
+
+    def test_ensure_ready_base_url_reuses_server_when_restart_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.config import ServerPreferences, save_preferences
+
+        remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            with (
+                patch(
+                    "app.cli.ensure_user_bookmarks",
+                    return_value=bookmarks,
+                ),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8123", 8123),
+                ) as ensure_server,
+                patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.stop_local_server") as stop_server,
+            ):
+                result = ensure_ready_base_url(
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    allow_prompt=True,
+                    prompt_fn=lambda _message: "",
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8123")
+            self.assertEqual(ensure_server.call_count, 1)
+            stop_server.assert_not_called()
+            self.assertIn("Reusing the running server", "\n".join(messages))
+
+    def test_ensure_ready_base_url_reuses_when_stop_fails_and_server_healthy(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.config import ServerPreferences, save_preferences
+
+        remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            with (
+                patch(
+                    "app.cli.ensure_user_bookmarks",
+                    return_value=bookmarks,
+                ),
+                patch(
+                    "app.cli.ensure_local_server",
+                    return_value=("http://127.0.0.1:8123", 8123),
+                ) as ensure_server,
+                patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch("app.cli.check_health", return_value=True),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=RuntimeError("Port 8123 is still busy after stop"),
+                ),
+            ):
+                result = ensure_ready_base_url(
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    allow_prompt=True,
+                    prompt_fn=lambda _message: "y",
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8123")
+            self.assertEqual(ensure_server.call_count, 1)
+
     def test_ensure_ready_base_url_remote_unreachable_raises(self) -> None:
         import tempfile
         from pathlib import Path
