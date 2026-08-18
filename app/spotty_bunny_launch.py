@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -86,6 +87,21 @@ def spotty_bunny_pid_path(*, pid_dir: Path | None = None) -> Path:
     return directory / SPOTTY_BUNNY_PID_FILE
 
 
+def stop_spotty_bunny(*, pid_dir: Path | None = None) -> bool:
+    """SIGTERM (then SIGKILL) a leftover overlay. Returns True if signaled."""
+    path = spotty_bunny_pid_path(pid_dir=pid_dir)
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip())
+    except OSError, ValueError:
+        return False
+    if not _spotty_bunny_process_alive(pid):
+        path.unlink(missing_ok=True)
+        return False
+    _terminate_pid(pid)
+    path.unlink(missing_ok=True)
+    return True
+
+
 def write_spotty_bunny_pid(pid: int, *, pid_dir: Path | None = None) -> None:
     """Record *pid* for later ``spotty_bunny_is_running`` checks."""
     path = spotty_bunny_pid_path(pid_dir=pid_dir)
@@ -132,3 +148,28 @@ def _spawn_detached(command: Sequence[str]) -> int:
         start_new_session=True,
     )
     return int(proc.pid)
+
+
+def _terminate_pid(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    if _wait_for_exit(pid, timeout_s=10):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    _wait_for_exit(pid, timeout_s=2)
+
+
+def _wait_for_exit(pid: int, *, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True
+        time.sleep(0.05)
+    return False

@@ -1371,6 +1371,8 @@ def main(
     \b
     macOS Spotty Bunny (`spotty-bunny` is a reserved shortcut name):
       bunnify spotty-bunny
+      bunnify spotty-bunny install
+      bunnify spotty-bunny status
       ./scripts/spotty-bunny
       ./scripts/spotty-bunny --verbose
 

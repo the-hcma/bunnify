@@ -34,6 +34,10 @@ bunnify --print-url gh          # print resolved URL instead of opening browser
 bunnify --list-keys             # list keys from the running server
 bunnify spotty-bunny            # macOS search box (requires extra macos)
 bunnify spotty-bunny --verbose  # DEBUG logs on stderr and log file
+bunnify spotty-bunny install    # login LaunchAgent (TCC + KeepAlive)
+bunnify spotty-bunny status     # process, launchd, logs, TCC
+bunnify spotty-bunny upgrade    # refresh agent after `bunnify upgrade`
+bunnify spotty-bunny uninstall
 ```
 
 ## Server

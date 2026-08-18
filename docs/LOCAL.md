@@ -83,13 +83,19 @@ files together.
 
 ## Spotty Bunny (macOS)
 
-Foreground process (no login agent yet). Needs the optional `macos` extra
-(PyObjC):
+Needs the optional `macos` extra (PyObjC). Bare `spotty-bunny` still runs the
+overlay **in the foreground**. The login LaunchAgent is a distinct label from
+the server agent (`com.thehcma.bunnify`).
 
 ```bash
 # pipx
 pipx install 'bunnify[macos]'
-spotty-bunny
+spotty-bunny                     # foreground overlay
+bunnify spotty-bunny             # same (reserved CLI token)
+bunnify spotty-bunny install     # LaunchAgent (KeepAlive + RunAtLoad)
+bunnify spotty-bunny status
+bunnify spotty-bunny upgrade     # after `bunnify upgrade` (pipx)
+bunnify spotty-bunny uninstall
 
 # development checkout (wrapper syncs extra macos)
 ./scripts/spotty-bunny
@@ -102,33 +108,66 @@ spotty-bunny
 ./scripts/spotty-bunny --log-file /tmp/spotty-bunny.log --verbose
 ```
 
+`install` writes
+`~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist` from
+[`etc/launchd/com.thehcma.bunnify.spotty-bunny.plist.example`](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.spotty-bunny.plist.example)
+with **ProgramArguments** set to the absolute path from `command -v spotty-bunny`,
+then `launchctl bootstrap "gui/$(id -u)"` that plist. It does **not** succeed
+until **Accessibility** and **Input Monitoring** are currently granted to the
+**interpreter launchd will exec** (typically the pipx venv Python in the
+`spotty-bunny` shebang), not only Terminal.app. Missing grants trigger the
+system prompts where the APIs allow it, then the checks run again. If either
+is still missing, the command prints System Settings → Privacy & Security
+instructions and exits non-zero without treating bootstrap as success.
+
+`status` prints running/pid, whether launchd has loaded the agent, the binary
+path, the application log
+(`~/.local/share/bunnify/spotty-bunny.log` or `BUNNIFY_SPOTTY_BUNNY_LOG_FILE` /
+`$BUNNIFY_DATA_DIR`), launchd stdout/stderr paths from the plist, version, and
+Accessibility / Input Monitoring yes/no. Exit `0` only when the plist exists,
+the agent is loaded, and the process is running.
+
+`upgrade` rewrites the plist if `command -v spotty-bunny` moved (pipx venv
+path / shebang), re-verifies TCC for that interpreter, and
+`launchctl kickstart -k "gui/$(id -u)/com.thehcma.bunnify.spotty-bunny"`.
+Package updates stay on `bunnify upgrade` (`pipx upgrade bunnify`); run that
+first, then `bunnify spotty-bunny upgrade` so launchd does not keep a stale
+binary path.
+
+`uninstall` boots the agent out, removes the plist, stops a leftover overlay
+process, and clears the pid file. It does not delete the application log.
+If the agent was never installed, it still succeeds.
+
 Hold **one** Control, then press the **other** to show the search box. Esc
 (or the same chord again) hides it. Up/down walks the CLI REPL history file
 (`platformdirs` cache `bunnify/repl_history`). Tab uses the same completers as
 the CLI (`FirstTokenFuzzyCompleter` / `ShortcutCompleter`) and lists matches
 under the field. Enter resolves via `/api/resolve/?strict=1` and opens the URL
 in the default browser (unknown keys stay in the panel with an error). Ctrl-C
-in that terminal quits. Startup prints the log file path on stderr
+in a foreground terminal quits. Startup prints the log file path on stderr
 (`spotty-bunny: logging to …`). Default log level is **INFO** (use `--verbose`
-for per-key tap debug).
+for per-key tap debug). Launchd stdout/stderr under `~/Library/Logs/` are
+separate from that application log.
 
 The search box is centered on the **main display** (menu-bar monitor), with a
 small bunny icon to the right of the field. Click the icon for version, commit, and
 project links (domesti-bot-style about panel).
 
-If the chord does nothing, run with `--verbose` and watch stderr. Lines
-named `tap …` show whether key events arrive. If none appear while you press
-keys, grant **Accessibility** and **Input Monitoring** to the Python that
-`uv run` uses (often `.venv/bin/python`), not only Terminal.app, in System
-Settings → Privacy & Security, then re-run. If events arrive but `fired=True`
-never appears, HID may still miss right Control (`hid R=False`); Spotty Bunny
-also uses device flag bits and the event keycode. Re-run `--verbose` after
-this fix.
+If the chord does nothing, run with `--verbose` and watch stderr (or the
+application log). Lines named `tap …` show whether key events arrive. If none
+appear while you press keys, grant **Accessibility** and **Input Monitoring**
+to the Python that `uv run` / pipx uses (often `.venv/bin/python` or the pipx
+venv interpreter), not only Terminal.app, in System Settings → Privacy &
+Security, then re-run. If events arrive but `fired=True` never appears, HID may
+still miss right Control (`hid R=False`); Spotty Bunny also uses device flag
+bits and the event keycode. Re-run `--verbose` after this fix.
 
 On macOS, starting the **`bunnify` interactive REPL** (no query args) also
 starts `spotty-bunny` in the background when it is not already running.
 
 ## macOS LaunchAgent
+
+The **server** agent is separate from Spotty Bunny.
 
 Copy `etc/launchd/com.thehcma.bunnify.plist.example` to
 `~/Library/LaunchAgents/com.thehcma.bunnify.plist`. Replace
@@ -147,6 +186,15 @@ launchctl bootout "gui/$(id -u)/com.thehcma.bunnify"
 The template runs the server in the foreground with `KeepAlive` enabled. Ensure
 `~/.config/bunnify/bookmarks.json` exists before loading the agent. Confirm that
 port 8000 is free unless you override `--port`.
+
+Prefer `bunnify spotty-bunny install` for the overlay agent instead of copying
+its example plist by hand. Manual `launchctl` for Spotty Bunny:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist
+launchctl bootout "gui/$(id -u)/com.thehcma.bunnify.spotty-bunny"
+```
 
 ## Troubleshooting
 

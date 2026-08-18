@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 from django.test import SimpleTestCase
 
+from app.spotty_bunny_agent import TccStatus
 from app.spotty_bunny_cli import (
     LOG_ENV_VAR,
     SpottyBunnyEventTapError,
@@ -123,6 +125,9 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.assertIn("--log-file", help_text)
         self.assertIn("--log-level", help_text)
         self.assertIn("--verbose", help_text)
+        self.assertIn("install", help_text)
+        self.assertIn("uninstall", help_text)
+        self.assertIn("LaunchAgent", help_text)
 
     def test_log_level_sets_logger(self) -> None:
         stderr = StringIO()
@@ -180,6 +185,27 @@ class SpottyBunnyCliTests(SimpleTestCase):
 
         self.assertEqual(result.exit_code, 1, result.output)
         spotty.assert_called_once_with([])
+
+    def test_install_subcommand_does_not_start_overlay(self) -> None:
+        with patch("app.spotty_bunny_agent.install_agent", return_value=0) as inst:
+            self.assertEqual(main(["install"]), 0)
+        inst.assert_called_once_with()
+
+    def test_bunnify_spotty_bunny_install_forwards(self) -> None:
+        from app.cli import main as cli_main
+
+        with patch("app.spotty_bunny_cli.main", return_value=0) as spotty:
+            result = CliRunner().invoke(cli_main, ["spotty-bunny", "install"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        spotty.assert_called_once_with(["install"])
+
+    def test_unknown_subcommand_prints_usage(self) -> None:
+        stderr = StringIO()
+        with patch("app.spotty_bunny_cli.sys.stderr", stderr):
+            self.assertEqual(main(["not-a-command"]), 2)
+        self.assertIn("unknown command", stderr.getvalue())
+        self.assertIn("install", stderr.getvalue())
 
     def test_tap_failure_prints_permission_hint(self) -> None:
         def fail_tap() -> int:
@@ -239,6 +265,316 @@ class SpottyBunnyCliTests(SimpleTestCase):
         logged = self.log_file.read_text(encoding="utf-8")
         self.assertIn("spotty-bunny starting", logged)
         self.assertIn("log_level=DEBUG", logged)
+
+
+class SpottyBunnyAgentTests(SimpleTestCase):
+    def test_format_agent_plist_matches_example_placeholders(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist
+
+        root = Path(__file__).resolve().parents[1]
+        example = (
+            root / "etc" / "launchd" / "com.thehcma.bunnify.spotty-bunny.plist.example"
+        ).read_text(encoding="utf-8")
+        expected = example.replace("__SPOTTY_BUNNY__", "/opt/spotty-bunny").replace(
+            "__HOME__", "/Users/test"
+        )
+        self.assertEqual(
+            format_agent_plist(
+                program=Path("/opt/spotty-bunny"),
+                home=Path("/Users/test"),
+            ),
+            expected,
+        )
+        self.assertIn(AGENT_LABEL, expected)
+        self.assertIn("<key>KeepAlive</key>", expected)
+        self.assertIn("<key>RunAtLoad</key>", expected)
+
+    def test_install_bootstraps_when_tcc_is_current(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(TccStatus(True, True))
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "spotty-bunny"
+            program.parent.mkdir(parents=True)
+            program.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            stderr = StringIO()
+            code = install_agent(
+                home=home,
+                launchctl=ctl,
+                platform="darwin",
+                print_err=stderr.write,
+                probe_tcc=tcc.probe,
+                program=program,
+                request_tcc=tcc.request,
+            )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            self.assertEqual(code, 0)
+            self.assertTrue(plist.is_file())
+            text = plist.read_text(encoding="utf-8")
+            self.assertIn(str(program), text)
+            self.assertIn("<key>KeepAlive</key>", text)
+            self.assertEqual(tcc.probes, 1)
+            self.assertEqual(tcc.requests, 0)
+            self.assertTrue(any(call[1] == "bootstrap" for call in ctl.calls))
+
+    def test_install_does_not_bootstrap_when_tcc_missing(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(TccStatus(False, False), TccStatus(False, False))
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            stderr = StringIO()
+            code = install_agent(
+                home=home,
+                launchctl=ctl,
+                platform="darwin",
+                print_err=stderr.write,
+                probe_tcc=tcc.probe,
+                program=program,
+                request_tcc=tcc.request,
+            )
+            self.assertEqual(code, 1)
+            self.assertFalse(
+                (home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist").exists()
+            )
+            self.assertGreaterEqual(tcc.probes, 2)
+            self.assertEqual(tcc.requests, 1)
+            self.assertFalse(any(call[1] == "bootstrap" for call in ctl.calls))
+            self.assertIn("Privacy & Security", stderr.getvalue())
+
+    def test_install_rechecks_tcc_after_prompt(self) -> None:
+        from app.spotty_bunny_agent import install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(TccStatus(False, False), TccStatus(True, True))
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            code = install_agent(
+                home=home,
+                launchctl=ctl,
+                platform="darwin",
+                print_err=lambda _m: None,
+                probe_tcc=tcc.probe,
+                program=program,
+                request_tcc=tcc.request,
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(tcc.requests, 1)
+            self.assertEqual(tcc.probes, 2)
+
+    def test_install_not_macos(self) -> None:
+        from app.spotty_bunny_agent import install_agent
+
+        stderr = StringIO()
+        self.assertEqual(
+            install_agent(platform="linux", print_err=stderr.write),
+            1,
+        )
+        self.assertIn("only available on macOS", stderr.getvalue())
+
+    def test_interpreter_for_program_reads_shebang(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/opt/pipx/venvs/bunnify/bin/python\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path("/opt/pipx/venvs/bunnify/bin/python"),
+            )
+
+    def test_status_reports_log_version_and_tcc(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+        from app.version import build_version
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            program = Path("/opt/spotty-bunny")
+            plist.write_text(
+                format_agent_plist(program=program, home=home),
+                encoding="utf-8",
+            )
+            pid_dir = home / "run"
+            pid_dir.mkdir()
+            (pid_dir / ".spotty-bunny.pid").write_text("99\n", encoding="utf-8")
+            with patch(
+                "app.spotty_bunny_agent.spotty_bunny_is_running",
+                return_value=True,
+            ):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=lambda _p: TccStatus(True, False),
+                    program=program,
+                )
+            text = stdout.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("running: yes", text)
+            self.assertIn("pid: 99", text)
+            self.assertIn("launchd: loaded", text)
+            self.assertIn("binary: /opt/spotty-bunny", text)
+            self.assertIn("application_log:", text)
+            self.assertIn("launchd_stdout:", text)
+            self.assertIn("version: " + build_version(), text)
+            self.assertIn("accessibility: yes", text)
+            self.assertIn("input_monitoring: no", text)
+
+    def test_uninstall_bootout_removes_plist_and_pid(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, uninstall_agent
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text("plist", encoding="utf-8")
+            pid_dir = home / "run"
+            pid_dir.mkdir()
+            pid_path = pid_dir / ".spotty-bunny.pid"
+            pid_path.write_text("7\n", encoding="utf-8")
+            with patch("app.spotty_bunny_agent.stop_spotty_bunny") as stop:
+                code = uninstall_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                )
+            self.assertEqual(code, 0)
+            self.assertFalse(plist.exists())
+            self.assertFalse(pid_path.exists())
+            stop.assert_called_once()
+            self.assertTrue(any(call[1] == "bootout" for call in ctl.calls))
+
+    def test_uninstall_succeeds_when_never_installed(self) -> None:
+        from app.spotty_bunny_agent import uninstall_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            code = uninstall_agent(
+                home=Path(tmp),
+                launchctl=ctl,
+                platform="darwin",
+                print_err=lambda _m: None,
+            )
+        self.assertEqual(code, 0)
+
+    def test_upgrade_rewrites_plist_when_binary_changes(self) -> None:
+        from app.spotty_bunny_agent import (
+            AGENT_LABEL,
+            format_agent_plist,
+            upgrade_agent,
+        )
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        tcc = _FakeTcc(TccStatus(True, True))
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(program=Path("/old/spotty-bunny"), home=home),
+                encoding="utf-8",
+            )
+            new_program = Path("/new/spotty-bunny")
+            code = upgrade_agent(
+                home=home,
+                launchctl=ctl,
+                platform="darwin",
+                print_err=lambda _m: None,
+                probe_tcc=tcc.probe,
+                program=new_program,
+                request_tcc=tcc.request,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
+            self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
+            self.assertTrue(any(call[1] == "kickstart" for call in ctl.calls))
+
+    def test_upgrade_rechecks_tcc(self) -> None:
+        from app.spotty_bunny_agent import (
+            AGENT_LABEL,
+            format_agent_plist,
+            upgrade_agent,
+        )
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(TccStatus(False, True), TccStatus(False, True))
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(program=Path("/opt/spotty-bunny"), home=home),
+                encoding="utf-8",
+            )
+            code = upgrade_agent(
+                home=home,
+                launchctl=ctl,
+                platform="darwin",
+                print_err=lambda _m: None,
+                probe_tcc=tcc.probe,
+                program=Path("/opt/spotty-bunny"),
+                request_tcc=tcc.request,
+            )
+            self.assertEqual(code, 1)
+            self.assertEqual(tcc.requests, 1)
+            self.assertGreaterEqual(tcc.probes, 2)
+            self.assertFalse(any(call[1] == "kickstart" for call in ctl.calls))
+
+
+class _FakeLaunchctl:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.loaded = False
+
+    def __call__(
+        self, argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        self.calls.append(list(argv))
+        if len(argv) >= 2 and argv[1] == "print":
+            return subprocess.CompletedProcess(argv, 0 if self.loaded else 1, "", "")
+        if len(argv) >= 2 and argv[1] == "bootstrap":
+            self.loaded = True
+        if len(argv) >= 2 and argv[1] == "bootout":
+            self.loaded = False
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+class _FakeTcc:
+    def __init__(self, *results: TccStatus) -> None:
+        self._results = list(results)
+        self.probes = 0
+        self.requests = 0
+
+    def probe(self, _interpreter: Path) -> TccStatus:
+        self.probes += 1
+        if not self._results:
+            raise AssertionError("unexpected TCC probe")
+        return self._results.pop(0)
+
+    def request(self, _interpreter: Path) -> TccStatus:
+        self.requests += 1
+        return TccStatus(False, False)
 
 
 class SpottyBunnyCompleteTests(SimpleTestCase):
@@ -928,6 +1264,27 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 )
             self.assertEqual(len(spawned), 1)
             self.assertEqual(pid_path.read_text(encoding="utf-8"), "4242\n")
+
+    def test_stop_spotty_bunny_clears_pid_file(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            stop_spotty_bunny,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            pid_path = pid_dir / SPOTTY_BUNNY_PID_FILE
+            pid_path.write_text("4242\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+                patch("app.spotty_bunny_launch._terminate_pid") as terminate,
+            ):
+                self.assertTrue(stop_spotty_bunny(pid_dir=pid_dir))
+            terminate.assert_called_once_with(4242)
+            self.assertFalse(pid_path.exists())
 
     def test_placeholder_documents_examples(self) -> None:
         source = (

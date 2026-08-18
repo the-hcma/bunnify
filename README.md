@@ -136,7 +136,7 @@ Unknown keys exit non-zero in direct mode (no search-engine fallback).
 ## Features
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
-- **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`)
+- **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`; `install` LaunchAgent)
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
 - **Chrome / Edge** — OpenSearch at `/opensearch.xml`
   ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
