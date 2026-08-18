@@ -87,6 +87,8 @@ Needs the optional `macos` extra (PyObjC). Bare `spotty-bunny` still runs the
 overlay **in the foreground**. The login LaunchAgent is a distinct label from
 the server agent (`com.thehcma.bunnify`).
 
+### Install
+
 ```bash
 # pipx
 pipx install 'bunnify[macos]'
@@ -94,8 +96,6 @@ spotty-bunny                     # foreground overlay
 bunnify spotty-bunny             # same (reserved CLI token)
 bunnify spotty-bunny install     # LaunchAgent (KeepAlive + RunAtLoad)
 bunnify spotty-bunny status
-bunnify spotty-bunny upgrade     # after `bunnify upgrade` (pipx)
-bunnify spotty-bunny uninstall
 
 # development checkout (wrapper syncs extra macos)
 ./scripts/spotty-bunny
@@ -127,6 +127,13 @@ path, the application log
 Accessibility / Input Monitoring yes/no. Exit `0` only when the plist exists,
 the agent is loaded, and the process is running.
 
+### Upgrade
+
+```bash
+bunnify upgrade                  # pipx package (preferred)
+bunnify spotty-bunny upgrade     # rewrite plist + bounce launchd
+```
+
 `upgrade` rewrites the plist if `command -v spotty-bunny` moved (pipx venv
 path / shebang), re-verifies TCC for that interpreter, then reloads the agent
 with `launchctl bootout` and `launchctl bootstrap` so launchd picks up the new
@@ -135,9 +142,31 @@ Package updates stay on `bunnify upgrade` (`pipx upgrade bunnify`); run that
 first, then `bunnify spotty-bunny upgrade` so launchd does not keep a stale
 binary path.
 
+### Uninstall
+
+```bash
+bunnify spotty-bunny uninstall
+```
+
 `uninstall` boots the agent out, removes the plist, stops a leftover overlay
-process, and clears the pid file. It does not delete the application log.
-If the agent was never installed, it still succeeds.
+process, and clears the pid file. It does not delete the application log or
+your bookmarks. If the agent was never installed, it still succeeds.
+
+To stop the overlay **without** removing the LaunchAgent, right-click the bunny
+icon and choose **Quit Spotty Bunny**. That exits the process and boots the
+agent out so KeepAlive cannot immediately respawn it. The plist stays; the
+agent starts again at next login (`RunAtLoad`) until you `uninstall`.
+
+The same menu lists **Uninstall Spotty Bunny** (confirms, then removes the
+LaunchAgent) and, when a newer PyPI release is known, **Upgrade Spotty Bunny**
+(`pipx upgrade` plus a LaunchAgent refresh). Items are listed A–Z by title.
+
+Spotty Bunny checks PyPI at most once per day (cached as
+`pypi-latest.json` under the data directory). When this install is behind,
+the bunny icon shows a small up-arrow badge and About includes
+“Update available: …”.
+
+### Using the overlay
 
 Hold **one** Control, then press the **other** to show the search box. Esc
 (or the same chord again) hides it. Up/down walks the CLI REPL history file
@@ -151,8 +180,14 @@ for per-key tap debug). Launchd stdout/stderr under `~/Library/Logs/` are
 separate from that application log.
 
 The search box is centered on the **main display** (menu-bar monitor), with a
-small bunny icon to the right of the field. Click the icon for version, commit, and
-project links (domesti-bot-style about panel).
+small bunny icon to the right of the field. **Left-click** the icon for the
+About card: version, commit, license, Bunnify source, a hyperlink to your
+bookmarks file (`BUNNIFY_BOOKMARKS` or `~/.config/bunnify/bookmarks.json`), the
+GitHub repo when that file lives in a git checkout whose `origin` is GitHub,
+whether Spotty Bunny is using a **local** or **remote** server (with its
+URL from `config.env`), and an **Update available** line when PyPI is newer.
+An up-arrow badge on the bunny also marks an outdated install. **Right-click**
+the icon for **Quit**, **Uninstall**, and (when outdated) **Upgrade**.
 
 If the chord does nothing, run with `--verbose` and watch stderr (or the
 application log). Lines named `tap …` show whether key events arrive. If none

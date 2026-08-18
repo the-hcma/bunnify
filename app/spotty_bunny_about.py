@@ -37,7 +37,9 @@ from Cocoa import (
 )
 from Foundation import NSAttributedString, NSMakeRange, NSMutableAttributedString
 
+from app.spotty_bunny_about_info import load_about_runtime_info
 from app.spotty_bunny_hotkey import ESCAPE_KEYCODE
+from app.spotty_bunny_update import UpdateStatus, read_cached_update_status
 from app.version import get_build_info
 
 ABOUT_BORDER_WIDTH = 2.0
@@ -62,6 +64,7 @@ ABOUT_SUMMARY = (
     "(Tab completes, like the CLI), and press Return to open it in your browser. "
     "Esc hides the box."
 )
+ABOUT_WARN_RGB = (0.62, 0.28, 0.08)
 SPOTTY_BUNNY_REPO_URL = "https://github.com/the-hcma/bunnify"
 
 
@@ -116,19 +119,38 @@ def apply_spotty_chrome(
     layer.setBorderWidth_(ABOUT_BORDER_WIDTH)
 
 
-def build_about_panel() -> NSPanel:
+def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
     """Return a small floating panel with version and project links."""
     title_font = NSFont.boldSystemFontOfSize_(16.0)
     body_font = NSFont.systemFontOfSize_(13.0)
     package_version, commit = get_build_info()
+    runtime = load_about_runtime_info()
+    status = update if update is not None else read_cached_update_status()
     version_text = f"Version {package_version} · commit {commit}"
+    update_text = (
+        None
+        if not status.outdated or not status.latest
+        else f"Update available: {status.latest}"
+    )
     repo_text = "github.com/the-hcma/bunnify"
+    bookmarks_text = f"Bookmarks: {runtime.bookmarks_display}"
+    github_text = (
+        None if runtime.github_display is None else f"GitHub: {runtime.github_display}"
+    )
     inner_cap = ABOUT_PANEL_MAX_WIDTH - 2.0 * ABOUT_INSET
     needed_width = max(
-        _measure_text(ABOUT_COPYRIGHT, body_font, max_width=inner_cap)[0],
-        _measure_text(version_text, body_font, max_width=inner_cap)[0],
-        _measure_text(repo_text, body_font, max_width=inner_cap)[0],
         _measure_text("Spotty Bunny", title_font, max_width=inner_cap)[0],
+        _measure_text(ABOUT_COPYRIGHT, body_font, max_width=inner_cap)[0],
+        _measure_text(bookmarks_text, body_font, max_width=inner_cap)[0],
+        _measure_text(repo_text, body_font, max_width=inner_cap)[0],
+        _measure_text(runtime.server_display, body_font, max_width=inner_cap)[0],
+        _measure_text(version_text, body_font, max_width=inner_cap)[0],
+        0.0
+        if github_text is None
+        else _measure_text(github_text, body_font, max_width=inner_cap)[0],
+        0.0
+        if update_text is None
+        else _measure_text(update_text, body_font, max_width=inner_cap)[0],
     )
     width = min(
         ABOUT_PANEL_MAX_WIDTH,
@@ -142,6 +164,23 @@ def build_about_panel() -> NSPanel:
     summary_height = max(
         36.0,
         _measure_text(ABOUT_SUMMARY, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
+    )
+    bookmarks_height = max(
+        18.0,
+        _measure_text(bookmarks_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
+    )
+    github_height = (
+        0.0
+        if github_text is None
+        else max(
+            18.0,
+            _measure_text(github_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
+        )
+    )
+    server_height = max(
+        18.0,
+        _measure_text(runtime.server_display, body_font, max_width=inner)[1]
+        + ABOUT_CELL_PAD,
     )
     rows: list[tuple[float, Callable[[float, float], NSTextField]]] = [
         (
@@ -168,34 +207,89 @@ def build_about_panel() -> NSPanel:
                 color=_srgb_color(ABOUT_MUTED_RGB),
             ),
         ),
-        (
-            copy_height,
-            lambda y, h: _link_field(
-                NSMakeRect(ABOUT_INSET, y, inner, h),
-                ABOUT_COPYRIGHT,
-                ABOUT_GITHUB_HANDLE,
-                ABOUT_GITHUB_PROFILE_URL,
-            ),
-        ),
-        (
-            18.0,
-            lambda y, h: _link_field(
-                NSMakeRect(ABOUT_INSET, y, inner, h),
-                ABOUT_LICENSE,
-                ABOUT_LICENSE,
-                ABOUT_LICENSE_URL,
-            ),
-        ),
-        (
-            18.0,
-            lambda y, h: _link_field(
-                NSMakeRect(ABOUT_INSET, y, inner, h),
-                repo_text,
-                repo_text,
-                SPOTTY_BUNNY_REPO_URL,
-            ),
-        ),
     ]
+    if update_text is not None:
+        notice = update_text
+        rows.append(
+            (
+                18.0,
+                lambda y, h: _label(
+                    NSMakeRect(ABOUT_INSET, y, inner, h),
+                    notice,
+                    color=_srgb_color(ABOUT_WARN_RGB),
+                ),
+            )
+        )
+    rows.extend(
+        [
+            (
+                copy_height,
+                lambda y, h: _link_field(
+                    NSMakeRect(ABOUT_INSET, y, inner, h),
+                    ABOUT_COPYRIGHT,
+                    ABOUT_GITHUB_HANDLE,
+                    ABOUT_GITHUB_PROFILE_URL,
+                ),
+            ),
+            (
+                18.0,
+                lambda y, h: _link_field(
+                    NSMakeRect(ABOUT_INSET, y, inner, h),
+                    ABOUT_LICENSE,
+                    ABOUT_LICENSE,
+                    ABOUT_LICENSE_URL,
+                ),
+            ),
+            (
+                18.0,
+                lambda y, h: _link_field(
+                    NSMakeRect(ABOUT_INSET, y, inner, h),
+                    repo_text,
+                    repo_text,
+                    SPOTTY_BUNNY_REPO_URL,
+                ),
+            ),
+            (
+                bookmarks_height,
+                lambda y, h: _link_field(
+                    NSMakeRect(ABOUT_INSET, y, inner, h),
+                    bookmarks_text,
+                    runtime.bookmarks_display,
+                    runtime.bookmarks_uri,
+                ),
+            ),
+        ]
+    )
+    if (
+        github_text is not None
+        and runtime.github_display is not None
+        and runtime.github_url is not None
+    ):
+        github_label = github_text
+        github_link = runtime.github_display
+        github_href = runtime.github_url
+        rows.append(
+            (
+                github_height,
+                lambda y, h: _link_field(
+                    NSMakeRect(ABOUT_INSET, y, inner, h),
+                    github_label,
+                    github_link,
+                    github_href,
+                ),
+            )
+        )
+    rows.append(
+        (
+            server_height,
+            lambda y, h: _link_field(
+                NSMakeRect(ABOUT_INSET, y, inner, h),
+                runtime.server_display,
+                runtime.server_url,
+                runtime.server_url,
+            ),
+        )
+    )
     gap = 8.0
     height = ABOUT_INSET * 2.0 + sum(row_h for row_h, _ in rows) + gap * (len(rows) - 1)
 

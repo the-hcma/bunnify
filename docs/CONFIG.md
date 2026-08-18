@@ -15,6 +15,9 @@ to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
   `BUNNIFY_MODE`, `BUNNIFY_BASE_URL`, and `BUNNIFY_LOCAL_PORT`.
 - `run/` contains PID and selected-port files for the CLI-managed local server.
 
+Writable data (logs, SQLite, Spotty Bunny’s daily PyPI check cache
+`pypi-latest.json`) lives under `$XDG_DATA_HOME/bunnify` or `BUNNIFY_DATA_DIR`.
+
 These files are user data and are not tracked by Git.
 
 ## Setup

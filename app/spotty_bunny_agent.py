@@ -70,6 +70,21 @@ def agent_plist_path(*, home: Path | None = None) -> Path:
     return root / "Library" / "LaunchAgents" / AGENT_PLIST_NAME
 
 
+def bootout_loaded_agent(
+    *,
+    launchctl: LaunchctlFn | None = None,
+    uid: int | None = None,
+) -> bool:
+    """Unload the LaunchAgent when loaded so KeepAlive cannot respawn.
+
+    Returns True when a bootout was issued.
+    """
+    if not is_agent_loaded(launchctl=launchctl, uid=uid):
+        return False
+    _bootout_agent(launchctl=launchctl, uid=uid)
+    return True
+
+
 def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
     """Return the LaunchAgent plist for *program_arguments* and *home*."""
     args_xml = "\n".join(

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -60,6 +57,7 @@ from app.interactive import (
     repl_prompt_message,
 )
 from app.local_server import ensure_local_server, port_is_free, stop_local_server
+from app.pypi import pypi_latest_version as _pypi_latest_version
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
 from app.version import (
@@ -216,6 +214,14 @@ def format_onboarding_text() -> str:
             "   Guide: https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md",
             "",
             "4. Try it:  bunnify gh   (or address-bar keyword, e.g. b gh)",
+            "",
+            "5. macOS Spotty Bunny (optional search box):",
+            "     pipx install 'bunnify[macos]'   # if the extra is not installed",
+            "     bunnify spotty-bunny install    # login LaunchAgent",
+            "     bunnify spotty-bunny status",
+            "     bunnify upgrade && bunnify spotty-bunny upgrade",
+            "     bunnify spotty-bunny uninstall",
+            "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
             "",
             "Upgrade later (preferred):",
             "     bunnify upgrade   # shows from/to versions, then pipx upgrade",
@@ -699,26 +705,6 @@ def _pipx_bunnify_path() -> Path | None:
             except OSError:
                 return candidate
     return None
-
-
-def _pypi_latest_version() -> str | None:
-    """Return the latest bunnify version on PyPI, or None on failure."""
-    try:
-        with urllib.request.urlopen(
-            "https://pypi.org/pypi/bunnify/json",
-            timeout=8,
-        ) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (
-        OSError,
-        TimeoutError,
-        ValueError,
-        json.JSONDecodeError,
-        urllib.error.URLError,
-    ):
-        return None
-    version = payload.get("info", {}).get("version")
-    return version if isinstance(version, str) and version else None
 
 
 def _prompt_local_port(
@@ -1373,6 +1359,8 @@ def main(
       bunnify spotty-bunny
       bunnify spotty-bunny install
       bunnify spotty-bunny status
+      bunnify spotty-bunny upgrade
+      bunnify spotty-bunny uninstall
       ./scripts/spotty-bunny
       ./scripts/spotty-bunny --verbose
 

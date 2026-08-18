@@ -56,6 +56,9 @@ Summary of what it covers:
 3. **Chrome / Edge** — match `BUNNIFY_BASE_URL` from `config.env`  
    [CHROME_SETUP.md](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
 4. **Try it:** `bunnify gh` or address-bar keyword (e.g. `b gh`)
+5. **macOS Spotty Bunny** (optional) — `pipx install 'bunnify[macos]'` then
+   `bunnify spotty-bunny install`
+   ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
 
 ### Upgrade
 
@@ -136,12 +139,63 @@ Unknown keys exit non-zero in direct mode (no search-engine fallback).
 ## Features
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
-- **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`; `install` LaunchAgent)
+- **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`;
+  login LaunchAgent via `install` / `upgrade` / `uninstall`)
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
 - **Chrome / Edge** — OpenSearch at `/opensearch.xml`
   ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
 - **Parameters** — URLs with `#{name}` placeholders and optional defaults
 - **Validation** — JSON Schema on load; reserved keys `h` / `help`
+
+## Spotty Bunny (macOS)
+
+Optional Spotlight-style search box. Hold one Control and tap the other to
+type a shortcut. Needs the `macos` extra (PyObjC).
+
+### Install
+
+```bash
+pipx install 'bunnify[macos]'
+pipx ensurepath
+bunnify spotty-bunny install    # login LaunchAgent (TCC + KeepAlive)
+bunnify spotty-bunny status
+```
+
+`install` grants Accessibility and Input Monitoring to the **interpreter
+launchd will exec** (typically the pipx venv Python), writes
+`~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist`, and bootstraps
+it. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no subcommand) still
+runs in the **foreground** for debugging.
+
+### Upgrade
+
+```bash
+bunnify upgrade                 # pipx package
+bunnify spotty-bunny upgrade    # refresh the LaunchAgent binary path
+```
+
+Run `upgrade` after `bunnify upgrade` so launchd does not keep a stale
+`ProgramArguments` path.
+
+### Uninstall
+
+```bash
+bunnify spotty-bunny uninstall
+```
+
+That boots the agent out, removes the plist, and stops a leftover overlay
+process. Bookmarks and `config.env` are unchanged. Right-click the bunny icon
+for **Quit Spotty Bunny**, **Uninstall Spotty Bunny**, and (when a newer
+PyPI version is known) **Upgrade Spotty Bunny**. An up-arrow badge on the
+icon and an About line mark an outdated install (PyPI is checked at most
+once a day).
+
+Left-click the bunny for About: bookmarks file, GitHub repo when that file
+lives in a GitHub checkout, and whether the CLI is talking to a local or
+remote server (with its URL).
+
+Details:
+[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ## Server lifecycle
 
@@ -236,7 +290,7 @@ the checkout `.venv` (same entry points systemd uses on service hosts).
 | Doc | Audience |
 |-----|----------|
 | [CONFIG.md](https://github.com/the-hcma/bunnify/blob/main/docs/CONFIG.md) | XDG paths and environment variables |
-| [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md) | Local vs remote setup, ports, LaunchAgent |
+| [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md) | Local vs remote setup, ports, Spotty Bunny |
 | [SYSTEMD.md](https://github.com/the-hcma/bunnify/blob/main/docs/SYSTEMD.md) | Linux user service |
 | [CHROME_SETUP.md](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md) | Browser search engine |
 | [QUICK_REFERENCE.md](https://github.com/the-hcma/bunnify/blob/main/QUICK_REFERENCE.md) | Cheat sheet |
