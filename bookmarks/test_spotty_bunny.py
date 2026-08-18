@@ -25,6 +25,7 @@ from app.spotty_bunny_history import (
 from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
+    ESCAPE_KEYCODE,
     ChordTracker,
     apply_control_event,
     apply_hid_snapshot,
@@ -459,6 +460,10 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
             describe_key(0, control=True, shift=True),
             "CTRL-SHIFT-A",
         )
+
+    def test_describe_key_escape(self) -> None:
+        self.assertEqual(ESCAPE_KEYCODE, 53)
+        self.assertEqual(describe_key(ESCAPE_KEYCODE), "Escape")
 
     def test_describe_key_letter_a(self) -> None:
         self.assertEqual(describe_key(0), "A")
@@ -929,6 +934,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
         self.assertIn("gh, c, yt, docs", source)
+        self.assertIn("Tab is your friend :)", source)
 
     def test_primary_screen_uses_menu_bar_display(self) -> None:
         source = (
@@ -941,16 +947,43 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_about.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("Copyright © 2026 thehcma", source)
-        self.assertIn("Quick shortcut overlay for Bunnify", source)
+        self.assertIn("Copyright © 2026 Henrique Andrade (GitHub's thehcma)", source)
+        self.assertIn("https://github.com/thehcma", source)
+        self.assertIn("Search and open your Bunnify shortcuts", source)
+        self.assertNotIn("Quick shortcut overlay for Bunnify", source)
         self.assertIn("https://github.com/the-hcma/bunnify", source)
+        self.assertIn("https://github.com/the-hcma/bunnify/blob/main/LICENSE", source)
+        self.assertIn("ABOUT_PANEL_MAX_WIDTH", source)
+        self.assertIn("ABOUT_FILL_RGB", source)
+        self.assertIn("ABOUT_FRAME_RGB", source)
+        self.assertIn("ABOUT_LABEL_RGB", source)
+        self.assertIn("ABOUT_LINK_RGB", source)
+        self.assertIn("SpottyBunnyAboutPanel", source)
+        self.assertIn("cancelOperation_", source)
+        self.assertIn("performKeyEquivalent_", source)
+        self.assertIn("dismissWithEscape_", source)
+        self.assertIn("control_textView_doCommandBySelector_", source)
+        self.assertIn("setDelegate_(field)", source)
+        self.assertIn("apply_spotty_chrome", source)
+        self.assertIn("setUsesSingleLineMode_(False)", source)
+        self.assertIn("NSLineBreakByWordWrapping", source)
+        self.assertIn("pointingHandCursor", source)
+        self.assertIn("NSTrackingActiveAlways", source)
+        self.assertIn("_AboutLinkField", source)
 
     def test_search_field_is_centered_with_logo_on_right(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("NSTextAlignmentCenter", source)
+        self.assertIn("NSTextAlignmentLeft", source)
         self.assertIn("_CenteredFieldCell", source)
+        self.assertIn("FIELD_TEXT_INSET", source)
+        self.assertIn("editWithFrame_inView_editor_delegate_event_", source)
+        self.assertIn("selectWithFrame_inView_editor_delegate_start_length_", source)
+        self.assertIn("NSColor.blackColor()", source)
+        self.assertIn("setBezeled_(False)", source)
+        self.assertIn("NSFocusRingTypeNone", source)
+        self.assertIn("PANEL_INSET", source)
         self.assertIn("LOGO_LEFT = PANEL_WIDTH - FIELD_LEFT - LOGO_SIZE", source)
 
     def test_search_panel_can_become_key_for_typing(self) -> None:
@@ -960,6 +993,11 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("class SpottyBunnyPanel", source)
         self.assertIn("canBecomeKeyWindow", source)
         self.assertIn("SpottyBunnyPanel.alloc()", source)
+        self.assertIn("dismissWithEscape_", source)
+        self.assertIn("ESCAPE_KEYCODE", source)
+        self.assertIn("ESCAPE_DISMISS_WINDOW_S", source)
+        self.assertIn('{"cancel:", "cancelOperation:"}', source)
+        self.assertIn("tap Escape → dismiss", source)
 
     def test_search_panel_has_no_title_bar_label(self) -> None:
         source = (
@@ -978,10 +1016,20 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("resigning is self._about_panel", source)
-        self.assertIn("NSApp.keyWindow() is self._about_panel", source)
+        self.assertIn("if self._about_open:", source)
+        self.assertIn("def hideAbout_", source)
         self.assertIn("self._about_panel.setDelegate_(self)", source)
         self.assertIn("self._about_open", source)
+
+    def test_license_names_copyright_holder(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        license_text = (root / "LICENSE").read_text(encoding="utf-8")
+        self.assertIn(
+            "Copyright (c) 2026 Henrique Andrade (GitHub's thehcma)",
+            license_text,
+        )
+        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('name = "Henrique Andrade"', pyproject)
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):
@@ -1108,7 +1156,7 @@ class SpottyBunnyStatusTests(SimpleTestCase):
             "Connection refused. Is `./scripts/bunnify-server` running?"
         )
         self.assertEqual(line, SHORTCUTS_LOAD_FAILED)
-        self.assertIn("bunnify setup", line)
+        self.assertIn("`bunnify setup`", line)
 
     def test_empty_error_uses_shortcuts_load_copy(self) -> None:
         from app.spotty_bunny_status import (
@@ -1119,18 +1167,84 @@ class SpottyBunnyStatusTests(SimpleTestCase):
         self.assertEqual(format_spotty_bunny_status(""), SHORTCUTS_LOAD_FAILED)
 
     def test_unknown_shortcut_suggests_tab(self) -> None:
-        from app.spotty_bunny_status import format_spotty_bunny_status
+        from app.spotty_bunny_status import (
+            UNKNOWN_SHORTCUT_HINT,
+            format_spotty_bunny_status,
+        )
 
-        line = format_spotty_bunny_status("Unknown shortcut")
-        self.assertIn("Unknown shortcut", line)
-        self.assertIn("Tab", line)
+        self.assertEqual(
+            format_spotty_bunny_status("Unknown shortcut"),
+            UNKNOWN_SHORTCUT_HINT,
+        )
 
-    def test_status_band_is_taller_than_one_line(self) -> None:
+    def test_canned_status_lines_cover_known_errors(self) -> None:
+        from app.spotty_bunny_status import (
+            SHORTCUTS_LOAD_FAILED,
+            canned_spotty_bunny_status_lines,
+        )
+
+        lines = canned_spotty_bunny_status_lines()
+        self.assertIn(SHORTCUTS_LOAD_FAILED, lines)
+        self.assertGreaterEqual(len(lines), 3)
+
+    def test_status_commands_use_courier_markup(self) -> None:
+        from app.spotty_bunny_status import (
+            SHORTCUTS_LOAD_FAILED,
+            TIMEOUT_CONTACTING_SERVER,
+            status_text_runs,
+        )
+
+        self.assertIn(
+            ("bunnify setup", True),
+            status_text_runs(SHORTCUTS_LOAD_FAILED),
+        )
+        self.assertIn(
+            ("bunnify setup", True),
+            status_text_runs(TIMEOUT_CONTACTING_SERVER),
+        )
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("STATUS_HEIGHT = 40.0", source)
-        self.assertIn("NSLineBreakByWordWrapping", source)
+        self.assertIn('STATUS_COMMAND_FONT = "Courier"', source)
+
+    def test_status_wrap_prefers_punctuation(self) -> None:
+        from app.spotty_bunny_status import (
+            SHORTCUTS_LOAD_FAILED,
+            status_punctuation_chunks,
+            wrap_status_preferring_punctuation,
+        )
+
+        chunks = status_punctuation_chunks(SHORTCUTS_LOAD_FAILED)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(chunks[0].endswith("—"))
+
+        def fits(text: str) -> bool:
+            return len(text) <= len(chunks[0])
+
+        wrapped = wrap_status_preferring_punctuation(SHORTCUTS_LOAD_FAILED, fits=fits)
+        self.assertTrue(wrapped.split("\n", 1)[0].endswith("—"))
+        self.assertEqual(
+            wrap_status_preferring_punctuation(
+                SHORTCUTS_LOAD_FAILED, fits=lambda _text: True
+            ),
+            SHORTCUTS_LOAD_FAILED,
+        )
+
+    def test_status_layout_is_centered_and_sized_to_copy(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("STATUS_INSET", source)
+        self.assertIn("STATUS_ERROR_RGB", source)
+        self.assertNotIn("systemRedColor", source)
+        self.assertIn("wrap_status_preferring_punctuation", source)
+        self.assertIn("NSTextAlignmentCenter", source)
+        self.assertIn("_CenteredWrappingFieldCell", source)
+        self.assertIn("drawWithRect_options_", source)
+        self.assertIn("hideAbout_", source)
+        self.assertIn("apply_spotty_chrome", source)
+        self.assertIn("fill_rgb=PANEL_FILL_RGB", source)
+        self.assertIn("frame_rgb=PANEL_FRAME_RGB", source)
 
 
 class _FakeClock:

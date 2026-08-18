@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import logging
+import math
 import signal
 import sys
+import time
 
 import objc
 from Cocoa import (
@@ -19,25 +21,46 @@ from Cocoa import (
     NSEvent,
     NSEventTypeApplicationDefined,
     NSFloatingWindowLevel,
+    NSFocusRingTypeNone,
     NSFont,
+    NSFontAttributeName,
+    NSForegroundColorAttributeName,
     NSImageScaleProportionallyUpOrDown,
+    NSLayoutManager,
+    NSLineBreakByClipping,
     NSLineBreakByWordWrapping,
     NSMakeRect,
+    NSMakeSize,
+    NSMutableParagraphStyle,
     NSObject,
     NSPanel,
+    NSParagraphStyleAttributeName,
     NSScreen,
     NSScrollView,
+    NSStringDrawingUsesFontLeading,
+    NSStringDrawingUsesLineFragmentOrigin,
     NSTableColumn,
     NSTableView,
     NSTextAlignmentCenter,
+    NSTextAlignmentLeft,
     NSTextField,
     NSTextFieldCell,
+    NSView,
+    NSViewHeightSizable,
+    NSViewWidthSizable,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
-from Foundation import NSIndexSet, NSOperationQueue, NSThread
+from Foundation import (
+    NSAttributedString,
+    NSIndexSet,
+    NSMakeRange,
+    NSMutableAttributedString,
+    NSOperationQueue,
+    NSThread,
+)
 from PyObjCTools import MachSignals
 from Quartz import (
     CFMachPortCreateRunLoopSource,
@@ -71,7 +94,11 @@ from Quartz import (
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
 from app.config import resolve_base_url
-from app.spotty_bunny_about import build_about_panel, position_about_panel
+from app.spotty_bunny_about import (
+    apply_spotty_chrome,
+    build_about_panel,
+    position_about_panel,
+)
 from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
@@ -92,6 +119,7 @@ from app.spotty_bunny_hotkey import (
     CONTROL_RIGHT_KEYCODE,
     DEVICE_LEFT_CONTROL_MASK,
     DEVICE_RIGHT_CONTROL_MASK,
+    ESCAPE_KEYCODE,
     ChordTracker,
     apply_control_event,
     describe_key,
@@ -106,28 +134,44 @@ from app.spotty_bunny_quit import (
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
 from app.spotty_bunny_status import (
     SHORTCUTS_LOAD_FAILED,
+    canned_spotty_bunny_status_lines,
     format_spotty_bunny_status,
+    status_text_runs,
+    wrap_status_preferring_punctuation,
 )
 from app.version import get_build_info
 
-FIELD_HEIGHT = 40.0
-FIELD_LEFT = 16.0
-FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, yt, docs)"
-LOGO_GAP = 12.0
+ESCAPE_DISMISS_WINDOW_S = 0.2
+FIELD_CORNER_RADIUS = 8.0
+FIELD_HEIGHT = 56.0
+FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, yt, docs). Tab is your friend :)"
+FIELD_TEXT_INSET = 12.0
+LOGO_GAP = 8.0
 LOGO_SIZE = 40.0
-PANEL_HEIGHT = 80.0
+PANEL_CORNER_RADIUS = 10.0
+PANEL_FILL_RGB = (0.36, 0.55, 0.84)
+PANEL_FRAME_RGB = (0.10, 0.28, 0.56)
+PANEL_HEIGHT = 76.0
+PANEL_INSET = 10.0
 PANEL_WIDTH = 640.0
-STATUS_GAP = 8.0
-STATUS_HEIGHT = 40.0
+STATUS_COMMAND_FONT = "Courier"
+STATUS_ERROR_RGB = (1.0, 0.76, 0.52)
+STATUS_FONT_SIZE = 16.0
+STATUS_INSET = 8.0
 TABLE_HEIGHT = 140.0
+FIELD_LEFT = PANEL_INSET
 LOGO_LEFT = PANEL_WIDTH - FIELD_LEFT - LOGO_SIZE
 FIELD_WIDTH = LOGO_LEFT - FIELD_LEFT - LOGO_GAP
+STATUS_WRAP_WIDTH = PANEL_WIDTH - 2.0 * PANEL_INSET
 
 logger = logging.getLogger(__name__)
 
 
 class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
+
+    def controlTextDidBeginEditing_(self, _notification) -> None:
+        self._paint_search_editor()
 
     def controlTextDidChange_(self, _notification) -> None:
         if self._applying_completion:
@@ -158,15 +202,28 @@ class SpottyBunnyController(NSObject):
             if self.field is not None:
                 self.field.setStringValue_(history_text)
             return True
-        if name in {"cancelOperation:"}:
-            logger.info("field-editor command %s → hide", name)
-            self.hide()
+        if name in {"cancel:", "cancelOperation:"}:
+            self.dismissWithEscape_(None)
             return True
         if name == "insertNewline:":
             self._submit_query()
             return True
         logger.debug("field-editor command ignored: %s", name)
         return False
+
+    def dismissWithEscape_(self, _sender) -> None:
+        """Hide About first, then the overlay. Debounce tap + field-editor doubles."""
+        now = time.monotonic()
+        if now - self._escape_at < ESCAPE_DISMISS_WINDOW_S:
+            return
+        self._escape_at = now
+        if not self.visible:
+            return
+        if self._about_open:
+            self.hideAbout_(None)
+            return
+        logger.info("escape → hide")
+        self.hide()
 
     def hide(self) -> None:
         logger.info("hide panel (was visible=%s)", self.visible)
@@ -181,6 +238,15 @@ class SpottyBunnyController(NSObject):
         self._became_key = False
         self.visible = False
 
+    def hideAbout_(self, _sender) -> None:
+        """Dismiss the about card without hiding the search overlay."""
+        self._hide_about_panel()
+        if self.visible and self.panel is not None:
+            self.panel.makeKeyAndOrderFront_(None)
+            if self.field is not None:
+                self.panel.makeFirstResponder_(self.field)
+                self._paint_search_editor()
+
     def init(self):
         self = objc.super(SpottyBunnyController, self).init()
         if self is None:
@@ -194,6 +260,7 @@ class SpottyBunnyController(NSObject):
         self._completion_prefix = ""
         self._completion_rows: list[CompletionRow] = []
         self._completion_seq = 0
+        self._escape_at = 0.0
         self._history = HistoryNavigator()
         self._io = ThreadIo()
         self._resolve_seq = 0
@@ -239,6 +306,7 @@ class SpottyBunnyController(NSObject):
             self.panel.makeKeyAndOrderFront_(None)
         if self.panel is not None and self.field is not None:
             self.panel.makeFirstResponder_(self.field)
+            self._paint_search_editor()
         self._io.submit(self._load_completer, self._completer_loaded)
 
     def tableView_objectValueForTableColumn_row_(self, _table, column, row: int):
@@ -262,25 +330,20 @@ class SpottyBunnyController(NSObject):
     def windowDidBecomeKey_(self, _notification) -> None:
         logger.debug("windowDidBecomeKey")
         self._became_key = True
+        self._paint_search_editor()
 
     def windowDidResignKey_(self, notification) -> None:
         # Accessory + Terminal: resign fires before the panel ever becomes key.
         # Only dismiss after a successful key cycle (click-away / app switch).
+        # Keep the overlay up while About is open (link clicks activate the
+        # browser and would otherwise hide everything).
         logger.debug("windowDidResignKey became_key=%s", self._became_key)
-        resigning = notification.object()
-        if resigning is self._about_panel:
-            key = NSApp.keyWindow()
-            if key is self.panel:
-                return
-            self.hide()
+        if not self.visible:
             return
-        if self._became_key:
-            if (
-                self._about_panel is not None
-                and self._about_panel.isVisible()
-                and NSApp.keyWindow() is self._about_panel
-            ):
-                return
+        if self._about_open:
+            return
+        resigning = notification.object()
+        if resigning is self.panel and self._became_key:
             self.hide()
 
     def _build_panel(self) -> None:
@@ -291,7 +354,6 @@ class SpottyBunnyController(NSObject):
             NSBackingStoreBuffered,
             False,
         )
-        panel.setBackgroundColor_(NSColor.windowBackgroundColor())
         panel.setLevel_(NSFloatingWindowLevel)
         panel.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -301,10 +363,28 @@ class SpottyBunnyController(NSObject):
         panel.setHidesOnDeactivate_(False)
         panel.setBecomesKeyOnlyIfNeeded_(False)
         panel.setReleasedWhenClosed_(False)
+        panel.setOpaque_(False)
+        panel.setBackgroundColor_(NSColor.clearColor())
+        panel.setHasShadow_(True)
         panel.setDelegate_(self)
 
+        chrome = NSView.alloc().initWithFrame_(panel.contentView().bounds())
+        chrome.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        apply_spotty_chrome(
+            chrome,
+            corner_radius=PANEL_CORNER_RADIUS,
+            fill_rgb=PANEL_FILL_RGB,
+            frame_rgb=PANEL_FRAME_RGB,
+        )
+        panel.setContentView_(chrome)
+
         logo = NSButton.alloc().initWithFrame_(
-            NSMakeRect(LOGO_LEFT, 16.0, LOGO_SIZE, LOGO_SIZE)
+            NSMakeRect(
+                LOGO_LEFT,
+                PANEL_INSET + (FIELD_HEIGHT - LOGO_SIZE) / 2.0,
+                LOGO_SIZE,
+                LOGO_SIZE,
+            )
         )
         logo.setBezelStyle_(NSBezelStyleShadowlessSquare)
         logo.setBordered_(False)
@@ -315,28 +395,59 @@ class SpottyBunnyController(NSObject):
         panel.contentView().addSubview_(logo)
 
         field = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(FIELD_LEFT, 16.0, FIELD_WIDTH, FIELD_HEIGHT)
+            NSMakeRect(FIELD_LEFT, PANEL_INSET, FIELD_WIDTH, FIELD_HEIGHT)
         )
         cell = _CenteredFieldCell.alloc().initTextCell_("")
         cell.setEditable_(True)
         cell.setSelectable_(True)
         cell.setScrollable_(True)
         cell.setWraps_(False)
+        cell.setBezeled_(False)
+        cell.setBordered_(False)
+        cell.setDrawsBackground_(True)
+        cell.setBackgroundColor_(NSColor.blackColor())
+        cell.setTextColor_(NSColor.whiteColor())
+        cell.setAlignment_(NSTextAlignmentLeft)
         field.setCell_(cell)
         field.setEditable_(True)
         field.setSelectable_(True)
-        field.setBezeled_(True)
-        field.setAlignment_(NSTextAlignmentCenter)
+        field.setBezeled_(False)
+        field.setBordered_(False)
+        field.setFocusRingType_(NSFocusRingTypeNone)
+        field.setAlignment_(NSTextAlignmentLeft)
         field.setFont_(NSFont.systemFontOfSize_(20.0))
-        field.setPlaceholderString_(FIELD_PLACEHOLDER)
-        field.setBackgroundColor_(NSColor.textBackgroundColor())
+        placeholder_style = NSMutableParagraphStyle.alloc().init()
+        placeholder_style.setAlignment_(NSTextAlignmentLeft)
+        field.setPlaceholderAttributedString_(
+            NSAttributedString.alloc().initWithString_attributes_(
+                FIELD_PLACEHOLDER,
+                {
+                    NSFontAttributeName: NSFont.systemFontOfSize_(20.0),
+                    NSParagraphStyleAttributeName: placeholder_style,
+                    "NSColor": NSColor.colorWithWhite_alpha_(0.55, 1.0),
+                },
+            )
+        )
+        field.setDrawsBackground_(True)
+        field.setBackgroundColor_(NSColor.blackColor())
+        field.setTextColor_(NSColor.whiteColor())
+        field.setWantsLayer_(True)
+        field.layer().setCornerRadius_(FIELD_CORNER_RADIUS)
+        field.layer().setMasksToBounds_(True)
+        field.layer().setBackgroundColor_(NSColor.blackColor().CGColor())
         field.setDelegate_(self)
         field.setRefusesFirstResponder_(False)
         panel.contentView().addSubview_(field)
 
         status = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, STATUS_HEIGHT)
+            NSMakeRect(PANEL_INSET, PANEL_INSET, STATUS_WRAP_WIDTH, STATUS_FONT_SIZE)
         )
+        status_cell = _CenteredWrappingFieldCell.alloc().initTextCell_("")
+        status_cell.setEditable_(False)
+        status_cell.setSelectable_(False)
+        status_cell.setScrollable_(False)
+        status_cell.setWraps_(True)
+        status.setCell_(status_cell)
         status.setEditable_(False)
         status.setSelectable_(False)
         status.setBezeled_(False)
@@ -344,13 +455,18 @@ class SpottyBunnyController(NSObject):
         status.setHidden_(True)
         status.setUsesSingleLineMode_(False)
         status.setLineBreakMode_(NSLineBreakByWordWrapping)
-        status.cell().setWraps_(True)
-        status.setFont_(NSFont.systemFontOfSize_(13.0))
+        status.setAlignment_(NSTextAlignmentCenter)
+        status.setFont_(NSFont.systemFontOfSize_(STATUS_FONT_SIZE))
         status.setStringValue_("")
         panel.contentView().addSubview_(status)
 
         scroll = NSScrollView.alloc().initWithFrame_(
-            NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, TABLE_HEIGHT - 8.0)
+            NSMakeRect(
+                PANEL_INSET,
+                PANEL_INSET,
+                PANEL_WIDTH - 2.0 * PANEL_INSET,
+                TABLE_HEIGHT - 8.0,
+            )
         )
         scroll.setHasVerticalScroller_(True)
         scroll.setHidden_(True)
@@ -439,12 +555,13 @@ class SpottyBunnyController(NSObject):
             self._about_panel = build_about_panel()
             self._about_panel.setDelegate_(self)
         if self._about_open:
-            self._hide_about_panel()
+            self.hideAbout_(None)
             return
         if self.panel is not None:
             position_about_panel(self._about_panel, anchor_frame=self.panel.frame())
-        self._about_panel.orderFrontRegardless()
         self._about_open = True
+        self._about_panel.orderFrontRegardless()
+        self._about_panel.makeKeyAndOrderFront_(None)
 
     def _hide_completions(self) -> None:
         self._completion_seq += 1
@@ -459,19 +576,34 @@ class SpottyBunnyController(NSObject):
     ) -> None:
         status_band = self._status_band_height(status_message)
         table = TABLE_HEIGHT if table_visible else 0.0
-        origin_y = 16.0 + table + status_band
+        origin_y = PANEL_INSET + table + status_band
         if self.field is not None:
             self.field.setFrame_(
                 NSMakeRect(FIELD_LEFT, origin_y, FIELD_WIDTH, FIELD_HEIGHT)
             )
         if self.logo is not None:
-            self.logo.setFrame_(NSMakeRect(LOGO_LEFT, origin_y, LOGO_SIZE, LOGO_SIZE))
+            self.logo.setFrame_(
+                NSMakeRect(
+                    LOGO_LEFT,
+                    origin_y + (FIELD_HEIGHT - LOGO_SIZE) / 2.0,
+                    LOGO_SIZE,
+                    LOGO_SIZE,
+                )
+            )
         if self.status is not None:
             has_status = status_band > 0.0
             self.status.setHidden_(not has_status)
             if has_status:
+                if table_visible:
+                    origin_status = PANEL_INSET + table
+                    status_height = status_band
+                else:
+                    origin_status = 0.0
+                    status_height = origin_y
                 self.status.setFrame_(
-                    NSMakeRect(16.0, 16.0 + table, PANEL_WIDTH - 32.0, STATUS_HEIGHT)
+                    NSMakeRect(
+                        PANEL_INSET, origin_status, STATUS_WRAP_WIDTH, status_height
+                    )
                 )
 
     def _load_completer(self) -> object:
@@ -498,6 +630,25 @@ class SpottyBunnyController(NSObject):
         self.table.scrollRowToVisible_(idx)
         row = self._completion_rows[idx]
         self._set_field_text(apply_completion(self._completion_prefix, row))
+
+    def _paint_search_editor(self) -> None:
+        if self.field is None:
+            return
+        editor = self.field.currentEditor()
+        if editor is None:
+            return
+        inner = self.field.cell().drawingRectForBounds_(self.field.bounds())
+        editor.setFrame_(inner)
+        editor.setDrawsBackground_(False)
+        editor.setBackgroundColor_(NSColor.blackColor())
+        editor.setTextColor_(NSColor.whiteColor())
+        editor.setInsertionPointColor_(NSColor.whiteColor())
+        editor.setAlignment_(NSTextAlignmentLeft)
+        editor.setFont_(self.field.font())
+        editor.setTextContainerInset_(NSMakeSize(0.0, 0.0))
+        container = editor.textContainer()
+        if container is not None:
+            container.setLineFragmentPadding_(0.0)
 
     def _request_completions(self) -> None:
         if self._completer is None or self.field is None:
@@ -546,9 +697,12 @@ class SpottyBunnyController(NSObject):
     def _set_status(self, message: str) -> None:
         if self.status is None:
             return
-        self.status.setStringValue_(message)
-        color = NSColor.systemRedColor() if message else NSColor.secondaryLabelColor()
-        self.status.setTextColor_(color)
+        if message:
+            self.status.setAttributedStringValue_(
+                self._status_attributed(message, color=self._status_error_color())
+            )
+        else:
+            self.status.setStringValue_("")
         table_visible = self.scroll is not None and not self.scroll.isHidden()
         if self.panel is not None:
             frame = self.panel.frame()
@@ -575,7 +729,12 @@ class SpottyBunnyController(NSObject):
         self._layout_search_chrome(table_visible=visible)
         if visible:
             self.scroll.setFrame_(
-                NSMakeRect(16.0, 16.0, PANEL_WIDTH - 32.0, TABLE_HEIGHT - 8.0)
+                NSMakeRect(
+                    PANEL_INSET,
+                    PANEL_INSET,
+                    PANEL_WIDTH - 2.0 * PANEL_INSET,
+                    TABLE_HEIGHT - 8.0,
+                )
             )
         self._center_panel()
 
@@ -595,13 +754,84 @@ class SpottyBunnyController(NSObject):
             self.table.scrollRowToVisible_(0)
         self._set_table_visible(len(rows) > 1)
 
+    def _status_attributed(self, message: str, *, color):
+        """Build wrapping, centered status copy with Courier command spans."""
+        wrapped = wrap_status_preferring_punctuation(
+            message, fits=self._status_line_fits
+        )
+        return self._status_runs_attributed(wrapped, color=color)
+
     def _status_band_height(self, message: str | None = None) -> float:
         text = message
         if text is None and self.status is not None:
             text = str(self.status.stringValue())
         if not text:
             return 0.0
-        return STATUS_GAP + STATUS_HEIGHT
+        current = self._status_text_height(text)
+        canned = max(
+            (
+                self._status_text_height(line)
+                for line in canned_spotty_bunny_status_lines()
+            ),
+            default=current,
+        )
+        return 2.0 * STATUS_INSET + max(current, canned)
+
+    def _status_error_color(self):
+        red, green, blue = STATUS_ERROR_RGB
+        return NSColor.colorWithSRGBRed_green_blue_alpha_(red, green, blue, 1.0)
+
+    def _status_line_fits(self, text: str) -> bool:
+        attributed = self._status_runs_attributed(
+            text.replace("\n", " "),
+            color=self._status_error_color(),
+            wrap=False,
+        )
+        bounds = attributed.boundingRectWithSize_options_(
+            NSMakeSize(10000.0, 10000.0),
+            NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading,
+        )
+        return float(math.ceil(bounds.size.width)) <= STATUS_WRAP_WIDTH
+
+    def _status_runs_attributed(self, message: str, *, color, wrap: bool = True):
+        body = NSFont.systemFontOfSize_(STATUS_FONT_SIZE)
+        mono = NSFont.fontWithName_size_(STATUS_COMMAND_FONT, STATUS_FONT_SIZE)
+        if mono is None:
+            mono = NSFont.userFixedPitchFontOfSize_(STATUS_FONT_SIZE)
+        result = NSMutableAttributedString.alloc().init()
+        for text, is_command in status_text_runs(message):
+            chunk = NSAttributedString.alloc().initWithString_attributes_(
+                text,
+                {
+                    NSFontAttributeName: mono if is_command else body,
+                    NSForegroundColorAttributeName: color,
+                },
+            )
+            result.appendAttributedString_(chunk)
+        if result.length() == 0:
+            return result
+        paragraph = NSMutableParagraphStyle.alloc().init()
+        paragraph.setAlignment_(NSTextAlignmentCenter)
+        if wrap:
+            paragraph.setLineBreakMode_(NSLineBreakByWordWrapping)
+        else:
+            paragraph.setLineBreakMode_(NSLineBreakByClipping)
+        result.addAttribute_value_range_(
+            NSParagraphStyleAttributeName,
+            paragraph,
+            NSMakeRange(0, result.length()),
+        )
+        return result
+
+    def _status_text_height(self, message: str) -> float:
+        if not message:
+            return 0.0
+        attributed = self._status_attributed(message, color=self._status_error_color())
+        bounds = attributed.boundingRectWithSize_options_(
+            NSMakeSize(STATUS_WRAP_WIDTH, 10000.0),
+            NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading,
+        )
+        return float(math.ceil(bounds.size.height))
 
     def _submit_query(self) -> None:
         if self.field is None or self._resolving:
@@ -636,6 +866,23 @@ class SpottyBunnyPanel(NSPanel):
     def canBecomeKeyWindow(self) -> bool:
         return True
 
+    def cancelOperation_(self, sender) -> None:
+        delegate = self.delegate()
+        if delegate is not None:
+            delegate.dismissWithEscape_(sender)
+
+    def keyDown_(self, event) -> None:
+        if int(event.keyCode()) == ESCAPE_KEYCODE:
+            self.cancelOperation_(self)
+            return
+        objc.super(SpottyBunnyPanel, self).keyDown_(event)
+
+    def performKeyEquivalent_(self, event) -> bool:
+        if int(event.keyCode()) == ESCAPE_KEYCODE:
+            self.cancelOperation_(self)
+            return True
+        return bool(objc.super(SpottyBunnyPanel, self).performKeyEquivalent_(event))
+
 
 def _primary_screen():
     """Return the menu-bar display (screens[0]), not the keyboard-focus screen."""
@@ -665,20 +912,121 @@ def run_spotty_bunny_app() -> int:
 
 
 class _CenteredFieldCell(NSTextFieldCell):
-    """Center placeholder and typed text horizontally and vertically."""
+    """Pad the search field; left-align and vertically center hint and caret."""
+
+    def drawInteriorWithFrame_inView_(self, rect, view):
+        objc.super(_CenteredFieldCell, self).drawInteriorWithFrame_inView_(
+            self._vertically_centered_text_rect(rect),
+            view,
+        )
 
     def drawingRectForBounds_(self, rect):
-        drawn = objc.super(_CenteredFieldCell, self).drawingRectForBounds_(rect)
+        return self._vertically_centered_text_rect(rect)
+
+    def editWithFrame_inView_editor_delegate_event_(
+        self, rect, view, editor, delegate, event
+    ):
+        objc.super(
+            _CenteredFieldCell, self
+        ).editWithFrame_inView_editor_delegate_event_(
+            self._vertically_centered_text_rect(rect),
+            view,
+            editor,
+            delegate,
+            event,
+        )
+
+    def selectWithFrame_inView_editor_delegate_start_length_(
+        self, rect, view, editor, delegate, start, length
+    ):
+        objc.super(
+            _CenteredFieldCell, self
+        ).selectWithFrame_inView_editor_delegate_start_length_(
+            self._vertically_centered_text_rect(rect),
+            view,
+            editor,
+            delegate,
+            start,
+            length,
+        )
+
+    def titleRectForBounds_(self, rect):
+        return self._vertically_centered_text_rect(rect)
+
+    def _padded_rect(self, rect):
+        return NSMakeRect(
+            rect.origin.x + FIELD_TEXT_INSET,
+            rect.origin.y + FIELD_TEXT_INSET,
+            max(0.0, rect.size.width - 2.0 * FIELD_TEXT_INSET),
+            max(0.0, rect.size.height - 2.0 * FIELD_TEXT_INSET),
+        )
+
+    def _text_line_height(self) -> float:
         font = self.font()
         if font is None:
-            return drawn
-        text_height = float(font.boundingRectForFont().size.height)
-        if drawn.size.height <= text_height:
-            return drawn
-        inset = (drawn.size.height - text_height) / 2.0
-        drawn.origin.y += inset
-        drawn.size.height = text_height
-        return drawn
+            return 0.0
+        return float(NSLayoutManager.alloc().init().defaultLineHeightForFont_(font))
+
+    def _vertically_centered_text_rect(self, rect):
+        padded = self._padded_rect(rect)
+        text_height = self._text_line_height()
+        if text_height <= 0.0 or padded.size.height <= text_height:
+            return padded
+        inset = (padded.size.height - text_height) / 2.0
+        return NSMakeRect(
+            padded.origin.x,
+            padded.origin.y + inset,
+            padded.size.width,
+            text_height,
+        )
+
+
+class _CenteredWrappingFieldCell(NSTextFieldCell):
+    """Wrap status copy and center the text block vertically in the cell."""
+
+    def drawInteriorWithFrame_inView_(self, rect, view):
+        attributed = self.attributedStringValue()
+        if attributed is not None and int(attributed.length()) > 0:
+            attributed.drawWithRect_options_(
+                self._centered_title_rect(rect),
+                NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading,
+            )
+            return
+        objc.super(_CenteredWrappingFieldCell, self).drawInteriorWithFrame_inView_(
+            self._centered_title_rect(rect),
+            view,
+        )
+
+    def titleRectForBounds_(self, rect):
+        return self._centered_title_rect(
+            objc.super(_CenteredWrappingFieldCell, self).titleRectForBounds_(rect)
+        )
+
+    def _centered_title_rect(self, rect):
+        attributed = self.attributedStringValue()
+        if attributed is None or int(attributed.length()) == 0:
+            text = str(self.stringValue() or "")
+            if not text:
+                return rect
+            font = self.font() or NSFont.systemFontOfSize_(STATUS_FONT_SIZE)
+            attributed = NSAttributedString.alloc().initWithString_attributes_(
+                text,
+                {NSFontAttributeName: font},
+            )
+        bounds = attributed.boundingRectWithSize_options_(
+            NSMakeSize(rect.size.width, 10000.0),
+            NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading,
+        )
+        text_height = float(math.ceil(bounds.size.height))
+        if rect.size.height <= text_height:
+            return rect
+        inset = (rect.size.height - text_height) / 2.0
+        return NSMakeRect(
+            rect.origin.x,
+            rect.origin.y + inset,
+            rect.size.width,
+            text_height,
+        )
 
 
 def _control_key_down(keycode: int) -> bool:
@@ -738,6 +1086,11 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
         flag_left = bool(flags & DEVICE_LEFT_CONTROL_MASK)
         flag_right = bool(flags & DEVICE_RIGHT_CONTROL_MASK)
         key_name = _describe_event_key(keycode, flags)
+        if event_type == kCGEventKeyDown and keycode == ESCAPE_KEYCODE:
+            if controller.visible:
+                logger.info("tap Escape → dismiss")
+                _run_on_main(lambda: controller.dismissWithEscape_(None))
+            return event
         if event_type != kCGEventFlagsChanged:
             logger.debug(
                 "tap %s %s keycode=%s hid left=%s right=%s (ignored for chord)",

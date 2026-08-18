@@ -279,4 +279,5 @@ Maintainers:
 
 ## License
 
-MIT — see [LICENSE](https://github.com/the-hcma/bunnify/blob/main/LICENSE).
+MIT © 2026 Henrique Andrade (GitHub's thehcma) — see
+[LICENSE](https://github.com/the-hcma/bunnify/blob/main/LICENSE).
