@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from app.completion_spec import ParamCompleteSpec
+from app.completion_spec import ParamCompleteSpec, repo_arg_from_filled
 
 logger = logging.getLogger(__name__)
 
@@ -617,7 +617,15 @@ def _suggest_from_complete_spec(
             runner=runner,
         )
     if spec.kind == "github_pull_request":
-        repo_token = filled_args[-1] if filled_args else ""
+        repo_token = (
+            repo_arg_from_filled(
+                url_template=url_template,
+                filled_args=filled_args,
+                repo_param=spec.repo_param or "",
+            )
+            if spec.repo_param
+            else (filled_args[-1] if filled_args else "")
+        )
         full_repo = resolve_repo_for_pr(
             url_template=url_template,
             repo_arg=repo_token,
@@ -630,7 +638,15 @@ def _suggest_from_complete_spec(
             full_repo, prefix=prefix, token=token, opener=opener, runner=runner
         )
     if spec.kind == "github_issue":
-        repo_token = filled_args[-1] if filled_args else ""
+        repo_token = (
+            repo_arg_from_filled(
+                url_template=url_template,
+                filled_args=filled_args,
+                repo_param=spec.repo_param or "",
+            )
+            if spec.repo_param
+            else (filled_args[-1] if filled_args else "")
+        )
         full_repo = resolve_repo_for_pr(
             url_template=url_template,
             repo_arg=repo_token,

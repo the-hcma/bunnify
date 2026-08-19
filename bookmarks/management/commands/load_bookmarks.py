@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 from jsonschema import ValidationError, validate
 
 from app.completion_spec import parse_complete_map, validate_complete_map
@@ -14,6 +14,28 @@ from bookmarks.models import Bookmark
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
+
+
+def _complete_map_errors(
+    data: dict[str, Any],
+) -> list[str]:
+    """Validate every bookmark ``complete`` map before mutating the DB."""
+    messages: list[str] = []
+    for key, bookmark_data in data.items():
+        complete_raw = bookmark_data.get("complete")
+        complete = parse_complete_map(complete_raw)
+        if complete_raw is not None and complete is None:
+            messages.append(f'Invalid "complete" map for bookmark "{key}"')
+            continue
+        if complete:
+            url = bookmark_data.get("url", "")
+            if not isinstance(url, str):
+                url = ""
+            messages.extend(
+                f'bookmark "{key}": {message}'
+                for message in validate_complete_map(complete, url=url)
+            )
+    return messages
 
 
 class Command(BaseCommand):
@@ -103,7 +125,16 @@ class Command(BaseCommand):
                             f"Reserved keywords: {', '.join(reserved_keywords)}"
                         )
                     )
-                    return
+                    raise CommandError(
+                        f'Bookmark key "{key}" is reserved and cannot be used.'
+                    )
+
+            complete_errors = _complete_map_errors(data)
+            if complete_errors:
+                for message in complete_errors:
+                    logger.error("complete validation: %s", message)
+                    self.stdout.write(self.style.ERROR(f"Error: {message}"))
+                raise CommandError("Bookmark complete map validation failed")
 
             # Clear existing bookmarks
             existing_count = Bookmark.objects.count()
@@ -119,28 +150,6 @@ class Command(BaseCommand):
                 defaults = bookmark_data.get("defaults", {})
                 complete_raw = bookmark_data.get("complete")
                 complete = parse_complete_map(complete_raw)
-                if complete_raw is not None and complete is None:
-                    logger.error(
-                        "Invalid complete map for bookmark %r in %s",
-                        key,
-                        json_file_path,
-                    )
-                    self.stdout.write(
-                        self.style.ERROR(
-                            f'Error: Invalid "complete" map for bookmark "{key}"'
-                        )
-                    )
-                    return
-                if complete:
-                    errors = validate_complete_map(
-                        complete,
-                        url=bookmark_data["url"],
-                    )
-                    if errors:
-                        for message in errors:
-                            logger.error("complete validation for %r: %s", key, message)
-                            self.stdout.write(self.style.ERROR(f"Error: {message}"))
-                        return
 
                 Bookmark.objects.create(
                     key=key,
@@ -186,6 +195,8 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.ERROR(f"Error: Schema validation failed: {e.message}")
             )
+        except CommandError:
+            raise
         except Exception as e:
             logger.error(f"Unexpected error loading bookmarks: {e}", exc_info=True)
             self.stdout.write(self.style.ERROR(f"Error: {e}"))

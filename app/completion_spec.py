@@ -62,6 +62,27 @@ def parse_param_complete_spec(raw: Any) -> ParamCompleteSpec | None:
     return ParamCompleteSpec(kind=kind, org=org, repo_param=repo_param)
 
 
+def url_placeholders(url: str) -> list[str]:
+    """Ordered unique placeholder names from a URL template."""
+    return list(dict.fromkeys(_PLACEHOLDER_PATTERN.findall(url)))
+
+
+def repo_arg_from_filled(
+    *,
+    url_template: str,
+    filled_args: list[str],
+    repo_param: str,
+) -> str:
+    """Return the filled value for *repo_param* given prior placeholder args."""
+    try:
+        index = url_placeholders(url_template).index(repo_param)
+    except ValueError:
+        return ""
+    if index >= len(filled_args):
+        return ""
+    return filled_args[index].strip()
+
+
 def validate_complete_map(
     complete: dict[str, ParamCompleteSpec],
     *,

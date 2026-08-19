@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
 from app.client import parse_key_entry
 from app.completion_spec import (
     ParamCompleteSpec,
     parse_complete_map,
+    repo_arg_from_filled,
     validate_complete_map,
 )
 from app.github_complete import (
@@ -197,6 +198,86 @@ class CompletionSpecTests(SimpleTestCase):
             ),
         )
         self.assertEqual(values, ["324"])
+
+    def test_repo_arg_from_filled_uses_declared_repo_param_position(self) -> None:
+        url = "https://github.com/the-hcma/#{repo}/tree/#{branch}/pull/#{pr_number}"
+        self.assertEqual(
+            repo_arg_from_filled(
+                url_template=url,
+                filled_args=["bunnify", "main"],
+                repo_param="repo",
+            ),
+            "bunnify",
+        )
+
+    def test_suggest_param_values_pull_request_with_intervening_param(self) -> None:
+        clear_github_completion_cache()
+        url = "https://github.com/the-hcma/#{repo}/tree/#{branch}/pull/#{pr_number}"
+        complete = MappingProxyType(
+            {
+                "branch": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+                "pr_number": ParamCompleteSpec(
+                    kind="github_pull_request",
+                    repo_param="repo",
+                ),
+                "repo": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+            }
+        )
+        values = suggest_param_values(
+            param_name="pr_number",
+            url_template=url,
+            filled_args=["bunnify", "main"],
+            prefix="32",
+            complete=complete,
+            token="test-token",
+            opener=lambda _req, timeout=8.0: _FakeResponse(
+                [{"number": 328}, {"number": 42}]
+            ),
+        )
+        self.assertEqual(values, ["328"])
+
+
+class LoadBookmarksCompleteTests(TestCase):
+    def test_invalid_complete_map_preserves_existing_bookmarks(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        from bookmarks.models import Bookmark
+
+        Bookmark.objects.create(
+            key="keep",
+            description="Keep",
+            url="https://example.com",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bookmarks.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "good": {
+                            "description": "Good",
+                            "url": "https://github.com/#{repo}",
+                            "complete": {"repo": {"kind": "github_repo"}},
+                        },
+                        "bad": {
+                            "description": "Bad",
+                            "url": ("https://github.com/#{repo}/pull/#{pr_number}"),
+                            "complete": {
+                                "pr_number": {"kind": "github_pull_request"},
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(CommandError):
+                call_command("load_bookmarks", file=str(path))
+        self.assertEqual(Bookmark.objects.count(), 1)
+        self.assertTrue(Bookmark.objects.filter(key="keep").exists())
 
 
 class _FakeResponse:
