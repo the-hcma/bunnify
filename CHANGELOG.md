@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.7.0...bunnify-v0.7.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* Spotty Bunny pipx install flow, About layout, and shared logo ([#323](https://github.com/the-hcma/bunnify/issues/323)) ([68fb2ff](https://github.com/the-hcma/bunnify/commit/68fb2ff2769be8387e064c314a0c3af622abed2d))
+
 ## [0.7.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.6.1...bunnify-v0.7.0) (2026-08-18)
 
 
