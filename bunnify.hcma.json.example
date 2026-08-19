@@ -272,8 +272,8 @@
     "url": "https://app.navan.com"
   },
   "nm": {
-    "description": "YouTube Music New Release Mix",
-    "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_m_S_9S_9S_9S_9S_9S_9S_9S_9S_9S_9S"
+    "description": "YouTube Music New Releases (personalized New Release Mix is account-specific)",
+    "url": "https://music.youtube.com/new_releases"
   },
   "pr": {
     "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",

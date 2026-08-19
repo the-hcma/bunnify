@@ -311,6 +311,20 @@ class HcmaBookmarksExampleTests(SimpleTestCase):
             errors = validate_complete_map(complete, url=bookmark["url"])
             self.assertEqual(errors, [], msg=f"{key!r}: {errors}")
 
+    def test_hcma_example_urls_are_not_redacted_placeholders(self) -> None:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "bunnify.hcma.json.example"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for key, bookmark in data.items():
+            url = bookmark.get("url", "")
+            self.assertNotIn(
+                "_S_9S_9S",
+                url,
+                msg=f"{key!r} URL looks like a redacted playlist id: {url!r}",
+            )
+
 
 class _FakeResponse:
     def __init__(self, payload: object) -> None:
