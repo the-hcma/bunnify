@@ -1249,9 +1249,11 @@ class ConfigUnitTests(TestCase):
             self.assertIn("bun", payload)
             self.assertIn("gh", payload)
             self.assertIn("ih", payload)
+            self.assertIn("ihh", payload)
+            self.assertIn("gpr", payload)
+            self.assertIn("mqh", payload)
             self.assertIn("repoh", payload)
             self.assertIn("yt", payload)
-            self.assertNotIn("ihh", payload)
             self.assertTrue(
                 any("No bookmarks found" in message for message in messages)
             )
