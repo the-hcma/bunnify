@@ -32,6 +32,9 @@ AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
 LAUNCHD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+POST_INSTALL_HINT = (
+    f"{COMMAND_NAME}: hold one Control and press the other to test the overlay."
+)
 TCC_INSTRUCTIONS = f"""\
 {COMMAND_NAME}: Accessibility and Input Monitoring must be granted to the
 Python interpreter launchd will exec (the pipx/venv interpreter behind
@@ -120,7 +123,15 @@ def install_agent(
     if program_argv is None or binary is None:
         err(f"{COMMAND_NAME}: could not find the spotty-bunny binary on PATH.")
         return 1
-    interpreter = interpreter_for_program(Path(program_argv[0]))
+    prepared = _prepare_program_launch(
+        program_argv=program_argv,
+        binary=binary,
+        err=err,
+        plist=None,
+    )
+    if prepared is None:
+        return 1
+    program_argv, binary, interpreter = prepared
     status = _require_current_tcc(
         interpreter,
         err=err,
@@ -138,6 +149,8 @@ def install_agent(
         return 1
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: plist {plist}")
+    err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")
+    err(POST_INSTALL_HINT)
     return 0
 
 
@@ -158,6 +171,13 @@ def interpreter_for_program(program: Path) -> Path:
     if pipx_exec:
         return Path(pipx_exec.group("python"))
 
+    shell_exec = re.search(
+        r"exec\s+(?:\"|\')?(?P<python>[^\"'\n]+?/bin/python(?:3(?:\.\d+)?)?)",
+        raw,
+    )
+    if shell_exec:
+        return Path(shell_exec.group("python"))
+
     first_line = raw.splitlines()[:1]
     if not first_line or not first_line[0].startswith("#!"):
         return program
@@ -174,6 +194,14 @@ def interpreter_for_program(program: Path) -> Path:
             return Path(parts[1])
         return Path(resolved)
     return executable
+
+
+def interpreter_realpath(interpreter: Path) -> Path:
+    """Return the canonical interpreter path for TCC display and comparisons."""
+    try:
+        return Path(os.path.realpath(interpreter))
+    except OSError:
+        return interpreter
 
 
 def is_agent_installed(*, home: Path | None = None) -> bool:
@@ -306,6 +334,7 @@ def status_agent(
         pid_text = _pid_text(pid_dir=pid_dir)
     installed = plist.is_file()
     interpreter = interpreter_for_program(binary) if binary is not None else None
+    binary_ok = binary is not None and _program_launch_target_ok(Path(binary))
     tcc = _probe_tcc_for_status(
         interpreter,
         err=err,
@@ -319,7 +348,16 @@ def status_agent(
         out("launchd: not installed")
     else:
         out(f"launchd: {'loaded' if loaded else 'not loaded'}")
-    out(f"binary: {binary if binary is not None else 'none'}")
+    if binary is None:
+        out("binary: none")
+    elif binary_ok:
+        out(f"binary: {binary}")
+    else:
+        out(f"binary: {binary} (missing or not executable)")
+    if interpreter is None:
+        out("interpreter: none")
+    else:
+        out(f"interpreter: {interpreter_realpath(interpreter)}")
     out(f"application_log: {app_log}")
     out(f'follow_logs: tail --follow=name --retry "{app_log}"')
     out(f'follow_logs_alt: tail -f "{app_log}"')
@@ -328,7 +366,8 @@ def status_agent(
     out(f"version: {build_version()}")
     out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
     out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
-    return 0 if installed and loaded and running else 1
+    healthy = installed and loaded and running and binary_ok
+    return 0 if healthy else 1
 
 
 def uninstall_agent(
@@ -388,7 +427,15 @@ def upgrade_agent(
     if program_argv is None or binary is None:
         err(f"{COMMAND_NAME}: could not find the spotty-bunny binary on PATH.")
         return 1
-    interpreter = interpreter_for_program(Path(program_argv[0]))
+    prepared = _prepare_program_launch(
+        program_argv=program_argv,
+        binary=binary,
+        err=err,
+        plist=plist,
+    )
+    if prepared is None:
+        return 1
+    program_argv, binary, interpreter = prepared
     status = _require_current_tcc(
         interpreter,
         err=err,
@@ -407,6 +454,8 @@ def upgrade_agent(
             return 1
     err(f"{COMMAND_NAME}: refreshed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: binary {binary}")
+    err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")
+    err(POST_INSTALL_HINT)
     return 0
 
 
@@ -476,6 +525,79 @@ def _pid_text(*, pid_dir: Path | None) -> str:
     if runtime is None:
         return "none"
     return str(runtime[0])
+
+
+def _plist_program_arguments(plist: Path) -> list[str] | None:
+    if not plist.is_file():
+        return None
+    try:
+        text = plist.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    marker = "<key>ProgramArguments</key>"
+    start = text.find(marker)
+    if start < 0:
+        return None
+    chunk = text[start:]
+    array_start = chunk.find("<array>")
+    array_end = chunk.find("</array>")
+    if array_start < 0 or array_end < 0 or array_end <= array_start:
+        return None
+    body = chunk[array_start + len("<array>") : array_end]
+    args: list[str] = []
+    while True:
+        open_tag = body.find("<string>")
+        if open_tag < 0:
+            break
+        close_tag = body.find("</string>", open_tag)
+        if close_tag < 0:
+            break
+        args.append(body[open_tag + len("<string>") : close_tag])
+        body = body[close_tag + len("</string>") :]
+    return args or None
+
+
+def _prepare_program_launch(
+    *,
+    program_argv: list[str],
+    binary: Path,
+    err: Callable[[str], None],
+    plist: Path | None,
+) -> tuple[list[str], Path, Path] | None:
+    launch_binary = Path(program_argv[0])
+    if not _program_launch_target_ok(launch_binary):
+        err(
+            f"{COMMAND_NAME}: binary missing or not executable: "
+            f"{launch_binary.expanduser()}"
+        )
+        return None
+    interpreter = interpreter_for_program(launch_binary)
+    if plist is not None and plist.is_file():
+        old_argv = _plist_program_arguments(plist)
+        if old_argv:
+            old_interp = interpreter_realpath(
+                interpreter_for_program(Path(old_argv[0]))
+            )
+            new_interp = interpreter_realpath(interpreter)
+            if old_interp != new_interp:
+                err(
+                    f"{COMMAND_NAME}: Python interpreter changed "
+                    f"({old_interp} → {new_interp})."
+                )
+                err(
+                    f"{COMMAND_NAME}: re-grant Accessibility and Input Monitoring "
+                    f"to {new_interp} in System Settings → Privacy & Security, "
+                    f"then re-run: {COMMAND_NAME} upgrade"
+                )
+    return program_argv, binary, interpreter
+
+
+def _program_launch_target_ok(path: Path) -> bool:
+    try:
+        resolved = path.expanduser().resolve(strict=False)
+    except OSError:
+        return False
+    return resolved.is_file() and os.access(resolved, os.X_OK)
 
 
 def _plist_string(text: str, key: str) -> str | None:

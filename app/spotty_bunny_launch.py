@@ -146,6 +146,9 @@ def read_spotty_bunny_runtime(
 
 def spotty_bunny_command() -> list[str]:
     """Return the argv used to launch Spotty Bunny."""
+    local = Path.home() / ".local" / "bin" / "spotty-bunny"
+    if local.is_file():
+        return [str(local)]
     binary = shutil.which("spotty-bunny")
     if binary:
         return [binary]
