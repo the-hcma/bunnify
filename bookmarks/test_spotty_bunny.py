@@ -857,6 +857,38 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 Path("/opt/pipx/venvs/bunnify/bin/python"),
             )
 
+    def test_interpreter_for_program_expands_home_in_exec_line(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                'exec "$HOME/.local/share/uv/python/cpython-3.14/bin/python" '
+                '-m app.spotty_bunny_cli "$@"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path.home() / ".local/share/uv/python/cpython-3.14/bin/python",
+            )
+
+    def test_interpreter_for_program_ignores_commented_exec_line(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                "# old: exec /usr/local/bin/python2.7\n"
+                'exec "/opt/venvs/bunnify/bin/python" -m app.spotty_bunny_cli "$@"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path("/opt/venvs/bunnify/bin/python"),
+            )
+
     def test_install_rejects_missing_binary(self) -> None:
         from app.spotty_bunny_agent import install_agent
 
@@ -931,6 +963,40 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("version: " + build_version(), text)
             self.assertIn("accessibility: yes", text)
             self.assertIn("input_monitoring: no", text)
+
+    def test_status_fails_when_plist_binary_missing(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            stale = home / "removed-spotty-bunny"
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[str(stale)],
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "app.spotty_bunny_agent.spotty_bunny_is_running",
+                return_value=True,
+            ):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=lambda _p: TccStatus(True, True),
+                )
+            text = stdout.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("missing or not executable", text)
+            self.assertIn(str(stale), text)
 
     def test_uninstall_bootout_removes_plist_and_pid(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, uninstall_agent
@@ -2055,6 +2121,50 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                     )
                 )
             self.assertFalse((pid_dir / SPOTTY_BUNNY_PID_FILE).exists())
+
+    def test_spotty_bunny_command_prefers_executable_local_bin(self) -> None:
+        from app.spotty_bunny_launch import spotty_bunny_command
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local_bin = home / ".local" / "bin"
+            local_bin.mkdir(parents=True)
+            preferred = local_bin / "spotty-bunny"
+            _write_executable(preferred)
+            path_bin = home / "path-bin"
+            path_bin.mkdir()
+            other = path_bin / "spotty-bunny"
+            _write_executable(other)
+            with (
+                patch("app.spotty_bunny_launch.Path.home", return_value=home),
+                patch(
+                    "app.spotty_bunny_launch.shutil.which",
+                    return_value=str(other),
+                ),
+            ):
+                self.assertEqual(spotty_bunny_command(), [str(preferred)])
+
+    def test_spotty_bunny_command_skips_non_executable_local_bin(self) -> None:
+        from app.spotty_bunny_launch import spotty_bunny_command
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local_bin = home / ".local" / "bin"
+            local_bin.mkdir(parents=True)
+            stale = local_bin / "spotty-bunny"
+            stale.write_text("stale wrapper\n", encoding="utf-8")
+            path_bin = home / "path-bin"
+            path_bin.mkdir()
+            other = path_bin / "spotty-bunny"
+            _write_executable(other)
+            with (
+                patch("app.spotty_bunny_launch.Path.home", return_value=home),
+                patch(
+                    "app.spotty_bunny_launch.shutil.which",
+                    return_value=str(other),
+                ),
+            ):
+                self.assertEqual(spotty_bunny_command(), [str(other)])
 
     def test_spotty_bunny_is_running_clears_stale_pid(self) -> None:
         from app.spotty_bunny_launch import (

@@ -171,12 +171,9 @@ def interpreter_for_program(program: Path) -> Path:
     if pipx_exec:
         return Path(pipx_exec.group("python"))
 
-    shell_exec = re.search(
-        r"exec\s+(?:\"|\')?(?P<python>[^\"'\n]+?/bin/python(?:3(?:\.\d+)?)?)",
-        raw,
-    )
-    if shell_exec:
-        return Path(shell_exec.group("python"))
+    shell_exec = _shell_exec_python_from_wrapper(raw)
+    if shell_exec is not None:
+        return shell_exec
 
     first_line = raw.splitlines()[:1]
     if not first_line or not first_line[0].startswith("#!"):
@@ -326,13 +323,19 @@ def status_agent(
         return 1
     root = home if home is not None else Path.home()
     plist = agent_plist_path(home=root)
-    binary = program if program is not None else spotty_bunny_program()
-    loaded = is_agent_loaded(launchctl=launchctl) if plist.is_file() else False
+    installed = plist.is_file()
+    if program is not None:
+        binary = program
+    elif installed:
+        plist_argv = _plist_program_arguments(plist)
+        binary = Path(plist_argv[0]) if plist_argv else spotty_bunny_program()
+    else:
+        binary = spotty_bunny_program()
+    loaded = is_agent_loaded(launchctl=launchctl) if installed else False
     running = spotty_bunny_is_running(pid_dir=pid_dir)
     pid_text = "none"
     if running:
         pid_text = _pid_text(pid_dir=pid_dir)
-    installed = plist.is_file()
     interpreter = interpreter_for_program(binary) if binary is not None else None
     binary_ok = binary is not None and _program_launch_target_ok(Path(binary))
     tcc = _probe_tcc_for_status(
@@ -721,6 +724,24 @@ def _probe_tcc_for_status(
         return TccStatus(False, False)
     except OSError, subprocess.SubprocessError, ValueError:
         return TccStatus(False, False)
+
+
+def _shell_exec_python_from_wrapper(raw: str) -> Path | None:
+    """Return the python path from a bash ``exec`` line, ignoring comments."""
+    pattern = re.compile(
+        r"^exec\s+(?:\"|\')?(?P<python>[^\"'\n]+?/bin/python(?:3(?:\.\d+)?)?)",
+    )
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = pattern.match(stripped)
+        if match is None:
+            continue
+        token = match.group("python").strip("\"'")
+        expanded = token.replace("$HOME", str(Path.home()))
+        return Path(expanded).expanduser()
+    return None
 
 
 def _write_plist(plist: Path, *, home: Path, program_arguments: Sequence[str]) -> None:
