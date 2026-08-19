@@ -18,6 +18,9 @@ from app.config import (
 
 ABOUT_LICENSE = "MIT License"
 ABOUT_LICENSE_URL = "https://github.com/the-hcma/bunnify/blob/main/LICENSE"
+PYPI_PROJECT_URL = "https://pypi.org/project/bunnify"
+SPOTTY_BUNNY_REPO_DISPLAY = "github.com/the-hcma/bunnify"
+SPOTTY_BUNNY_REPO_URL = "https://github.com/the-hcma/bunnify"
 
 
 @dataclass(frozen=True)
@@ -38,12 +41,14 @@ OriginUrlFor = Callable[[Path], str | None]
 def about_details_text_and_links(
     runtime: AboutRuntimeInfo,
 ) -> tuple[str, tuple[tuple[str, str], ...]]:
-    """Return one multi-line block for license, bookmarks, GitHub, and server."""
+    """Return one multi-line block for repository through server links."""
     lines = [
+        f"Repository: {SPOTTY_BUNNY_REPO_DISPLAY}",
         f"License: {ABOUT_LICENSE}",
         f"Bookmarks: {runtime.bookmarks_display}",
     ]
     links: list[tuple[str, str]] = [
+        (SPOTTY_BUNNY_REPO_DISPLAY, SPOTTY_BUNNY_REPO_URL),
         (ABOUT_LICENSE, ABOUT_LICENSE_URL),
         (runtime.bookmarks_display, runtime.bookmarks_uri),
     ]
@@ -69,6 +74,20 @@ def about_link_spans(
         spans.append((start, len(link_text), url))
         search_from = start + len(link_text)
     return tuple(spans)
+
+
+def about_version_text_and_links(
+    package_version: str,
+    commit: str,
+) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Return the version line with PyPI and GitHub commit hyperlinks."""
+    text = f"Version {package_version} · commit {commit}"
+    links: list[tuple[str, str]] = [
+        (package_version, f"{PYPI_PROJECT_URL}/{package_version}/"),
+    ]
+    if commit != "unknown":
+        links.append((commit, f"{SPOTTY_BUNNY_REPO_URL}/commit/{commit}"))
+    return text, tuple(links)
 
 
 def display_user_path(path: Path) -> str:
