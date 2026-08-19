@@ -427,17 +427,26 @@ def list_github_repos(
     if cached is None:
         per_page = min(max(limit, 1), 100)
         if org:
+            repo_query = {
+                "per_page": str(per_page),
+                "type": "all",
+                "sort": "full_name",
+            }
             payload = _github_get_json(
                 f"/orgs/{urllib.parse.quote(org)}/repos",
-                query={
-                    "per_page": str(per_page),
-                    "type": "all",
-                    "sort": "full_name",
-                },
+                query=repo_query,
                 token=token,
                 opener=opener,
                 runner=runner,
             )
+            if payload is None:
+                payload = _github_get_json(
+                    f"/users/{urllib.parse.quote(org)}/repos",
+                    query=repo_query,
+                    token=token,
+                    opener=opener,
+                    runner=runner,
+                )
             if payload is None:
                 return []
             names: list[str] = []

@@ -3132,6 +3132,46 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertEqual(names, ["bunnify"])
         self.assertTrue(any("/orgs/the-hcma/repos" in url for url in seen))
 
+    def test_list_github_repos_falls_back_to_user_repos(self) -> None:
+        import urllib.error
+
+        from app.github_complete import clear_github_completion_cache, list_github_repos
+
+        clear_github_completion_cache()
+        seen: list[str] = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return b'[{"name":"bunnify"}]'
+
+        def opener(request, timeout=0):  # noqa: ARG001
+            seen.append(request.full_url)
+            if "/orgs/thehcma/repos" in request.full_url:
+                raise urllib.error.HTTPError(
+                    request.full_url,
+                    404,
+                    "Not Found",
+                    hdrs=None,
+                    fp=None,
+                )
+            return FakeResponse()
+
+        names = list_github_repos(
+            org="thehcma",
+            prefix="bun",
+            token="test-token",
+            opener=opener,
+        )
+        self.assertEqual(names, ["bunnify"])
+        self.assertTrue(any("/orgs/thehcma/repos" in url for url in seen))
+        self.assertTrue(any("/users/thehcma/repos" in url for url in seen))
+
     def test_filter_completion_names_substring_and_rank(self) -> None:
         from app.github_complete import filter_completion_names
 
