@@ -2010,7 +2010,8 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("Local server", info_source)
         self.assertIn("Remote server", info_source)
-        self.assertIn("https://github.com/the-hcma/bunnify/blob/main/LICENSE", info_source)
+        license_url = "https://github.com/the-hcma/bunnify/blob/main/LICENSE"
+        self.assertIn(license_url, info_source)
         self.assertIn("Bookmarks:", info_source)
         self.assertIn("GitHub:", info_source)
         self.assertIn("License:", info_source)
