@@ -134,12 +134,19 @@ grants. A process that started before TCC was granted may not receive Control
 chord events until it is restarted.
 
 `status` prints running/pid, whether launchd has loaded the agent, the binary
-path, the application log
+path, the **Python interpreter** launchd will exec (real path for TCC lookups),
+the application log
 (`~/.local/share/bunnify/spotty-bunny.log` or `BUNNIFY_SPOTTY_BUNNY_LOG_FILE` /
 `$BUNNIFY_DATA_DIR`), a suggested log-follow command
 (`tail --follow=name --retry "<application_log>"`), launchd stdout/stderr paths
 from the plist, version, and Accessibility / Input Monitoring yes/no. Exit `0`
-only when the plist exists, the agent is loaded, and the process is running.
+only when the plist exists, the agent is loaded, the process is running, and
+the plist binary path still exists and is executable.
+
+`install` / `upgrade` prefer `~/.local/bin/spotty-bunny` when present (stable
+operator wrapper), validate that the plist target exists before bootstrap, warn
+when the interpreter identity changes (for example pipx → local clone), and
+remind you to test the Control chord after a successful reload.
 
 ### Upgrade
 
@@ -148,10 +155,14 @@ bunnify upgrade                  # pipx package (preferred)
 bunnify spotty-bunny upgrade     # rewrite plist + bounce launchd
 ```
 
-`upgrade` rewrites the plist if `command -v spotty-bunny` moved (pipx venv
-path / shebang), re-verifies TCC for that interpreter, then reloads the agent
-with `launchctl bootout` and `launchctl bootstrap` so launchd picks up the new
-ProgramArguments.
+`upgrade` rewrites the plist when `spotty-bunny` moved (pipx uninstall, venv
+path / shebang, or `~/.local/bin` wrapper), re-verifies TCC for the new
+interpreter, warns when the interpreter real path changed, then reloads the
+agent with `launchctl bootout` and `launchctl bootstrap` so launchd picks up the
+new ProgramArguments.
+After moving off pipx or changing Python builds, re-grant Accessibility and
+Input Monitoring to the interpreter shown by `bunnify spotty-bunny status`,
+then run `bunnify spotty-bunny upgrade`.
 Package updates stay on `bunnify upgrade` (`pipx upgrade bunnify`); run that
 first, then `bunnify spotty-bunny upgrade` so launchd does not keep a stale
 binary path.

@@ -76,6 +76,7 @@ from Quartz import (
     CGEventSourceKeyState,
     CGEventTapCreate,
     CGEventTapEnable,
+    CGRequestListenEventAccess,
     kCFRunLoopCommonModes,
     kCGEventFlagMaskAlternate,
     kCGEventFlagMaskCommand,
@@ -1319,9 +1320,10 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
                 controller.chord.held_left,
                 controller.chord.held_right,
             )
-            controller.toggle()
+            _run_on_main(lambda: controller.toggle())
         return event
 
+    CGRequestListenEventAccess()
     tap = CGEventTapCreate(
         kCGSessionEventTap,
         kCGHeadInsertEventTap,
