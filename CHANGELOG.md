@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.7.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.6.1...bunnify-v0.7.0) (2026-08-18)
+
+
+### Features
+
+* add macOS dual-Control no-op overlay ([#308](https://github.com/the-hcma/bunnify/issues/308)) ([b8c6cb3](https://github.com/the-hcma/bunnify/commit/b8c6cb33f2a9c02f1dacd6d55a7e6225af52e75c))
+* install Spotty Bunny as a login LaunchAgent ([#320](https://github.com/the-hcma/bunnify/issues/320)) ([b7fe2b9](https://github.com/the-hcma/bunnify/commit/b7fe2b904adf182b6d4054bfeae2b7f34f82db61))
+* polish Spotty Bunny UI and REPL auto-start ([#316](https://github.com/the-hcma/bunnify/issues/316)) ([753cedf](https://github.com/the-hcma/bunnify/commit/753cedf4d34086beb2cf661af02443fbf290b675))
+* resolve Spotty Bunny Enter and open URLs ([#306](https://github.com/the-hcma/bunnify/issues/306)) ([#315](https://github.com/the-hcma/bunnify/issues/315)) ([18205be](https://github.com/the-hcma/bunnify/commit/18205be6b660353548f3240dafc9f15596d780e9))
+* reuse Spotty Bunny and server, and add Install to the logo menu ([#322](https://github.com/the-hcma/bunnify/issues/322)) ([25ea51c](https://github.com/the-hcma/bunnify/commit/25ea51c1112737a02ed58be40c45866ff3d0a373))
+* share CLI REPL history with Spotty Bunny ([#304](https://github.com/the-hcma/bunnify/issues/304)) ([#311](https://github.com/the-hcma/bunnify/issues/311)) ([bfd3cfc](https://github.com/the-hcma/bunnify/commit/bfd3cfc95890ecb3b2903f2d7259bd2f3bf7648a))
+* Spotty Bunny about links, logo menu, and update check ([#321](https://github.com/the-hcma/bunnify/issues/321)) ([349e57c](https://github.com/the-hcma/bunnify/commit/349e57cf59ca52637380cf00d27ba837ac3a748e))
+* Tab-complete Spotty Bunny with CLI completers ([#305](https://github.com/the-hcma/bunnify/issues/305)) ([#312](https://github.com/the-hcma/bunnify/issues/312)) ([512a1f4](https://github.com/the-hcma/bunnify/commit/512a1f47ece4dbe636d6ffe6ef9eb0aa11c643ac))
+
+
+### Bug Fixes
+
+* **deps:** batch updates including CVE fixes ([#318](https://github.com/the-hcma/bunnify/issues/318)) ([26b5e4b](https://github.com/the-hcma/bunnify/commit/26b5e4b24cabfb51b9367f028a5ec8bfec95467d))
+* restore Spotty Bunny typing, Esc dismiss, and overlay chrome ([#319](https://github.com/the-hcma/bunnify/issues/319)) ([98a4ef1](https://github.com/the-hcma/bunnify/commit/98a4ef1328fa6c14d85ac081f934b76e4f4ab6d6))
+* Spotty Bunny Ctrl-C, dual-Control chord, logging, and rename ([#310](https://github.com/the-hcma/bunnify/issues/310)) ([5625205](https://github.com/the-hcma/bunnify/commit/56252053ebdc44efee462bd652c11ec7221a12cb))
+* Spotty Bunny primary display, logo, and about panel ([#317](https://github.com/the-hcma/bunnify/issues/317)) ([d6effe4](https://github.com/the-hcma/bunnify/commit/d6effe48790bf8986f8cb889ccaacbdf51401e27))
+
 ## [0.6.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.6.0...bunnify-v0.6.1) (2026-08-13)
 
 
