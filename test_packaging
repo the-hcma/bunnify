@@ -53,6 +53,21 @@ if [[ ! -f "$wheel_path" ]]; then
     exit 1
 fi
 
+echo "📦 Verifying wheel bundles bunnify.json.example..."
+uv run python - "$repo_root/bunnify.json.example" "$wheel_path" <<'PY'
+import sys
+import zipfile
+from pathlib import Path
+
+canonical = Path(sys.argv[1]).read_bytes()
+with zipfile.ZipFile(sys.argv[2]) as wheel:
+    packaged = wheel.read("app/data/bookmarks.example.json")
+if packaged != canonical:
+    raise SystemExit(
+        "Wheel app/data/bookmarks.example.json does not match bunnify.json.example"
+    )
+PY
+
 echo "📦 Installing wheel into an isolated virtual environment..."
 timeout 120 uv venv --python 3.14 "$venv_dir"
 timeout 120 uv pip install --python "$venv_dir/bin/python" "$wheel_path"

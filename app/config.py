@@ -21,6 +21,7 @@ DATA_DIR_ENV_VAR = "BUNNIFY_DATA_DIR"
 ENV_FILE_NAME = "config.env"
 ENV_VAR = "BUNNIFY_BASE_URL"
 EXAMPLE_BOOKMARKS_NAME = "bunnify.json.example"
+PACKAGED_EXAMPLE_BOOKMARKS_NAME = "bookmarks.example.json"
 LEGACY_ENV_FILE_NAME = "bunnify.env"
 LEGACY_BOOKMARKS_PATH = Path.home() / "work" / "bunnify" / "bunnify.json"
 LOCAL_PORT_ENV_VAR = "BUNNIFY_LOCAL_PORT"
@@ -266,7 +267,10 @@ def write_base_url_to_env_file(path: Path, base_url: str) -> None:
 def example_bookmarks_bytes() -> bytes | None:
     """Load seed bookmarks bytes from the packaged resource or repo example."""
     try:
-        packaged = resources.files("app").joinpath("data", "bookmarks.example.json")
+        packaged = resources.files("app").joinpath(
+            "data",
+            PACKAGED_EXAMPLE_BOOKMARKS_NAME,
+        )
         return packaged.read_bytes()
     except (
         FileNotFoundError,
@@ -277,10 +281,15 @@ def example_bookmarks_bytes() -> bytes | None:
     ):
         pass
 
-    repo_example = repo_root() / EXAMPLE_BOOKMARKS_NAME
+    repo_example = example_bookmarks_path()
     if repo_example.is_file():
         return repo_example.read_bytes()
     return None
+
+
+def example_bookmarks_path(*, root: Path | None = None) -> Path:
+    """Return the canonical example bookmarks file in a repository checkout."""
+    return (root if root is not None else repo_root()) / EXAMPLE_BOOKMARKS_NAME
 
 
 def seed_bookmarks_from_example(dest: Path) -> Path:
@@ -295,7 +304,7 @@ def seed_bookmarks_from_example(dest: Path) -> Path:
     if payload is None:
         raise FileNotFoundError(
             f"No bookmarks example found (expected packaged "
-            f"app/data/bookmarks.example.json or {EXAMPLE_BOOKMARKS_NAME})"
+            f"{EXAMPLE_BOOKMARKS_NAME} or {example_bookmarks_path()})"
         )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(payload)
