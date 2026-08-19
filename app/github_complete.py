@@ -376,6 +376,53 @@ def _github_get_json(
         return None
 
 
+def _github_get_owner_repos_json(
+    scope: str,
+    owner: str,
+    *,
+    query: dict[str, str],
+    token: str | None = None,
+    timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    opener: Any | None = None,
+    runner: GhRunner | None = None,
+) -> tuple[Any | None, bool]:
+    """GET ``/{scope}/{owner}/repos``. Returns ``(payload, was_not_found)``."""
+    auth = token if token is not None else resolve_github_token(runner=runner)
+    if not auth:
+        return None, False
+    params = urllib.parse.urlencode(query)
+    path = f"/{scope}/{urllib.parse.quote(owner)}/repos?{params}"
+    url = f"{_API_ROOT}{path}"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {auth}",
+            "User-Agent": "bunnify-cli",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="GET",
+    )
+    open_url = opener or urllib.request.urlopen
+    try:
+        with open_url(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body), False
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None, True
+        logger.debug("GitHub REST GET %s failed: %s", path, exc, exc_info=True)
+        return None, False
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        OSError,
+    ) as exc:
+        logger.debug("GitHub REST GET %s failed: %s", path, exc, exc_info=True)
+        return None, False
+
+
 def list_github_orgs(
     *,
     prefix: str = "",
@@ -432,16 +479,18 @@ def list_github_repos(
                 "type": "all",
                 "sort": "full_name",
             }
-            payload = _github_get_json(
-                f"/orgs/{urllib.parse.quote(org)}/repos",
+            payload, not_found = _github_get_owner_repos_json(
+                "orgs",
+                org,
                 query=repo_query,
                 token=token,
                 opener=opener,
                 runner=runner,
             )
-            if payload is None:
-                payload = _github_get_json(
-                    f"/users/{urllib.parse.quote(org)}/repos",
+            if not_found:
+                payload, _ = _github_get_owner_repos_json(
+                    "users",
+                    org,
                     query=repo_query,
                     token=token,
                     opener=opener,
