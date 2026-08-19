@@ -436,6 +436,42 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             )
             self.assertEqual(info.server_url, "https://bun.example.com")
 
+    def test_about_details_text_and_links(self) -> None:
+        from app.spotty_bunny_about import _about_details_text_and_links
+        from app.spotty_bunny_about_info import AboutRuntimeInfo
+
+        runtime = AboutRuntimeInfo(
+            bookmarks_display="~/.config/bunnify/bookmarks.json",
+            bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
+            github_display="github.com/acme/repo",
+            github_url="https://github.com/acme/repo",
+            server_display="Local server · http://127.0.0.1:8000",
+            server_url="http://127.0.0.1:8000",
+        )
+        text, links = _about_details_text_and_links(runtime)
+        self.assertEqual(
+            text,
+            "License: MIT License\n"
+            "Bookmarks: ~/.config/bunnify/bookmarks.json\n"
+            "GitHub: github.com/acme/repo\n"
+            "Local server · http://127.0.0.1:8000",
+        )
+        self.assertEqual(
+            links,
+            (
+                (
+                    "MIT License",
+                    "https://github.com/the-hcma/bunnify/blob/main/LICENSE",
+                ),
+                (
+                    "~/.config/bunnify/bookmarks.json",
+                    "file:///Users/me/.config/bunnify/bookmarks.json",
+                ),
+                ("github.com/acme/repo", "https://github.com/acme/repo"),
+                ("http://127.0.0.1:8000", "http://127.0.0.1:8000"),
+            ),
+        )
+
     def test_open_path_in_text_editor_uses_open_t(self) -> None:
         from app.spotty_bunny_about_info import open_path_in_text_editor
 
@@ -655,6 +691,22 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 Path("/opt/pipx/venvs/bunnify/bin/python"),
             )
 
+    def test_interpreter_for_program_reads_pipx_sh_wrapper(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/bin/sh\n"
+                "'''exec' '/opt/pipx/venvs/bunnify/bin/python' \"$0\" \"$@\"\n"
+                "' '''\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path("/opt/pipx/venvs/bunnify/bin/python"),
+            )
+
     def test_is_agent_installed_checks_plist(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, is_agent_installed
 
@@ -708,6 +760,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("launchd: loaded", text)
             self.assertIn("binary: /opt/spotty-bunny", text)
             self.assertIn("application_log:", text)
+            self.assertIn("follow_logs: tail --follow=name --retry", text)
             self.assertIn("launchd_stdout:", text)
             self.assertIn("version: " + build_version(), text)
             self.assertIn("accessibility: yes", text)

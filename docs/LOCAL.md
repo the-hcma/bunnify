@@ -89,9 +89,15 @@ the server agent (`com.thehcma.bunnify`).
 
 ### Install
 
+Requires [pipx](https://pipx.pypa.io/) on ``PATH`` (for example ``brew install pipx``).
+Then install the macOS extra and start the local server before the overlay agent:
+
 ```bash
 # pipx
 pipx install 'bunnify[macos]'
+bunnify setup                      # local server + /health (interactive)
+# or manual server (see Manual local workflow below)
+
 spotty-bunny                     # foreground overlay
 bunnify spotty-bunny             # same (reserved CLI token)
 bunnify spotty-bunny install     # LaunchAgent (KeepAlive + RunAtLoad)
@@ -112,20 +118,28 @@ bunnify spotty-bunny status
 `~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist` from
 [`etc/launchd/com.thehcma.bunnify.spotty-bunny.plist.example`](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.spotty-bunny.plist.example)
 with **ProgramArguments** set to the absolute path from `command -v spotty-bunny`,
-then `launchctl bootstrap "gui/$(id -u)"` that plist. It does **not** succeed
-until **Accessibility** and **Input Monitoring** are currently granted to the
-**interpreter launchd will exec** (typically the pipx venv Python in the
-`spotty-bunny` shebang), not only Terminal.app. Missing grants trigger the
-system prompts where the APIs allow it, then the checks run again. If either
-is still missing, the command prints System Settings → Privacy & Security
-instructions and exits non-zero without treating bootstrap as success.
+then `launchctl bootstrap "gui/$(id -u)"` that plist. It does **not** write the
+plist or bootstrap until **Accessibility** and **Input Monitoring** are granted
+to the **Python interpreter behind the pipx/venv console script** (the venv
+``python`` the wrapper ``exec``s), not only Terminal.app or iTerm. Missing grants
+trigger the system prompts where the APIs allow it, then the checks run again.
+When run from an interactive terminal and either grant is still missing, the
+command prompts you to press **Enter** after granting so it can re-check before
+exiting. If either is still missing, it prints System Settings → Privacy &
+Security instructions and exits non-zero.
+
+After granting permissions, run `bunnify spotty-bunny install` again (or
+`bunnify spotty-bunny upgrade`) so launchd starts a fresh process with the new
+grants. A process that started before TCC was granted may not receive Control
+chord events until it is restarted.
 
 `status` prints running/pid, whether launchd has loaded the agent, the binary
 path, the application log
 (`~/.local/share/bunnify/spotty-bunny.log` or `BUNNIFY_SPOTTY_BUNNY_LOG_FILE` /
-`$BUNNIFY_DATA_DIR`), launchd stdout/stderr paths from the plist, version, and
-Accessibility / Input Monitoring yes/no. Exit `0` only when the plist exists,
-the agent is loaded, and the process is running.
+`$BUNNIFY_DATA_DIR`), a suggested log-follow command
+(`tail --follow=name --retry "<application_log>"`), launchd stdout/stderr paths
+from the plist, version, and Accessibility / Input Monitoring yes/no. Exit `0`
+only when the plist exists, the agent is loaded, and the process is running.
 
 ### Upgrade
 

@@ -38,6 +38,7 @@ from Cocoa import (
 from Foundation import NSAttributedString, NSMakeRange, NSMutableAttributedString
 
 from app.spotty_bunny_about_info import (
+    AboutRuntimeInfo,
     about_link_spans,
     handle_about_link_click,
     load_about_runtime_info,
@@ -138,23 +139,14 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         else f"Update available: {status.latest}"
     )
     repo_text = "Repository: github.com/the-hcma/bunnify"
-    license_text = f"License: {ABOUT_LICENSE}"
-    bookmarks_text = f"Bookmarks: {runtime.bookmarks_display}"
-    github_text = (
-        None if runtime.github_display is None else f"GitHub: {runtime.github_display}"
-    )
+    details_text, details_links = _about_details_text_and_links(runtime)
     inner_cap = ABOUT_PANEL_MAX_WIDTH - 2.0 * ABOUT_INSET
     needed_width = max(
         _measure_text("Spotty Bunny", title_font, max_width=inner_cap)[0],
         _measure_text(ABOUT_COPYRIGHT, body_font, max_width=inner_cap)[0],
-        _measure_text(bookmarks_text, body_font, max_width=inner_cap)[0],
-        _measure_text(license_text, body_font, max_width=inner_cap)[0],
+        _measure_text(details_text, body_font, max_width=inner_cap)[0],
         _measure_text(repo_text, body_font, max_width=inner_cap)[0],
-        _measure_text(runtime.server_display, body_font, max_width=inner_cap)[0],
         _measure_text(version_text, body_font, max_width=inner_cap)[0],
-        0.0
-        if github_text is None
-        else _measure_text(github_text, body_font, max_width=inner_cap)[0],
         0.0
         if update_text is None
         else _measure_text(update_text, body_font, max_width=inner_cap)[0],
@@ -172,27 +164,13 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         36.0,
         _measure_text(ABOUT_SUMMARY, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
     )
-    bookmarks_height = max(
-        18.0,
-        _measure_text(bookmarks_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
-    )
-    repo_license_height = max(
+    details_height = max(
         36.0,
-        _measure_text(f"{repo_text}\n{license_text}", body_font, max_width=inner)[1]
-        + ABOUT_CELL_PAD,
+        _measure_text(details_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
     )
-    github_height = (
-        0.0
-        if github_text is None
-        else max(
-            18.0,
-            _measure_text(github_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
-        )
-    )
-    server_height = max(
+    repo_height = max(
         18.0,
-        _measure_text(runtime.server_display, body_font, max_width=inner)[1]
-        + ABOUT_CELL_PAD,
+        _measure_text(repo_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
     )
     rows: list[tuple[float, Callable[[float, float], NSTextField]]] = [
         (
@@ -244,56 +222,23 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
                 ),
             ),
             (
-                repo_license_height,
-                lambda y, h: _multi_link_field(
+                repo_height,
+                lambda y, h: _link_field(
                     NSMakeRect(ABOUT_INSET, y, inner, h),
-                    f"{repo_text}\n{license_text}",
-                    (
-                        ("github.com/the-hcma/bunnify", SPOTTY_BUNNY_REPO_URL),
-                        (ABOUT_LICENSE, ABOUT_LICENSE_URL),
-                    ),
+                    repo_text,
+                    "github.com/the-hcma/bunnify",
+                    SPOTTY_BUNNY_REPO_URL,
                 ),
             ),
             (
-                bookmarks_height,
-                lambda y, h: _link_field(
+                details_height,
+                lambda y, h: _multi_link_field(
                     NSMakeRect(ABOUT_INSET, y, inner, h),
-                    bookmarks_text,
-                    runtime.bookmarks_display,
-                    runtime.bookmarks_uri,
+                    details_text,
+                    details_links,
                 ),
             ),
         ]
-    )
-    if (
-        github_text is not None
-        and runtime.github_display is not None
-        and runtime.github_url is not None
-    ):
-        github_label = github_text
-        github_link = runtime.github_display
-        github_href = runtime.github_url
-        rows.append(
-            (
-                github_height,
-                lambda y, h: _link_field(
-                    NSMakeRect(ABOUT_INSET, y, inner, h),
-                    github_label,
-                    github_link,
-                    github_href,
-                ),
-            )
-        )
-    rows.append(
-        (
-            server_height,
-            lambda y, h: _link_field(
-                NSMakeRect(ABOUT_INSET, y, inner, h),
-                runtime.server_display,
-                runtime.server_url,
-                runtime.server_url,
-            ),
-        )
     )
     gap = ABOUT_ROW_GAP
     height = ABOUT_INSET * 2.0 + sum(row_h for row_h, _ in rows) + gap * (len(rows) - 1)
@@ -385,6 +330,26 @@ class _AboutLinkField(NSTextField):
     def viewDidMoveToWindow(self) -> None:
         objc.super(_AboutLinkField, self).viewDidMoveToWindow()
         self.updateTrackingAreas()
+
+
+def _about_details_text_and_links(
+    runtime: AboutRuntimeInfo,
+) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Return one multi-line block for license, bookmarks, GitHub, and server."""
+    lines = [
+        f"License: {ABOUT_LICENSE}",
+        f"Bookmarks: {runtime.bookmarks_display}",
+    ]
+    links: list[tuple[str, str]] = [
+        (ABOUT_LICENSE, ABOUT_LICENSE_URL),
+        (runtime.bookmarks_display, runtime.bookmarks_uri),
+    ]
+    if runtime.github_display is not None and runtime.github_url is not None:
+        lines.append(f"GitHub: {runtime.github_display}")
+        links.append((runtime.github_display, runtime.github_url))
+    lines.append(runtime.server_display)
+    links.append((runtime.server_url, runtime.server_url))
+    return "\n".join(lines), tuple(links)
 
 
 def _label(
