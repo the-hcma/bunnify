@@ -8,6 +8,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandParser
 from jsonschema import ValidationError, validate
 
+from app.completion_spec import parse_complete_map, validate_complete_map
 from app.config import default_bookmarks_path
 from bookmarks.models import Bookmark
 
@@ -41,6 +42,31 @@ class Command(BaseCommand):
                 "^[a-zA-Z0-9_]+$": {
                     "type": "object",
                     "properties": {
+                        "complete": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                                "github_issue",
+                                                "github_org",
+                                                "github_pull_request",
+                                                "github_repo",
+                                            ],
+                                        },
+                                        "org": {"type": "string"},
+                                        "repo_param": {"type": "string"},
+                                    },
+                                    "required": ["kind"],
+                                    "additionalProperties": False,
+                                }
+                            },
+                            "additionalProperties": False,
+                        },
+                        "defaults": {"type": "object"},
                         "description": {"type": "string"},
                         "url": {"type": "string"},
                         "old-url": {"type": "string"},
@@ -91,6 +117,30 @@ class Command(BaseCommand):
                 # Handle both "old-url" and "oldurl" variants
                 old_url = bookmark_data.get("old-url") or bookmark_data.get("oldurl")
                 defaults = bookmark_data.get("defaults", {})
+                complete_raw = bookmark_data.get("complete")
+                complete = parse_complete_map(complete_raw)
+                if complete_raw is not None and complete is None:
+                    logger.error(
+                        "Invalid complete map for bookmark %r in %s",
+                        key,
+                        json_file_path,
+                    )
+                    self.stdout.write(
+                        self.style.ERROR(
+                            f'Error: Invalid "complete" map for bookmark "{key}"'
+                        )
+                    )
+                    return
+                if complete:
+                    errors = validate_complete_map(
+                        complete,
+                        url=bookmark_data["url"],
+                    )
+                    if errors:
+                        for message in errors:
+                            logger.error("complete validation for %r: %s", key, message)
+                            self.stdout.write(self.style.ERROR(f"Error: {message}"))
+                        return
 
                 Bookmark.objects.create(
                     key=key,
@@ -98,6 +148,20 @@ class Command(BaseCommand):
                     url=bookmark_data["url"],
                     old_url=old_url,
                     defaults=defaults,
+                    complete={
+                        param: {
+                            "kind": spec.kind,
+                            **({"org": spec.org} if spec.org else {}),
+                            **(
+                                {"repo_param": spec.repo_param}
+                                if spec.repo_param
+                                else {}
+                            ),
+                        }
+                        for param, spec in complete.items()
+                    }
+                    if complete
+                    else {},
                 )
                 created_count += 1
                 logger.debug(

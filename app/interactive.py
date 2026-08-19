@@ -275,12 +275,15 @@ class ShortcutCompleter(Completer):
             return
         param_name = entry.params[arg_index]
         try:
-            values = self._param_suggest_fn(
-                param_name=param_name,
-                url_template=entry.url,
-                filled_args=filled_args,
-                prefix=prefix,
-            )
+            suggest_kwargs: dict[str, object] = {
+                "param_name": param_name,
+                "url_template": entry.url,
+                "filled_args": filled_args,
+                "prefix": prefix,
+            }
+            if entry.complete:
+                suggest_kwargs["complete"] = entry.complete
+            values = self._param_suggest_fn(**suggest_kwargs)
         except (OSError, ValueError, TypeError) as exc:
             logger.debug(
                 "param suggestion failed for %r on key %r: %s",
