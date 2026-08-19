@@ -36,15 +36,17 @@
             margin: 0;
             font-size: 1.5rem;
         }
-        .build-version {
-            color: #aeb6bf;
-            font-size: 0.8rem;
-            margin: 0.35rem 0 0;
+        .brand {
             cursor: default;
             position: relative;
             display: inline-block;
         }
-        .build-version[data-commit]::after {
+        .build-version {
+            color: #aeb6bf;
+            font-size: 0.8rem;
+            margin: 0.35rem 0 0;
+        }
+        .brand[data-commit]::after {
             content: attr(data-commit);
             position: absolute;
             left: 0;
@@ -60,8 +62,8 @@
             pointer-events: none;
             transition: opacity 0.05s ease-in;
         }
-        .build-version[data-commit]:hover::after,
-        .build-version[data-commit]:focus-visible::after {
+        .brand[data-commit]:hover::after,
+        .brand[data-commit]:focus-visible::after {
             opacity: 1;
         }
         nav {
@@ -103,10 +105,10 @@
 </head>
 <body>
     <header>
-        <div class="brand">
+        <div class="brand" data-commit="commit {{ git_commit }}" tabindex="0">
             <h1>🐰 Bunnify</h1>
             {% if package_version %}
-                <p class="build-version" data-commit="commit {{ git_commit }}" tabindex="0">{{ package_version }}</p>
+                <p class="build-version">{{ package_version }}</p>
             {% endif %}
         </div>
         <nav>

@@ -36,6 +36,7 @@ class SmokeTests(TestCase):
         package, commit = get_build_info()
         self.assertContains(response, package)
         self.assertContains(response, f'data-commit="commit {commit}"')
+        self.assertContains(response, 'class="brand"')
         self.assertContains(response, "Chrome or Edge")
         self.assertContains(response, "bunnylol")
 

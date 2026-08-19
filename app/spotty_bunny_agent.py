@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -143,15 +144,29 @@ def install_agent(
 def interpreter_for_program(program: Path) -> Path:
     """Return the interpreter launchd will exec for a console-script *program*."""
     try:
-        first = program.read_bytes().splitlines()[:1]
+        raw = program.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return program
-    if not first or not first[0].startswith(b"#!"):
+
+    # pipx console-script wrappers are typically `#!/bin/sh` that `exec` a
+    # concrete venv python. For TCC probing we must use that real python,
+    # not the shell.
+    pipx_exec = re.search(
+        r"exec'\s*['\"](?P<python>[^'\"]*?/bin/python[^'\"]*)['\"]\s+\"\$0\"",
+        raw,
+    )
+    if pipx_exec:
+        return Path(pipx_exec.group("python"))
+
+    first_line = raw.splitlines()[:1]
+    if not first_line or not first_line[0].startswith("#!"):
         return program
-    line = first[0][2:].decode("utf-8", errors="replace").strip()
+
+    line = first_line[0][2:].strip()
     parts = line.split()
     if not parts:
         return program
+
     executable = Path(parts[0])
     if executable.name == "env" and len(parts) >= 2:
         resolved = shutil.which(parts[1], path=LAUNCHD_PATH)
@@ -297,6 +312,7 @@ def status_agent(
         probe_tcc=probe_tcc,
     )
     stdout_path, stderr_path = _launchd_log_paths(plist)
+    app_log = _spotty_bunny_log_file(None)
     out(f"running: {'yes' if running else 'no'}")
     out(f"pid: {pid_text}")
     if not installed:
@@ -304,7 +320,9 @@ def status_agent(
     else:
         out(f"launchd: {'loaded' if loaded else 'not loaded'}")
     out(f"binary: {binary if binary is not None else 'none'}")
-    out(f"application_log: {_spotty_bunny_log_file(None)}")
+    out(f"application_log: {app_log}")
+    out(f'follow_logs: tail --follow=name --retry "{app_log}"')
+    out(f'follow_logs_alt: tail -f "{app_log}"')
     out(f"launchd_stdout: {stdout_path or 'none'}")
     out(f"launchd_stderr: {stderr_path or 'none'}")
     out(f"version: {build_version()}")
@@ -513,6 +531,28 @@ def _require_current_tcc(
             f"{'yes' if status.accessibility else 'no'} "
             f"input_monitoring={'yes' if status.input_monitoring else 'no'}"
         )
+        # TCC prompts can be granted after we've already probed once.
+        # When running interactively, let the user confirm and re-check.
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            err(
+                f"{COMMAND_NAME}: press Enter after granting "
+                f"Accessibility/Input Monitoring to {interpreter} "
+                "to re-check (or Ctrl-C to cancel)."
+            )
+            try:
+                input()
+            except EOFError, KeyboardInterrupt:
+                return None
+            try:
+                status = probe(interpreter)
+            except ImportError:
+                err(MACOS_EXTRA_HINT)
+                return None
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
+                return None
+            if status.ok:
+                return status
         return None
     return status
 

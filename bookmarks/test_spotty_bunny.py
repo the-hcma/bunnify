@@ -436,6 +436,44 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             )
             self.assertEqual(info.server_url, "https://bun.example.com")
 
+    def test_about_details_text_and_links(self) -> None:
+        from app.spotty_bunny_about_info import (
+            AboutRuntimeInfo,
+            about_details_text_and_links,
+        )
+
+        runtime = AboutRuntimeInfo(
+            bookmarks_display="~/.config/bunnify/bookmarks.json",
+            bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
+            github_display="github.com/acme/repo",
+            github_url="https://github.com/acme/repo",
+            server_display="Local server · http://127.0.0.1:8000",
+            server_url="http://127.0.0.1:8000",
+        )
+        text, links = about_details_text_and_links(runtime)
+        self.assertEqual(
+            text,
+            "License: MIT License\n"
+            "Bookmarks: ~/.config/bunnify/bookmarks.json\n"
+            "GitHub: github.com/acme/repo\n"
+            "Local server · http://127.0.0.1:8000",
+        )
+        self.assertEqual(
+            links,
+            (
+                (
+                    "MIT License",
+                    "https://github.com/the-hcma/bunnify/blob/main/LICENSE",
+                ),
+                (
+                    "~/.config/bunnify/bookmarks.json",
+                    "file:///Users/me/.config/bunnify/bookmarks.json",
+                ),
+                ("github.com/acme/repo", "https://github.com/acme/repo"),
+                ("http://127.0.0.1:8000", "http://127.0.0.1:8000"),
+            ),
+        )
+
     def test_open_path_in_text_editor_uses_open_t(self) -> None:
         from app.spotty_bunny_about_info import open_path_in_text_editor
 
@@ -610,6 +648,112 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertFalse(any(call[1] == "bootstrap" for call in ctl.calls))
             self.assertIn("Privacy & Security", stderr.getvalue())
 
+    def test_install_interactive_tcc_recheck_ctrl_c_cancels(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(TccStatus(False, False), TccStatus(False, False))
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", side_effect=KeyboardInterrupt),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual(tcc.probes, 2)
+            self.assertFalse(
+                (home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist").exists()
+            )
+
+    def test_install_interactive_tcc_recheck_still_missing_after_enter(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(
+            TccStatus(False, False),
+            TccStatus(False, False),
+            TccStatus(False, False),
+        )
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            stderr = StringIO()
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", return_value=""),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=stderr.write,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual(tcc.probes, 3)
+            self.assertFalse(
+                (home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist").exists()
+            )
+
+    def test_install_interactive_tcc_recheck_succeeds_after_enter(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(
+            TccStatus(False, False),
+            TccStatus(False, False),
+            TccStatus(True, True),
+        )
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", return_value=""),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(tcc.probes, 3)
+            self.assertEqual(tcc.requests, 1)
+
     def test_install_rechecks_tcc_after_prompt(self) -> None:
         from app.spotty_bunny_agent import install_agent
 
@@ -649,6 +793,22 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             script = Path(tmp) / "spotty-bunny"
             script.write_text(
                 "#!/opt/pipx/venvs/bunnify/bin/python\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path("/opt/pipx/venvs/bunnify/bin/python"),
+            )
+
+    def test_interpreter_for_program_reads_pipx_sh_wrapper(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/bin/sh\n"
+                "'''exec' '/opt/pipx/venvs/bunnify/bin/python' \"$0\" \"$@\"\n"
+                "' '''\n",
+                encoding="utf-8",
             )
             self.assertEqual(
                 interpreter_for_program(script),
@@ -708,6 +868,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("launchd: loaded", text)
             self.assertIn("binary: /opt/spotty-bunny", text)
             self.assertIn("application_log:", text)
+            self.assertIn("follow_logs: tail --follow=name --retry", text)
             self.assertIn("launchd_stdout:", text)
             self.assertIn("version: " + build_version(), text)
             self.assertIn("accessibility: yes", text)
@@ -1924,7 +2085,6 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("Search and open your Bunnify shortcuts", source)
         self.assertNotIn("Quick shortcut overlay for Bunnify", source)
         self.assertIn("https://github.com/the-hcma/bunnify", source)
-        self.assertIn("https://github.com/the-hcma/bunnify/blob/main/LICENSE", source)
         self.assertIn("ABOUT_PANEL_MAX_WIDTH", source)
         self.assertIn("ABOUT_FILL_RGB", source)
         self.assertIn("ABOUT_FRAME_RGB", source)
@@ -1946,9 +2106,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("NSTrackingActiveAlways", source)
         self.assertIn("_AboutLinkField", source)
         self.assertIn("load_about_runtime_info", source)
-        self.assertIn("Bookmarks:", source)
-        self.assertIn("GitHub:", source)
-        self.assertIn("License:", source)
+        self.assertIn("about_details_text_and_links", source)
         self.assertIn("Repository:", source)
         self.assertIn("_multi_link_field", source)
         self.assertIn("textView_clickedOnLink_atIndex_", source)
@@ -1958,7 +2116,13 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("Local server", info_source)
         self.assertIn("Remote server", info_source)
+        license_url = "https://github.com/the-hcma/bunnify/blob/main/LICENSE"
+        self.assertIn(license_url, info_source)
+        self.assertIn("Bookmarks:", info_source)
+        self.assertIn("GitHub:", info_source)
+        self.assertIn("License:", info_source)
         self.assertIn('["open", "-t", str(path)]', info_source)
+        self.assertIn("def about_details_text_and_links", info_source)
         self.assertIn("def about_link_spans", info_source)
         self.assertIn("def handle_about_link_click", info_source)
 
