@@ -27,6 +27,30 @@
     "description": "Gmail",
     "url": "https://mail.google.com"
   },
+  "gpr": {
+    "description": "Graphite PR review (Usage: gpr <org/repo> <pr_number>)",
+    "url": "https://app.graphite.com/github/pr/#{repo}/#{pr_number}",
+    "complete": {
+      "pr_number": { "kind": "github_pull_request", "repo_param": "repo" },
+      "repo": { "kind": "github_repo" }
+    }
+  },
+  "hgpr": {
+    "description": "Graphite PR review for the-hcma org (Usage: hgpr <repo> <pr_number>)",
+    "url": "https://app.graphite.com/github/pr/the-hcma/#{repo}/#{pr_number}",
+    "complete": {
+      "pr_number": { "kind": "github_pull_request", "repo_param": "repo" },
+      "repo": { "kind": "github_repo", "org": "the-hcma" }
+    }
+  },
+  "hpr": {
+    "description": "the-hcma GitHub Pull Request (Usage: hpr <repo> <pr_number>)",
+    "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}",
+    "complete": {
+      "pr_number": { "kind": "github_pull_request", "repo_param": "repo" },
+      "repo": { "kind": "github_repo", "org": "the-hcma" }
+    }
+  },
   "i": {
     "description": "GitHub Issue (Usage: i <org/repo> <issue_number>)",
     "url": "https://github.com/#{repo}/issues/#{issue_number}",
@@ -42,6 +66,13 @@
       "repo": { "kind": "github_repo", "org": "the-hcma" }
     }
   },
+  "ihh": {
+    "description": "thehcma GitHub Issues (Usage: ihh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}/issues",
+    "complete": {
+      "repo": { "kind": "github_repo", "org": "thehcma" }
+    }
+  },
   "keep": {
     "description": "Google Keep",
     "url": "https://keep.google.com"
@@ -53,6 +84,13 @@
   "meet": {
     "description": "Google Meet",
     "url": "https://meet.google.com"
+  },
+  "mqh": {
+    "description": "the-hcma GitHub Merge Queue (Usage: mqh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/queue/main",
+    "complete": {
+      "repo": { "kind": "github_repo", "org": "the-hcma" }
+    }
   },
   "photos": {
     "description": "Google Photos",
@@ -73,6 +111,13 @@
       "repo": { "kind": "github_repo", "org": "the-hcma" }
     }
   },
+  "prhh": {
+    "description": "thehcma GitHub Pull Requests (Usage: prhh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}/pulls",
+    "complete": {
+      "repo": { "kind": "github_repo", "org": "thehcma" }
+    }
+  },
   "repo": {
     "description": "GitHub repo (Usage: repo <org/repo>)",
     "url": "https://github.com/#{repo}",
@@ -85,6 +130,13 @@
     "url": "https://github.com/the-hcma/#{repo}",
     "complete": {
       "repo": { "kind": "github_repo", "org": "the-hcma" }
+    }
+  },
+  "repohh": {
+    "description": "thehcma GitHub repo (Usage: repohh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}",
+    "complete": {
+      "repo": { "kind": "github_repo", "org": "thehcma" }
     }
   },
   "sheets": {
