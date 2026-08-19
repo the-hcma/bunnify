@@ -1,0 +1,360 @@
+{
+  "amex": {
+    "description": "American Express Login",
+    "url": "https://www.americanexpress.com/en-us/account/login?inav=en_us_menu_login"
+  },
+  "bofa": {
+    "description": "Bank of America Login",
+    "url": "https://www.bankofamerica.com/online-banking/sign-in/"
+  },
+  "bun": {
+    "description": "Bunnify source code",
+    "url": "https://github.com/the-hcma/bunnify"
+  },
+  "cf": {
+    "description": "Cloudflare hcma's DNS",
+    "url": "https://dash.cloudflare.com/0c64ddce44e8d30fb31a52697ce2a737/hcma.info/dns/records"
+  },
+  "chase": {
+    "description": "Chase Login",
+    "url": "https://secure.chase.com/web/auth/dashboard"
+  },
+  "claude": {
+    "description": "Claude",
+    "url": "https://claude.ai"
+  },
+  "cop": {
+    "description": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com"
+  },
+  "cud": {
+    "description": "Cursor usage dashboard",
+    "url": "https://cursor.com/dashboard/usage"
+  },
+  "db": {
+    "description": "Domestic-bot (home automation)",
+    "url": "https://db.hcma.info"
+  },
+  "dl": {
+    "description": "Downloads",
+    "url": "https://downloads.hcma.info"
+  },
+  "ep1": {
+    "description": "Everything Presence One USB-based configuration",
+    "url": "https://docs.everythingsmart.io/flash/everything-presence-one.html"
+  },
+  "fidelity": {
+    "description": "Fidelity Login",
+    "url": "https://digital.fidelity.com/prgw/digital/login/full-page"
+  },
+  "fpdf": {
+    "description": "fpdf",
+    "url": "https://fpdf.hcma.info"
+  },
+  "g": {
+    "description": "Google Search",
+    "url": "https://www.google.com/search?q=#{search_terms}"
+  },
+  "gc": {
+    "description": "Google Contacts",
+    "url": "https://contacts.google.com"
+  },
+  "gcal": {
+    "description": "Google Calendar",
+    "url": "https://calendar.google.com"
+  },
+  "gcals": {
+    "description": "Google Calendar Search",
+    "url": "https://calendar.google.com/calendar/r/search?q=#{search_terms}"
+  },
+  "gcs": {
+    "description": "Google Contacts Search",
+    "url": "https://contacts.google.com/search/#{query}"
+  },
+  "gd": {
+    "description": "Google Drive",
+    "url": "https://drive.google.com/drive/my-drive"
+  },
+  "gda": {
+    "description": "hcma.info Google Domain Admin",
+    "url": "https://admin.google.com/ac/domains/manage"
+  },
+  "gds": {
+    "description": "Google Drive Search",
+    "url": "https://drive.google.com/drive/search?q=#{search_terms}"
+  },
+  "gemini": {
+    "description": "Gemini",
+    "url": "https://gemini.google.com"
+  },
+  "genesis": {
+    "description": "Genesis (DMDC Identity Management)",
+    "url": "https://myaccess.dmdc.osd.mil/identitymanagement/app/login"
+  },
+  "gh": {
+    "description": "GitHub",
+    "url": "https://github.com"
+  },
+  "ghh": {
+    "description": "GitHub Health",
+    "url": "https://www.githubstatus.com"
+  },
+  "ghhi": {
+    "description": "GitHub Incidents",
+    "url": "https://www.githubstatus.com/history"
+  },
+  "ghi": {
+    "description": "GitHub Inbox",
+    "url": "https://github.com/pulls/inbox"
+  },
+  "ghp": {
+    "description": "GitHub Profile",
+    "url": "https://github.com/settings/profile"
+  },
+  "gk": {
+    "description": "Google Keep",
+    "url": "https://keep.google.com"
+  },
+  "gks": {
+    "description": "Google Keep Search",
+    "url": "https://keep.google.com/#search/text=#{search_terms}"
+  },
+  "gm": {
+    "description": "Gmail",
+    "url": "https://mail.google.com"
+  },
+  "gms": {
+    "description": "Gmail Search",
+    "url": "https://mail.google.com/mail/u/0/#search/#{search_terms}"
+  },
+  "gpr": {
+    "description": "Graphite PR review (Usage: gpr <org/repo> <pr_number>)",
+    "url": "https://app.graphite.com/github/pr/#{repo}/#{pr_number}",
+    "complete": {
+      "pr_number": {
+        "kind": "github_pull_request",
+        "repo_param": "repo"
+      },
+      "repo": {
+        "kind": "github_repo"
+      }
+    }
+  },
+  "gpt": {
+    "description": "ChatGPT",
+    "url": "https://chat.com"
+  },
+  "gri": {
+    "description": "Graphite's inbox",
+    "url": "https://app.graphite.com/#needs-your-review"
+  },
+  "gtcl": {
+    "description": "Graphite CLI changelog",
+    "url": "https://graphite.com/docs/cli-changelog"
+  },
+  "gtre": {
+    "description": "Google Translate - English to Portuguese",
+    "url": "https://translate.google.com/?sl=en&tl=pt&text=#{phrase}&op=translate"
+  },
+  "gtrp": {
+    "description": "Google Translate - Portuguese to English",
+    "url": "https://translate.google.com/?sl=pt&tl=en&text=#{phrase}&op=translate"
+  },
+  "gw": {
+    "description": "Google Wallet",
+    "url": "https://wallet.google.com"
+  },
+  "hgpr": {
+    "description": "Graphite PR review for the-hcma org (Usage: hgpr <repo> <pr_number>)",
+    "url": "https://app.graphite.com/github/pr/the-hcma/#{repo}/#{pr_number}",
+    "complete": {
+      "pr_number": {
+        "kind": "github_pull_request",
+        "repo_param": "repo"
+      },
+      "repo": {
+        "kind": "github_repo",
+        "org": "the-hcma"
+      }
+    }
+  },
+  "hmb": {
+    "description": "Half Moon Bay HOA management company",
+    "url": "https://westchester-kc.ssnc.cloud/skylineportal_v20"
+  },
+  "hpr": {
+    "description": "the-hcma GitHub Pull Request (Usage: hpr <repo> <pr_number>)",
+    "url": "https://github.com/the-hcma/#{repo}/pull/#{pr_number}",
+    "complete": {
+      "pr_number": {
+        "kind": "github_pull_request",
+        "repo_param": "repo"
+      },
+      "repo": {
+        "kind": "github_repo",
+        "org": "the-hcma"
+      }
+    }
+  },
+  "i": {
+    "description": "GitHub Issue (Usage: i <org/repo> <issue_number>)",
+    "url": "https://github.com/#{repo}/issues/#{issue_number}",
+    "complete": {
+      "issue_number": {
+        "kind": "github_issue",
+        "repo_param": "repo"
+      },
+      "repo": {
+        "kind": "github_repo"
+      }
+    }
+  },
+  "ih": {
+    "description": "the-hcma GitHub Issues (Usage: ih <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/issues",
+    "complete": {
+      "repo": {
+        "kind": "github_repo",
+        "org": "the-hcma"
+      }
+    }
+  },
+  "ihh": {
+    "description": "thehcma GitHub Issues (Usage: ihh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}/issues",
+    "complete": {
+      "repo": {
+        "kind": "github_repo",
+        "org": "thehcma"
+      }
+    }
+  },
+  "irs": {
+    "description": "IRS Online Account for Individuals",
+    "url": "https://www.irs.gov/payments/online-account-for-individuals"
+  },
+  "l": {
+    "description": "LinkedIn",
+    "url": "https://www.linkedin.com/feed/"
+  },
+  "ls": {
+    "description": "LinkedIn Search",
+    "url": "https://www.linkedin.com/search/results/all/?keywords=#{search_terms}"
+  },
+  "mqb": {
+    "description": "Graphite's merge queue for bunnify",
+    "url": "https://app.graphite.com/merges?repo=bunnify&org=the-hcma&tab=queue"
+  },
+  "mqf": {
+    "description": "Graphite's merge queue for fpdf",
+    "url": "https://app.graphite.com/merges?repo=fpdf&org=the-hcma&tab=queue"
+  },
+  "mqh": {
+    "description": "the-hcma GitHub Merge Queue (Usage: mqh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/queue/main",
+    "complete": {
+      "repo": {
+        "kind": "github_repo",
+        "org": "the-hcma"
+      }
+    }
+  },
+  "mqmt": {
+    "description": "Graphite's merge queue for my-tracks",
+    "url": "https://app.graphite.com/merges?repo=my-tracks&org=the-hcma&tab=queue"
+  },
+  "mt": {
+    "description": "MyTracks",
+    "url": "https://mytracks.hcma.info"
+  },
+  "navan": {
+    "description": "Navan",
+    "url": "https://app.navan.com"
+  },
+  "nm": {
+    "description": "YouTube Music New Release Mix",
+    "url": "https://music.youtube.com/playlist?list=RDTMAK5uy_m_S_9S_9S_9S_9S_9S_9S_9S_9S_9S_9S"
+  },
+  "pr": {
+    "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
+    "url": "https://github.com/#{repo}/pull/#{pr_number}",
+    "complete": {
+      "pr_number": {
+        "kind": "github_pull_request",
+        "repo_param": "repo"
+      },
+      "repo": {
+        "kind": "github_repo"
+      }
+    }
+  },
+  "prh": {
+    "description": "the-hcma GitHub Pull Requests (Usage: prh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/pulls",
+    "complete": {
+      "repo": {
+        "kind": "github_repo",
+        "org": "the-hcma"
+      }
+    }
+  },
+  "prhh": {
+    "description": "thehcma GitHub Pull Requests (Usage: prhh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}/pulls",
+    "complete": {
+      "repo": {
+        "kind": "github_repo",
+        "org": "thehcma"
+      }
+    }
+  },
+  "printer": {
+    "description": "House printer",
+    "url": "http://printer.house.hcma"
+  },
+  "repo": {
+    "description": "GitHub repo (Usage: repo <org/repo>)",
+    "url": "https://github.com/#{repo}",
+    "complete": {
+      "repo": {
+        "kind": "github_repo"
+      }
+    }
+  },
+  "repoh": {
+    "description": "the-hcma GitHub repo (Usage: repoh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}",
+    "complete": {
+      "repo": {
+        "kind": "github_repo",
+        "org": "the-hcma"
+      }
+    }
+  },
+  "repohh": {
+    "description": "thehcma GitHub repo (Usage: repohh <repo>)",
+    "url": "https://github.com/thehcma/#{repo}",
+    "complete": {
+      "repo": {
+        "kind": "github_repo",
+        "org": "thehcma"
+      }
+    }
+  },
+  "rs": {
+    "description": "Revset dashboard (PRs)",
+    "url": "https://revset.dev/app/d38cb392-5388-49f1-a7ca-919c36ec3842/prs"
+  },
+  "sony": {
+    "description": "Sony TV",
+    "url": "http://sony.house.hcma"
+  },
+  "vm": {
+    "description": "Google Voice Messages",
+    "url": "https://voice.google.com/u/0/messages"
+  },
+  "ym": {
+    "description": "YouTube Music",
+    "url": "https://music.youtube.com/"
+  }
+}

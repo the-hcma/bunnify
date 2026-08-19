@@ -280,6 +280,38 @@ class LoadBookmarksCompleteTests(TestCase):
         self.assertTrue(Bookmark.objects.filter(key="keep").exists())
 
 
+class HcmaBookmarksExampleTests(SimpleTestCase):
+    def test_hcma_example_complete_maps_validate(self) -> None:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "bunnify.hcma.json.example"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        github_keys = {
+            "gpr",
+            "hgpr",
+            "hpr",
+            "i",
+            "ih",
+            "ihh",
+            "mqh",
+            "pr",
+            "prh",
+            "prhh",
+            "repo",
+            "repoh",
+            "repohh",
+        }
+        for key in github_keys:
+            self.assertIn(key, data, msg=f"missing shortcut {key!r}")
+            bookmark = data[key]
+            complete = parse_complete_map(bookmark.get("complete"))
+            self.assertIsNotNone(complete, msg=f"{key!r} complete map invalid")
+            assert complete is not None
+            errors = validate_complete_map(complete, url=bookmark["url"])
+            self.assertEqual(errors, [], msg=f"{key!r}: {errors}")
+
+
 class _FakeResponse:
     def __init__(self, payload: object) -> None:
         self._payload = payload

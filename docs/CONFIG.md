@@ -127,3 +127,16 @@ bunnify --complete-param pr the-hcma/bunnify --prefix 1
 
 Positional arguments after `--complete-param KEY` are already-filled parameters;
 `--prefix` filters the next parameter's candidates.
+
+## Operator bookmark template
+
+`bunnify.hcma.json.example` is an optional, richer bookmark set (Google
+variants, GitHub org shortcuts, Graphite links, and related) with `complete`
+markers on GitHub-backed placeholders. It is **not** used by `bunnify setup`
+automatically — copy or merge into your personal file when upgrading an
+existing install:
+
+```bash
+cp bunnify.hcma.json.example ~/.config/bunnify/bookmarks.json
+# or merge selected keys / complete blocks into an existing bookmarks.json
+```
