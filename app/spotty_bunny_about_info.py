@@ -16,6 +16,9 @@ from app.config import (
     resolve_base_url,
 )
 
+ABOUT_LICENSE = "MIT License"
+ABOUT_LICENSE_URL = "https://github.com/the-hcma/bunnify/blob/main/LICENSE"
+
 
 @dataclass(frozen=True)
 class AboutRuntimeInfo:
@@ -30,6 +33,26 @@ class AboutRuntimeInfo:
 
 
 OriginUrlFor = Callable[[Path], str | None]
+
+
+def about_details_text_and_links(
+    runtime: AboutRuntimeInfo,
+) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Return one multi-line block for license, bookmarks, GitHub, and server."""
+    lines = [
+        f"License: {ABOUT_LICENSE}",
+        f"Bookmarks: {runtime.bookmarks_display}",
+    ]
+    links: list[tuple[str, str]] = [
+        (ABOUT_LICENSE, ABOUT_LICENSE_URL),
+        (runtime.bookmarks_display, runtime.bookmarks_uri),
+    ]
+    if runtime.github_display is not None and runtime.github_url is not None:
+        lines.append(f"GitHub: {runtime.github_display}")
+        links.append((runtime.github_display, runtime.github_url))
+    lines.append(runtime.server_display)
+    links.append((runtime.server_url, runtime.server_url))
+    return "\n".join(lines), tuple(links)
 
 
 def about_link_spans(

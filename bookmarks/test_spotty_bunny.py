@@ -437,8 +437,10 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             self.assertEqual(info.server_url, "https://bun.example.com")
 
     def test_about_details_text_and_links(self) -> None:
-        from app.spotty_bunny_about import _about_details_text_and_links
-        from app.spotty_bunny_about_info import AboutRuntimeInfo
+        from app.spotty_bunny_about_info import (
+            AboutRuntimeInfo,
+            about_details_text_and_links,
+        )
 
         runtime = AboutRuntimeInfo(
             bookmarks_display="~/.config/bunnify/bookmarks.json",
@@ -448,7 +450,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             server_display="Local server · http://127.0.0.1:8000",
             server_url="http://127.0.0.1:8000",
         )
-        text, links = _about_details_text_and_links(runtime)
+        text, links = about_details_text_and_links(runtime)
         self.assertEqual(
             text,
             "License: MIT License\n"
