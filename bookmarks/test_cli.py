@@ -539,6 +539,7 @@ class CliUnitTests(TestCase):
             )
         self.assertEqual(stdout.getvalue().splitlines(), ["h", "gh"])
 
+    @patch("app.cli.bootstrap_github_completion_cache")
     @patch("app.cli.suggest_param_values")
     @patch("app.cli.ensure_github_authenticated")
     @patch("app.cli.fetch_key_entries")
@@ -547,6 +548,7 @@ class CliUnitTests(TestCase):
         mock_fetch_key_entries,
         mock_ensure_github,
         mock_suggest,
+        mock_bootstrap,
     ) -> None:
         from app.cli import _run
 
