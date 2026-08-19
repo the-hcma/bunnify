@@ -13,6 +13,9 @@ class Bookmark(models.Model):
     defaults = models.JSONField(
         default=dict, blank=True
     )  # Default values for parameters
+    complete = models.JSONField(
+        default=dict, blank=True
+    )  # Declared Tab-completion kinds per placeholder
 
     class Meta:
         ordering = ["key"]

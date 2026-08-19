@@ -12,9 +12,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+from app.completion_spec import ParamCompleteSpec, repo_arg_from_filled
 
 logger = logging.getLogger(__name__)
 
@@ -570,6 +572,8 @@ def resolve_repo_for_pr(
     *,
     url_template: str,
     repo_arg: str,
+    complete: Mapping[str, ParamCompleteSpec] | None = None,
+    repo_param: str | None = None,
 ) -> str | None:
     """Build ``owner/name`` for PR listing from the template + typed repo token."""
     repo_arg = repo_arg.strip()
@@ -577,10 +581,84 @@ def resolve_repo_for_pr(
         return None
     if "/" in repo_arg:
         return repo_arg
-    org = infer_fixed_github_org(url_template)
+    org = None
+    if complete is not None and repo_param is not None:
+        repo_spec = complete.get(repo_param)
+        if repo_spec is not None:
+            org = repo_spec.org
+    if org is None:
+        org = infer_fixed_github_org(url_template)
     if org:
         return f"{org}/{repo_arg}"
     return None
+
+
+def _suggest_from_complete_spec(
+    *,
+    spec: ParamCompleteSpec,
+    url_template: str,
+    filled_args: list[str],
+    prefix: str,
+    complete: Mapping[str, ParamCompleteSpec] | None,
+    token: str | None,
+    opener: Any | None,
+    runner: GhRunner | None,
+) -> list[str]:
+    if spec.kind == "github_org":
+        return list_github_orgs(
+            prefix=prefix, token=token, opener=opener, runner=runner
+        )
+    if spec.kind == "github_repo":
+        return list_github_repos(
+            org=spec.org,
+            prefix=prefix,
+            token=token,
+            opener=opener,
+            runner=runner,
+        )
+    if spec.kind == "github_pull_request":
+        repo_token = (
+            repo_arg_from_filled(
+                url_template=url_template,
+                filled_args=filled_args,
+                repo_param=spec.repo_param or "",
+            )
+            if spec.repo_param
+            else (filled_args[-1] if filled_args else "")
+        )
+        full_repo = resolve_repo_for_pr(
+            url_template=url_template,
+            repo_arg=repo_token,
+            complete=complete,
+            repo_param=spec.repo_param,
+        )
+        if full_repo is None:
+            return []
+        return list_open_pull_requests(
+            full_repo, prefix=prefix, token=token, opener=opener, runner=runner
+        )
+    if spec.kind == "github_issue":
+        repo_token = (
+            repo_arg_from_filled(
+                url_template=url_template,
+                filled_args=filled_args,
+                repo_param=spec.repo_param or "",
+            )
+            if spec.repo_param
+            else (filled_args[-1] if filled_args else "")
+        )
+        full_repo = resolve_repo_for_pr(
+            url_template=url_template,
+            repo_arg=repo_token,
+            complete=complete,
+            repo_param=spec.repo_param,
+        )
+        if full_repo is None:
+            return []
+        return list_open_issues(
+            full_repo, prefix=prefix, token=token, opener=opener, runner=runner
+        )
+    return []
 
 
 def orgs_from_url_templates(url_templates: Iterable[str]) -> list[str]:
@@ -766,11 +844,25 @@ def suggest_param_values(
     url_template: str,
     filled_args: list[str],
     prefix: str,
+    complete: Mapping[str, ParamCompleteSpec] | None = None,
     token: str | None = None,
     opener: Any | None = None,
     runner: GhRunner | None = None,
 ) -> list[str]:
     """Return completion candidates for the next unresolved placeholder."""
+    if complete is not None:
+        spec = complete.get(param_name)
+        if spec is not None:
+            return _suggest_from_complete_spec(
+                spec=spec,
+                url_template=url_template,
+                filled_args=filled_args,
+                prefix=prefix,
+                complete=complete,
+                token=token,
+                opener=opener,
+                runner=runner,
+            )
     name = param_name.lower()
     if name in _REPO_PARAM_NAMES:
         org = infer_fixed_github_org(url_template)
@@ -779,7 +871,11 @@ def suggest_param_values(
         )
     if name in _PR_PARAM_NAMES:
         repo_token = filled_args[-1] if filled_args else ""
-        full_repo = resolve_repo_for_pr(url_template=url_template, repo_arg=repo_token)
+        full_repo = resolve_repo_for_pr(
+            url_template=url_template,
+            repo_arg=repo_token,
+            complete=complete,
+        )
         if full_repo is None:
             return []
         return list_open_pull_requests(
@@ -787,7 +883,11 @@ def suggest_param_values(
         )
     if name in _ISSUE_PARAM_NAMES:
         repo_token = filled_args[-1] if filled_args else ""
-        full_repo = resolve_repo_for_pr(url_template=url_template, repo_arg=repo_token)
+        full_repo = resolve_repo_for_pr(
+            url_template=url_template,
+            repo_arg=repo_token,
+            complete=complete,
+        )
         if full_repo is None:
             return []
         return list_open_issues(

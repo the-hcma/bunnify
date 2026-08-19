@@ -6,8 +6,11 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Mapping
+
+from app.completion_spec import ParamCompleteSpec, parse_complete_map
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -35,6 +38,9 @@ class KeyEntry:
     url: str = ""
     params: tuple[str, ...] = ()
     optional_params: frozenset[str] = frozenset()
+    complete: Mapping[str, ParamCompleteSpec] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 @dataclass(frozen=True)
@@ -192,12 +198,19 @@ def parse_key_entry(raw: Any) -> KeyEntry | None:
     elif isinstance(defaults_raw, dict):
         # Backward compatible with older /api/keys/ payloads.
         optional = frozenset(str(name) for name in defaults_raw)
+    complete: Mapping[str, ParamCompleteSpec] = MappingProxyType({})
+    complete_raw = raw.get("complete")
+    if complete_raw is not None:
+        parsed_complete = parse_complete_map(complete_raw)
+        if parsed_complete is not None:
+            complete = MappingProxyType(parsed_complete)
     return KeyEntry(
         key=key,
         description=description,
         url=url,
         params=params,
         optional_params=optional,
+        complete=complete,
     )
 
 
@@ -248,6 +261,18 @@ def fetch_keys(
     return [
         entry.key for entry in fetch_key_entries(base_url=base_url, timeout=timeout)
     ]
+
+
+def lookup_key_entry(entries: list[KeyEntry], key: str) -> KeyEntry | None:
+    """Return the catalog entry for ``key`` (case-insensitive fallback)."""
+    for entry in entries:
+        if entry.key == key:
+            return entry
+    lowered = key.lower()
+    for entry in entries:
+        if entry.key.lower() == lowered:
+            return entry
+    return None
 
 
 def fetch_suggestions(

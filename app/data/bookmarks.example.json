@@ -29,7 +29,18 @@
   },
   "i": {
     "description": "GitHub Issue (Usage: i <org/repo> <issue_number>)",
-    "url": "https://github.com/#{repo}/issues/#{issue_number}"
+    "url": "https://github.com/#{repo}/issues/#{issue_number}",
+    "complete": {
+      "issue_number": { "kind": "github_issue", "repo_param": "repo" },
+      "repo": { "kind": "github_repo" }
+    }
+  },
+  "ih": {
+    "description": "the-hcma GitHub Issues (Usage: ih <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/issues",
+    "complete": {
+      "repo": { "kind": "github_repo", "org": "the-hcma" }
+    }
   },
   "keep": {
     "description": "Google Keep",
@@ -49,7 +60,32 @@
   },
   "pr": {
     "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
-    "url": "https://github.com/#{repo}/pull/#{pr_number}"
+    "url": "https://github.com/#{repo}/pull/#{pr_number}",
+    "complete": {
+      "pr_number": { "kind": "github_pull_request", "repo_param": "repo" },
+      "repo": { "kind": "github_repo" }
+    }
+  },
+  "prh": {
+    "description": "the-hcma GitHub Pull Requests (Usage: prh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}/pulls",
+    "complete": {
+      "repo": { "kind": "github_repo", "org": "the-hcma" }
+    }
+  },
+  "repo": {
+    "description": "GitHub repo (Usage: repo <org/repo>)",
+    "url": "https://github.com/#{repo}",
+    "complete": {
+      "repo": { "kind": "github_repo" }
+    }
+  },
+  "repoh": {
+    "description": "the-hcma GitHub repo (Usage: repoh <repo>)",
+    "url": "https://github.com/the-hcma/#{repo}",
+    "complete": {
+      "repo": { "kind": "github_repo", "org": "the-hcma" }
+    }
   },
   "sheets": {
     "description": "Google Sheets",

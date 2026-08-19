@@ -5,14 +5,37 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 from jsonschema import ValidationError, validate
 
+from app.completion_spec import parse_complete_map, validate_complete_map
 from app.config import default_bookmarks_path
 from bookmarks.models import Bookmark
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
+
+
+def _complete_map_errors(
+    data: dict[str, Any],
+) -> list[str]:
+    """Validate every bookmark ``complete`` map before mutating the DB."""
+    messages: list[str] = []
+    for key, bookmark_data in data.items():
+        complete_raw = bookmark_data.get("complete")
+        complete = parse_complete_map(complete_raw)
+        if complete_raw is not None and complete is None:
+            messages.append(f'Invalid "complete" map for bookmark "{key}"')
+            continue
+        if complete:
+            url = bookmark_data.get("url", "")
+            if not isinstance(url, str):
+                url = ""
+            messages.extend(
+                f'bookmark "{key}": {message}'
+                for message in validate_complete_map(complete, url=url)
+            )
+    return messages
 
 
 class Command(BaseCommand):
@@ -41,6 +64,31 @@ class Command(BaseCommand):
                 "^[a-zA-Z0-9_]+$": {
                     "type": "object",
                     "properties": {
+                        "complete": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                                "github_issue",
+                                                "github_org",
+                                                "github_pull_request",
+                                                "github_repo",
+                                            ],
+                                        },
+                                        "org": {"type": "string"},
+                                        "repo_param": {"type": "string"},
+                                    },
+                                    "required": ["kind"],
+                                    "additionalProperties": False,
+                                }
+                            },
+                            "additionalProperties": False,
+                        },
+                        "defaults": {"type": "object"},
                         "description": {"type": "string"},
                         "url": {"type": "string"},
                         "old-url": {"type": "string"},
@@ -77,7 +125,16 @@ class Command(BaseCommand):
                             f"Reserved keywords: {', '.join(reserved_keywords)}"
                         )
                     )
-                    return
+                    raise CommandError(
+                        f'Bookmark key "{key}" is reserved and cannot be used.'
+                    )
+
+            complete_errors = _complete_map_errors(data)
+            if complete_errors:
+                for message in complete_errors:
+                    logger.error("complete validation: %s", message)
+                    self.stdout.write(self.style.ERROR(f"Error: {message}"))
+                raise CommandError("Bookmark complete map validation failed")
 
             # Clear existing bookmarks
             existing_count = Bookmark.objects.count()
@@ -91,6 +148,8 @@ class Command(BaseCommand):
                 # Handle both "old-url" and "oldurl" variants
                 old_url = bookmark_data.get("old-url") or bookmark_data.get("oldurl")
                 defaults = bookmark_data.get("defaults", {})
+                complete_raw = bookmark_data.get("complete")
+                complete = parse_complete_map(complete_raw)
 
                 Bookmark.objects.create(
                     key=key,
@@ -98,6 +157,20 @@ class Command(BaseCommand):
                     url=bookmark_data["url"],
                     old_url=old_url,
                     defaults=defaults,
+                    complete={
+                        param: {
+                            "kind": spec.kind,
+                            **({"org": spec.org} if spec.org else {}),
+                            **(
+                                {"repo_param": spec.repo_param}
+                                if spec.repo_param
+                                else {}
+                            ),
+                        }
+                        for param, spec in complete.items()
+                    }
+                    if complete
+                    else {},
                 )
                 created_count += 1
                 logger.debug(
@@ -122,6 +195,8 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.ERROR(f"Error: Schema validation failed: {e.message}")
             )
+        except CommandError:
+            raise
         except Exception as e:
             logger.error(f"Unexpected error loading bookmarks: {e}", exc_info=True)
             self.stdout.write(self.style.ERROR(f"Error: {e}"))
