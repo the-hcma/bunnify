@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import MappingProxyType
 
 from django.test import SimpleTestCase, TestCase
@@ -278,6 +279,45 @@ class LoadBookmarksCompleteTests(TestCase):
                 call_command("load_bookmarks", file=str(path))
         self.assertEqual(Bookmark.objects.count(), 1)
         self.assertTrue(Bookmark.objects.filter(key="keep").exists())
+
+
+class BookmarksExampleTests(SimpleTestCase):
+    _EXAMPLE_PATHS = (
+        Path(__file__).resolve().parents[1] / "app" / "data" / "bookmarks.example.json",
+        Path(__file__).resolve().parents[1] / "bunnify.json.example",
+    )
+
+    def test_example_complete_maps_validate(self) -> None:
+        import json
+
+        for path in self._EXAMPLE_PATHS:
+            with self.subTest(path=path.name):
+                data = json.loads(path.read_text(encoding="utf-8"))
+                seen = False
+                for key, bookmark in data.items():
+                    if "complete" not in bookmark:
+                        continue
+                    seen = True
+                    complete = parse_complete_map(bookmark.get("complete"))
+                    self.assertIsNotNone(complete, msg=f"{key!r} complete map invalid")
+                    assert complete is not None
+                    errors = validate_complete_map(complete, url=bookmark["url"])
+                    self.assertEqual(errors, [], msg=f"{key!r}: {errors}")
+                self.assertTrue(seen, msg=f"{path.name} has no complete examples")
+
+    def test_example_urls_are_not_redacted_placeholders(self) -> None:
+        import json
+
+        for path in self._EXAMPLE_PATHS:
+            with self.subTest(path=path.name):
+                data = json.loads(path.read_text(encoding="utf-8"))
+                for key, bookmark in data.items():
+                    url = bookmark.get("url", "")
+                    self.assertNotIn(
+                        "_S_9S_9S",
+                        url,
+                        msg=f"{key!r} URL looks like a redacted playlist id: {url!r}",
+                    )
 
 
 class _FakeResponse:

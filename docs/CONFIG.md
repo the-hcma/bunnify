@@ -127,3 +127,15 @@ bunnify --complete-param pr the-hcma/bunnify --prefix 1
 
 Positional arguments after `--complete-param KEY` are already-filled parameters;
 `--prefix` filters the next parameter's candidates.
+
+## Bookmark examples
+
+Shipped examples (`app/data/bookmarks.example.json`, `bunnify.json.example`)
+include GitHub shortcuts with `complete` markers (org-scoped repos, PRs,
+issues, merge queue, and Graphite review links). Copy or merge into your
+personal file when upgrading an existing install:
+
+```bash
+cp bunnify.json.example ~/.config/bunnify/bookmarks.json
+# or merge selected keys / complete blocks into an existing bookmarks.json
+```
