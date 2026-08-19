@@ -3557,9 +3557,11 @@ class KeyUsageAndCompletionTests(TestCase):
             clear_github_completion_cache,
             list_github_repos,
             save_github_completion_cache,
+            wait_for_github_completion_refresh,
         )
 
         clear_github_completion_cache()
+        wait_for_github_completion_refresh(timeout=5.0)
 
         class SeedResponse:
             def __enter__(self):
@@ -3630,14 +3632,7 @@ class KeyUsageAndCompletionTests(TestCase):
             )
 
             # Background refresh eventually updates memory + disk.
-            deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline:
-                try:
-                    if "bunnify" in path.read_text(encoding="utf-8"):
-                        break
-                except OSError:
-                    pass
-                time.sleep(0.05)
+            self.assertTrue(wait_for_github_completion_refresh(timeout=10.0))
             self.assertIn("bunnify", path.read_text(encoding="utf-8"))
             self.assertEqual(
                 list_github_repos(org="the-hcma", token="t"),
@@ -3646,8 +3641,6 @@ class KeyUsageAndCompletionTests(TestCase):
             self.assertGreater(network_calls["n"], 0)
             # Join before TemporaryDirectory teardown so the daemon cannot
             # recreate paths under the deleted tmp root.
-            from app.github_complete import wait_for_github_completion_refresh
-
             self.assertTrue(wait_for_github_completion_refresh(timeout=5.0))
 
     def test_desc_truncation_respects_width(self) -> None:
