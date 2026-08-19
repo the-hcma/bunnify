@@ -40,6 +40,7 @@ from Foundation import NSAttributedString, NSMakeRange, NSMutableAttributedStrin
 from app.spotty_bunny_about_info import (
     about_details_text_and_links,
     about_link_spans,
+    about_version_text_and_links,
     handle_about_link_click,
     load_about_runtime_info,
 )
@@ -69,7 +70,6 @@ ABOUT_SUMMARY = (
     "Esc hides the box."
 )
 ABOUT_WARN_RGB = (0.62, 0.28, 0.08)
-SPOTTY_BUNNY_REPO_URL = "https://github.com/the-hcma/bunnify"
 
 
 class SpottyBunnyAboutPanel(NSPanel):
@@ -130,20 +130,18 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
     package_version, commit = get_build_info()
     runtime = load_about_runtime_info()
     status = update if update is not None else read_cached_update_status()
-    version_text = f"Version {package_version} · commit {commit}"
+    version_text, version_links = about_version_text_and_links(package_version, commit)
     update_text = (
         None
         if not status.outdated or not status.latest
         else f"Update available: {status.latest}"
     )
-    repo_text = "Repository: github.com/the-hcma/bunnify"
     details_text, details_links = about_details_text_and_links(runtime)
     inner_cap = ABOUT_PANEL_MAX_WIDTH - 2.0 * ABOUT_INSET
     needed_width = max(
         _measure_text("Spotty Bunny", title_font, max_width=inner_cap)[0],
         _measure_text(ABOUT_COPYRIGHT, body_font, max_width=inner_cap)[0],
         _measure_text(details_text, body_font, max_width=inner_cap)[0],
-        _measure_text(repo_text, body_font, max_width=inner_cap)[0],
         _measure_text(version_text, body_font, max_width=inner_cap)[0],
         0.0
         if update_text is None
@@ -166,9 +164,9 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         36.0,
         _measure_text(details_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
     )
-    repo_height = max(
+    version_height = max(
         18.0,
-        _measure_text(repo_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
+        _measure_text(version_text, body_font, max_width=inner)[1] + ABOUT_CELL_PAD,
     )
     rows: list[tuple[float, Callable[[float, float], NSTextField]]] = [
         (
@@ -188,11 +186,11 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
             ),
         ),
         (
-            18.0,
-            lambda y, h: _label(
+            version_height,
+            lambda y, h: _multi_link_field(
                 NSMakeRect(ABOUT_INSET, y, inner, h),
                 version_text,
-                color=_srgb_color(ABOUT_MUTED_RGB),
+                version_links,
             ),
         ),
     ]
@@ -217,15 +215,6 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
                     ABOUT_COPYRIGHT,
                     ABOUT_GITHUB_HANDLE,
                     ABOUT_GITHUB_PROFILE_URL,
-                ),
-            ),
-            (
-                repo_height,
-                lambda y, h: _link_field(
-                    NSMakeRect(ABOUT_INSET, y, inner, h),
-                    repo_text,
-                    "github.com/the-hcma/bunnify",
-                    SPOTTY_BUNNY_REPO_URL,
                 ),
             ),
             (

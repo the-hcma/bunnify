@@ -453,6 +453,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         text, links = about_details_text_and_links(runtime)
         self.assertEqual(
             text,
+            "Repository: github.com/the-hcma/bunnify\n"
             "License: MIT License\n"
             "Bookmarks: ~/.config/bunnify/bookmarks.json\n"
             "GitHub: github.com/acme/repo\n"
@@ -461,6 +462,10 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         self.assertEqual(
             links,
             (
+                (
+                    "github.com/the-hcma/bunnify",
+                    "https://github.com/the-hcma/bunnify",
+                ),
                 (
                     "MIT License",
                     "https://github.com/the-hcma/bunnify/blob/main/LICENSE",
@@ -472,6 +477,28 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                 ("github.com/acme/repo", "https://github.com/acme/repo"),
                 ("http://127.0.0.1:8000", "http://127.0.0.1:8000"),
             ),
+        )
+
+    def test_about_version_text_and_links(self) -> None:
+        from app.spotty_bunny_about_info import about_version_text_and_links
+
+        text, links = about_version_text_and_links("0.7.1", "3222872ccd01")
+        self.assertEqual(text, "Version 0.7.1 · commit 3222872ccd01")
+        self.assertEqual(
+            links,
+            (
+                ("0.7.1", "https://pypi.org/project/bunnify/0.7.1/"),
+                (
+                    "3222872ccd01",
+                    "https://github.com/the-hcma/bunnify/commit/3222872ccd01",
+                ),
+            ),
+        )
+        unknown_text, unknown_links = about_version_text_and_links("0.7.1", "unknown")
+        self.assertEqual(unknown_text, "Version 0.7.1 · commit unknown")
+        self.assertEqual(
+            unknown_links,
+            (("0.7.1", "https://pypi.org/project/bunnify/0.7.1/"),),
         )
 
     def test_open_path_in_text_editor_uses_open_t(self) -> None:
@@ -2107,6 +2134,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("_AboutLinkField", source)
         self.assertIn("load_about_runtime_info", source)
         self.assertIn("about_details_text_and_links", source)
+        self.assertIn("about_version_text_and_links", source)
         self.assertIn("Repository:", source)
         self.assertIn("_multi_link_field", source)
         self.assertIn("textView_clickedOnLink_atIndex_", source)
@@ -2124,6 +2152,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn('["open", "-t", str(path)]', info_source)
         self.assertIn("def about_details_text_and_links", info_source)
         self.assertIn("def about_link_spans", info_source)
+        self.assertIn("def about_version_text_and_links", info_source)
         self.assertIn("def handle_about_link_click", info_source)
 
     def test_search_field_is_centered_with_logo_on_right(self) -> None:
