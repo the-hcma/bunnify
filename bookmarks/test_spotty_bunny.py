@@ -648,6 +648,112 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertFalse(any(call[1] == "bootstrap" for call in ctl.calls))
             self.assertIn("Privacy & Security", stderr.getvalue())
 
+    def test_install_interactive_tcc_recheck_ctrl_c_cancels(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(TccStatus(False, False), TccStatus(False, False))
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", side_effect=KeyboardInterrupt),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual(tcc.probes, 2)
+            self.assertFalse(
+                (home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist").exists()
+            )
+
+    def test_install_interactive_tcc_recheck_still_missing_after_enter(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(
+            TccStatus(False, False),
+            TccStatus(False, False),
+            TccStatus(False, False),
+        )
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            stderr = StringIO()
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", return_value=""),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=stderr.write,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual(tcc.probes, 3)
+            self.assertFalse(
+                (home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist").exists()
+            )
+
+    def test_install_interactive_tcc_recheck_succeeds_after_enter(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(
+            TccStatus(False, False),
+            TccStatus(False, False),
+            TccStatus(True, True),
+        )
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            program.write_text("#!/opt/venv/bin/python\n", encoding="utf-8")
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", return_value=""),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(tcc.probes, 3)
+            self.assertEqual(tcc.requests, 1)
+
     def test_install_rechecks_tcc_after_prompt(self) -> None:
         from app.spotty_bunny_agent import install_agent
 

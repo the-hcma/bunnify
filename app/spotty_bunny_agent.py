@@ -541,9 +541,16 @@ def _require_current_tcc(
             )
             try:
                 input()
-            except EOFError:
+            except EOFError, KeyboardInterrupt:
                 return None
-            status = probe(interpreter)
+            try:
+                status = probe(interpreter)
+            except ImportError:
+                err(MACOS_EXTRA_HINT)
+                return None
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
+                return None
             if status.ok:
                 return status
         return None
