@@ -25,6 +25,7 @@ from app.client import (
     fetch_key_entries,
     fetch_keys,
     fetch_suggestions,
+    lookup_key_entry,
     resolve_shortcut,
 )
 from app.config import (
@@ -45,6 +46,7 @@ from app.config import (
 from app.github_complete import (
     bootstrap_github_completion_cache,
     ensure_github_authenticated,
+    suggest_param_values,
 )
 from app.interactive import (
     REPL_META_COMMANDS,
@@ -1205,12 +1207,53 @@ def _dispatch_repl_line(
     return True
 
 
+def _run_complete_param(
+    *,
+    key: str,
+    filled_args: tuple[str, ...],
+    prefix: str,
+    base_url: str,
+) -> None:
+    """Emit shell Tab-completion candidates for one shortcut parameter."""
+    entries = fetch_key_entries(base_url=base_url)
+    entry = lookup_key_entry(entries, key)
+    if entry is None:
+        raise ClientError(f"Unknown shortcut: {key!r}")
+    if not entry.params:
+        return
+    arg_index = len(filled_args)
+    if arg_index >= len(entry.params):
+        return
+    param_name = entry.params[arg_index]
+    token = ensure_github_authenticated(interactive=False)
+    if token:
+        bootstrap_github_completion_cache(
+            url_templates=[entry.url],
+            token=token,
+        )
+    suggest_kwargs: dict[str, object] = {
+        "param_name": param_name,
+        "url_template": entry.url,
+        "filled_args": list(filled_args),
+        "prefix": prefix,
+    }
+    if entry.complete:
+        suggest_kwargs["complete"] = entry.complete
+    if token:
+        suggest_kwargs["token"] = token
+    values = suggest_param_values(**suggest_kwargs)  # type: ignore[arg-type]
+    for value in values:
+        click.echo(value)
+
+
 def _run(
     *,
     shortcut_args: tuple[str, ...],
     base_url: str,
     list_keys: bool,
     list_usage: bool = False,
+    complete_param_key: str | None = None,
+    complete_prefix: str = "",
     use_fzf: bool,
     fzf_query: str,
     print_url: bool,
@@ -1228,6 +1271,15 @@ def _run(
         entries = fetch_key_entries(base_url=base_url)
         for usage_line in format_key_usage_lines(entries, theme=active_theme):
             click.echo(usage_line)
+        return
+
+    if complete_param_key is not None:
+        _run_complete_param(
+            key=complete_param_key,
+            filled_args=shortcut_args,
+            prefix=complete_prefix,
+            base_url=base_url,
+        )
         return
 
     if list_keys:
@@ -1322,6 +1374,22 @@ def _print_cli_version(
     help="Print short usage for each shortcut (params, description, target).",
 )
 @click.option(
+    "--complete-param",
+    "complete_param_key",
+    default=None,
+    metavar="KEY",
+    help=(
+        "Emit Tab-completion candidates for shortcut KEY (one per line). "
+        "Positional args are already-filled parameters; use --prefix to filter."
+    ),
+)
+@click.option(
+    "--prefix",
+    "complete_prefix",
+    default="",
+    help="Filter prefix when used with --complete-param.",
+)
+@click.option(
     "--fzf",
     "use_fzf",
     is_flag=True,
@@ -1399,6 +1467,8 @@ def main(
     base_url_option: str | None,
     list_keys: bool,
     list_usage: bool,
+    complete_param_key: str | None,
+    complete_prefix: str,
     use_fzf: bool,
     fzf_query: str,
     print_url: bool,
@@ -1520,6 +1590,8 @@ def main(
             base_url=resolved_url,
             list_keys=list_keys,
             list_usage=list_usage,
+            complete_param_key=complete_param_key,
+            complete_prefix=complete_prefix,
             use_fzf=use_fzf,
             fzf_query=fzf_query,
             print_url=print_url or dry_run,

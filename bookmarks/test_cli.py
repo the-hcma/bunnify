@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 from io import StringIO
+from types import MappingProxyType
 from unittest.mock import ANY, MagicMock, patch
 
 from click.testing import CliRunner
@@ -13,6 +14,7 @@ from django.test import Client, TestCase, override_settings
 from app import interactive
 from app.cli import _run, matching_keys
 from app.client import ClientError, KeyEntry, ResolvedShortcut, parse_keys_payload
+from app.completion_spec import ParamCompleteSpec
 
 from .models import Bookmark
 
@@ -210,6 +212,23 @@ class ResolveApiTests(TestCase):
         self.assertNotIn("defaults", entries["pr"])
         self.assertEqual(entries["h"]["url"], "/list/")
         self.assertEqual(entries["cmd"]["description"], "Command palette")
+
+    def test_keys_endpoint_includes_complete(self) -> None:
+        Bookmark.objects.create(
+            key="repoh",
+            description="the-hcma GitHub repo",
+            url="https://github.com/the-hcma/#{repo}",
+            complete={
+                "repo": {"kind": "github_repo", "org": "the-hcma"},
+            },
+        )
+        response = self.client.get("/api/keys/")
+        self.assertEqual(response.status_code, 200)
+        entries = {item["key"]: item for item in response.json()["entries"]}
+        self.assertEqual(
+            entries["repoh"]["complete"],
+            {"repo": {"kind": "github_repo", "org": "the-hcma"}},
+        )
 
 
 class CliUnitTests(TestCase):
@@ -519,6 +538,59 @@ class CliUnitTests(TestCase):
                 open_browser=False,
             )
         self.assertEqual(stdout.getvalue().splitlines(), ["h", "gh"])
+
+    @patch("app.cli.suggest_param_values")
+    @patch("app.cli.ensure_github_authenticated")
+    @patch("app.cli.fetch_key_entries")
+    def test_complete_param_emits_candidates(
+        self,
+        mock_fetch_key_entries,
+        mock_ensure_github,
+        mock_suggest,
+    ) -> None:
+        from app.cli import _run
+
+        mock_fetch_key_entries.return_value = [
+            KeyEntry(
+                key="repoh",
+                description="the-hcma GitHub repo",
+                url="https://github.com/the-hcma/#{repo}",
+                params=("repo",),
+                complete=MappingProxyType(
+                    {
+                        "repo": ParamCompleteSpec(
+                            kind="github_repo",
+                            org="the-hcma",
+                        ),
+                    }
+                ),
+            )
+        ]
+        mock_ensure_github.return_value = "test-token"
+        mock_suggest.return_value = ["bunnify", "domesti-bot"]
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            _run(
+                shortcut_args=(),
+                base_url="http://127.0.0.1:8000",
+                list_keys=False,
+                complete_param_key="repoh",
+                complete_prefix="bun",
+                use_fzf=False,
+                fzf_query="",
+                print_url=False,
+                open_browser=False,
+            )
+        self.assertEqual(
+            stdout.getvalue().splitlines(),
+            ["bunnify", "domesti-bot"],
+        )
+        mock_suggest.assert_called_once()
+        call_kwargs = mock_suggest.call_args.kwargs
+        self.assertEqual(call_kwargs["param_name"], "repo")
+        self.assertEqual(call_kwargs["prefix"], "bun")
+        self.assertEqual(call_kwargs["filled_args"], [])
 
     @patch("app.cli.resolve_shortcut")
     @patch("app.cli.fetch_keys")
@@ -1174,8 +1246,9 @@ class ConfigUnitTests(TestCase):
             payload = json.loads(target.read_text(encoding="utf-8"))
             self.assertIn("bun", payload)
             self.assertIn("gh", payload)
+            self.assertIn("ih", payload)
+            self.assertIn("repoh", payload)
             self.assertIn("yt", payload)
-            self.assertNotIn("ih", payload)
             self.assertNotIn("ihh", payload)
             self.assertTrue(
                 any("No bookmarks found" in message for message in messages)

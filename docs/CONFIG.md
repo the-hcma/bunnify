@@ -59,3 +59,71 @@ remain supported; they are interpreted as remote mode.
   `$BUNNIFY_DATA_DIR/spotty-bunny.log`, or `~/.local/share/bunnify/spotty-bunny.log`).
   `spotty-bunny --log-file` also sets it. Rotation matches the server
   (10 MiB, 5 backups).
+
+## Bookmark schema
+
+Each entry in `bookmarks.json` is an object with:
+
+- `description` — short label shown in the REPL and web UI.
+- `url` — target URL or path template. Placeholders use `#{name}` (for example
+  `https://github.com/#{repo}/pull/#{pr_number}`).
+- `defaults` (optional) — map of placeholder names to default values. Keys listed
+  here are optional at the CLI/REPL.
+- `complete` (optional) — declares Tab-completion behavior per placeholder instead
+  of relying on parameter-name heuristics alone. Loaded with bookmarks, validated
+  on import, and exposed through `/api/keys/` for the CLI and shell wrappers.
+
+### `complete` map
+
+Keys in `complete` must match placeholder names in `url`. Each value is an object
+with a required `kind` and optional fields depending on the kind:
+
+| Kind | Completes | Optional fields |
+|------|-----------|-------------------|
+| `github_org` | org/login names | — |
+| `github_repo` | repo short name or `owner/name` | `org` — fixed org → short repo names; omitted → `owner/name` from the authenticated user's repos |
+| `github_pull_request` | open PR numbers | `repo_param` — prior argument holding the repo (required when the URL has a repo placeholder); `org` when the repo argument is a short name under a fixed org |
+| `github_issue` | open issue numbers | same as `github_pull_request` |
+
+When `complete.<param>` is absent, the CLI falls back to legacy heuristics
+(parameter names like `repo`, `pr_number`, `issue_number`, plus URL-based org
+inference) so older bookmarks keep working.
+
+Example (from `bunnify.json.example`):
+
+```json
+"repoh": {
+  "description": "the-hcma GitHub repo (Usage: repoh <repo>)",
+  "url": "https://github.com/the-hcma/#{repo}",
+  "complete": {
+    "repo": { "kind": "github_repo", "org": "the-hcma" }
+  }
+},
+"pr": {
+  "description": "GitHub Pull Request (Usage: pr <org/repo> <pr_number>)",
+  "url": "https://github.com/#{repo}/pull/#{pr_number}",
+  "complete": {
+    "pr_number": { "kind": "github_pull_request", "repo_param": "repo" },
+    "repo": { "kind": "github_repo" }
+  }
+}
+```
+
+GitHub-backed completion requires a token (`GITHUB_TOKEN`, `GH_TOKEN`, or
+`gh auth login`). Results are cached under `~/scratch/bunnify/github-completions.json`.
+
+### Shell Tab completion
+
+For bash/fish/zsh wrappers, emit candidates for the parameter currently being
+typed:
+
+```bash
+bunnify --complete-param repoh --prefix bun
+# → one candidate per line (bunnify, domesti-bot, …)
+
+bunnify --complete-param pr the-hcma/bunnify --prefix 1
+# → open PR numbers starting with 1
+```
+
+Positional arguments after `--complete-param KEY` are already-filled parameters;
+`--prefix` filters the next parameter's candidates.

@@ -111,6 +111,93 @@ class CompletionSpecTests(SimpleTestCase):
         )
         self.assertEqual(values, ["bunnify"])
 
+    def test_suggest_param_values_org_wide_repos(self) -> None:
+        clear_github_completion_cache()
+        complete = MappingProxyType(
+            {"repo": ParamCompleteSpec(kind="github_repo")},
+        )
+        values = suggest_param_values(
+            param_name="repo",
+            url_template="https://github.com/#{repo}",
+            filled_args=[],
+            prefix="the-hc",
+            complete=complete,
+            token="test-token",
+            opener=lambda _req, timeout=8.0: _FakeResponse(
+                [
+                    {"full_name": "the-hcma/bunnify"},
+                    {"full_name": "other-org/widget"},
+                ]
+            ),
+        )
+        self.assertEqual(values, ["the-hcma/bunnify"])
+
+    def test_suggest_param_values_github_org_kind(self) -> None:
+        clear_github_completion_cache()
+        complete = MappingProxyType(
+            {"org": ParamCompleteSpec(kind="github_org")},
+        )
+        values = suggest_param_values(
+            param_name="org",
+            url_template="https://github.com/#{org}",
+            filled_args=[],
+            prefix="the-h",
+            complete=complete,
+            token="test-token",
+            opener=lambda _req, timeout=8.0: _FakeResponse(
+                [{"login": "the-hcma"}, {"login": "other"}]
+            ),
+        )
+        self.assertEqual(values, ["the-hcma"])
+
+    def test_suggest_param_values_pull_request_with_short_repo(self) -> None:
+        clear_github_completion_cache()
+        complete = MappingProxyType(
+            {
+                "pr_number": ParamCompleteSpec(
+                    kind="github_pull_request",
+                    repo_param="repo",
+                ),
+                "repo": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+            }
+        )
+        values = suggest_param_values(
+            param_name="pr_number",
+            url_template="https://github.com/#{repo}/pull/#{pr_number}",
+            filled_args=["bunnify"],
+            prefix="32",
+            complete=complete,
+            token="test-token",
+            opener=lambda _req, timeout=8.0: _FakeResponse(
+                [{"number": 328}, {"number": 42}]
+            ),
+        )
+        self.assertEqual(values, ["328"])
+
+    def test_suggest_param_values_issue_with_short_repo(self) -> None:
+        clear_github_completion_cache()
+        complete = MappingProxyType(
+            {
+                "issue_number": ParamCompleteSpec(
+                    kind="github_issue",
+                    repo_param="repo",
+                ),
+                "repo": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+            }
+        )
+        values = suggest_param_values(
+            param_name="issue_number",
+            url_template="https://github.com/#{repo}/issues/#{issue_number}",
+            filled_args=["bunnify"],
+            prefix="3",
+            complete=complete,
+            token="test-token",
+            opener=lambda _req, timeout=8.0: _FakeResponse(
+                [{"number": 324}, {"number": 42, "pull_request": {}}]
+            ),
+        )
+        self.assertEqual(values, ["324"])
+
 
 class _FakeResponse:
     def __init__(self, payload: object) -> None:

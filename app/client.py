@@ -263,6 +263,18 @@ def fetch_keys(
     ]
 
 
+def lookup_key_entry(entries: list[KeyEntry], key: str) -> KeyEntry | None:
+    """Return the catalog entry for ``key`` (case-insensitive fallback)."""
+    for entry in entries:
+        if entry.key == key:
+            return entry
+    lowered = key.lower()
+    for entry in entries:
+        if entry.key.lower() == lowered:
+            return entry
+    return None
+
+
 def fetch_suggestions(
     query: str,
     *,
