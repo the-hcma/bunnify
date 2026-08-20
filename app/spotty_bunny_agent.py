@@ -31,7 +31,7 @@ AGENT_COMMANDS = frozenset({"install", "status", "uninstall", "upgrade"})
 AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
-LAUNCHD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+LAUNCHD_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 POST_INSTALL_HINT = (
     f"{COMMAND_NAME}: hold one Control and press the other to test the overlay."
 )
@@ -94,8 +94,11 @@ def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
     args_xml = "\n".join(
         f"    <string>{escape(arg)}</string>" for arg in program_arguments
     )
-    return _PLIST_TEMPLATE.replace("__PROGRAM_ARGUMENTS__", args_xml).replace(
-        "__HOME__", escape(str(home))
+    path = launchd_path_for_home(home)
+    return (
+        _PLIST_TEMPLATE.replace("__PROGRAM_ARGUMENTS__", args_xml)
+        .replace("__HOME__", escape(str(home)))
+        .replace("__LAUNCHD_PATH__", escape(path))
     )
 
 
@@ -217,6 +220,12 @@ def is_agent_loaded(
         launchctl=launchctl,
     )
     return completed.returncode == 0
+
+
+def launchd_path_for_home(home: Path) -> str:
+    """PATH for the Spotty Bunny LaunchAgent (Homebrew + ``~/.local/bin``)."""
+    local_bin = str((home / ".local" / "bin").resolve())
+    return f"{local_bin}:{LAUNCHD_PATH}"
 
 
 def refresh_agent_plist(
@@ -728,6 +737,10 @@ def _probe_tcc_for_status(
 
 def _shell_exec_python_from_wrapper(raw: str) -> Path | None:
     """Return the python path from a bash ``exec`` line, ignoring comments."""
+    assignments: dict[str, str] = {}
+    assign_pattern = re.compile(
+        r"^(?P<name>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>[\"']?)(?P<body>[^\"'\n]*)(?P=value)$"
+    )
     pattern = re.compile(
         r"^exec\s+(?:\"|\')?(?P<python>[^\"'\n]+?/bin/python(?:3(?:\.\d+)?)?)",
     )
@@ -735,11 +748,23 @@ def _shell_exec_python_from_wrapper(raw: str) -> Path | None:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
+        assign = assign_pattern.match(stripped)
+        if assign is not None:
+            assignments[assign.group("name")] = assign.group("body")
+            continue
         match = pattern.match(stripped)
         if match is None:
             continue
         token = match.group("python").strip("\"'")
-        expanded = token.replace("$HOME", str(Path.home()))
+        expanded = token.replace("$HOME", str(Path.home())).replace(
+            "${HOME}", str(Path.home())
+        )
+        for name, value in assignments.items():
+            expanded = expanded.replace(f"${{{name}}}", value).replace(
+                f"${name}", value
+            )
+        if "$" in expanded:
+            continue
         return Path(expanded).expanduser()
     return None
 
@@ -765,6 +790,12 @@ _PLIST_TEMPLATE = """\
   <array>
 __PROGRAM_ARGUMENTS__
   </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__LAUNCHD_PATH__</string>
+  </dict>
 
   <key>KeepAlive</key>
   <true/>

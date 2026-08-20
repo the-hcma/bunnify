@@ -118,6 +118,8 @@ from app.spotty_bunny_complete import (
     completion_row_after_selector,
     completion_still_current,
     completions_for,
+    field_editor_selector_name,
+    is_tab_completion_selector,
     make_spotty_completer,
 )
 from app.spotty_bunny_history import (
@@ -132,6 +134,7 @@ from app.spotty_bunny_hotkey import (
     DEVICE_LEFT_CONTROL_MASK,
     DEVICE_RIGHT_CONTROL_MASK,
     ESCAPE_KEYCODE,
+    TAB_KEYCODE,
     ChordTracker,
     apply_control_event,
     describe_key,
@@ -194,6 +197,10 @@ logger = logging.getLogger(__name__)
 class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
 
+    def completeWithTab_(self, _sender) -> None:
+        """Run Tab completion (field editor, key-view loop, or event-tap fallback)."""
+        self._request_completions()
+
     def controlTextDidBeginEditing_(self, _notification) -> None:
         self._paint_search_editor()
 
@@ -202,14 +209,21 @@ class SpottyBunnyController(NSObject):
             return
         if self.status is not None and str(self.status.stringValue()):
             self._set_status("")
-        if self._completion_rows:
-            self._hide_completions()
+        if not self._completion_rows:
+            return
+        text = str(self.field.stringValue()) if self.field is not None else ""
+        if any(
+            apply_completion(self._completion_prefix, row) == text
+            for row in self._completion_rows
+        ):
+            return
+        self._hide_completions()
 
     def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
         """Tab completions, history up/down, dismiss on Esc/Return."""
-        name = selector if isinstance(selector, str) else str(selector)
-        if name == "insertTab:":
-            self._request_completions()
+        name = field_editor_selector_name(selector)
+        if is_tab_completion_selector(name):
+            self.completeWithTab_(None)
             return True
         if self._completion_rows and name in {
             "moveDown:",
@@ -469,6 +483,7 @@ class SpottyBunnyController(NSObject):
         logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
         logo.setTarget_(self)
         logo.setAction_("showAbout:")
+        logo.setRefusesFirstResponder_(True)
         menu = NSMenu.alloc().initWithTitle_("")
         menu.setDelegate_(self)
         self._logo_menu = menu
@@ -564,6 +579,7 @@ class SpottyBunnyController(NSObject):
         table.setDataSource_(self)
         table.setDelegate_(self)
         table.setHeaderView_(None)
+        table.setRefusesFirstResponder_(True)
         scroll.setDocumentView_(table)
         panel.contentView().addSubview_(scroll)
 
@@ -782,6 +798,7 @@ class SpottyBunnyController(NSObject):
                 self._set_status(SHORTCUTS_LOAD_FAILED)
             return
         text = str(self.field.stringValue())
+        logger.info("tab complete %r", text)
         self._completion_rows = []
         if self.table is not None:
             self.table.reloadData()
@@ -814,10 +831,18 @@ class SpottyBunnyController(NSObject):
         if self.field is None:
             return
         self._applying_completion = True
-        try:
-            self.field.setStringValue_(text)
-        finally:
+        self.field.setStringValue_(text)
+        editor = self.field.currentEditor()
+        if editor is not None:
+            editor.setString_(text)
+            editor.setSelectedRange_(NSMakeRange(len(text), 0))
+
+        def clear_flag() -> None:
             self._applying_completion = False
+
+        # Deferred so a delayed controlTextDidChange_ still sees the flag and
+        # does not immediately hide the completion table we just showed.
+        NSOperationQueue.mainQueue().addOperationWithBlock_(clear_flag)
 
     def _set_status(self, message: str) -> None:
         if self.status is None:
@@ -1039,6 +1064,11 @@ class SpottyBunnyPanel(NSPanel):
     def keyDown_(self, event) -> None:
         if int(event.keyCode()) == ESCAPE_KEYCODE:
             self.cancelOperation_(self)
+            return
+        if int(event.keyCode()) == TAB_KEYCODE:
+            delegate = self.delegate()
+            if delegate is not None:
+                delegate.completeWithTab_(self)
             return
         objc.super(SpottyBunnyPanel, self).keyDown_(event)
 
@@ -1276,6 +1306,15 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
                 _run_on_main(lambda: controller.dismissWithEscape_(None))
             elif event_type == kCGEventKeyUp:
                 _run_on_main(lambda: controller.releaseEscape_(None))
+            return event
+        if keycode == TAB_KEYCODE:
+            if (
+                event_type == kCGEventKeyDown
+                and controller.visible
+                and not controller._about_open
+            ):
+                logger.info("tap Tab → complete")
+                _run_on_main(lambda: controller.completeWithTab_(None))
             return event
         if event_type != kCGEventFlagsChanged:
             logger.debug(

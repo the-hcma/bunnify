@@ -67,6 +67,7 @@ ABOUT_SUMMARY = (
     "Search and open your Bunnify shortcuts from anywhere on macOS. "
     "Hold one Control and tap the other to show this box, type a shortcut "
     "(Tab completes, like the CLI), and press Return to open it in your browser. "
+    "Text that is not a shortcut opens a Google search, like the browser. "
     "Esc hides the box."
 )
 ABOUT_WARN_RGB = (0.62, 0.28, 0.08)

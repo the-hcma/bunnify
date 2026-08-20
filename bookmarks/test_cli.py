@@ -3303,6 +3303,18 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertEqual(names, ["bunnify"])
         self.assertEqual(calls["n"], 2)
 
+    def test_resolve_gh_executable_finds_homebrew_off_path(self) -> None:
+        import os
+        from pathlib import Path
+
+        from app.github_complete import resolve_gh_executable
+
+        with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+            with patch("app.github_complete.shutil.which", return_value=None):
+                resolved = resolve_gh_executable()
+        self.assertTrue(resolved.endswith("/gh"))
+        self.assertTrue(Path(resolved).is_file())
+
     def test_resolve_github_token_prefers_env_over_gh(self) -> None:
         import subprocess
 
@@ -3325,7 +3337,10 @@ class KeyUsageAndCompletionTests(TestCase):
         clear_github_completion_cache()
 
         def gh_runner(*, args, **_kwargs):
-            self.assertEqual(args[:3], ["gh", "auth", "token"])
+            from app.github_complete import resolve_gh_executable
+
+            self.assertEqual(args[0], resolve_gh_executable())
+            self.assertEqual(list(args[1:3]), ["auth", "token"])
             return subprocess.CompletedProcess(
                 args=list(args), returncode=0, stdout="gh-token\n", stderr=""
             )

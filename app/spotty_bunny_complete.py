@@ -25,6 +25,15 @@ class CompletionRow:
 
 COMPLETION_PAGE_STEP = 5
 
+TAB_COMPLETION_SELECTORS = frozenset(
+    {
+        "insertBacktab:",
+        "insertTab:",
+        "selectNextKeyView:",
+        "selectPreviousKeyView:",
+    }
+)
+
 
 def completion_row_after_selector(
     current: int,
@@ -81,6 +90,30 @@ def completions_for(text: str, completer: Completer) -> list[CompletionRow]:
             )
         )
     return rows
+
+
+def field_editor_selector_name(selector: object) -> str:
+    """Normalize a Cocoa ``doCommandBySelector:`` argument to an ObjC name."""
+    if isinstance(selector, (bytes, bytearray)):
+        return bytes(selector).decode("ascii", errors="replace")
+    raw = getattr(selector, "selector", None)
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("ascii", errors="replace")
+    if isinstance(raw, str) and raw:
+        return raw
+    text = selector if isinstance(selector, str) else str(selector)
+    marker = "selector "
+    start = text.find(marker)
+    if start >= 0:
+        token = text[start + len(marker) :].split(" ", 1)[0]
+        if token:
+            return token
+    return text
+
+
+def is_tab_completion_selector(selector: object) -> bool:
+    """True when *selector* should trigger Spotty Bunny Tab completion."""
+    return field_editor_selector_name(selector) in TAB_COMPLETION_SELECTORS
 
 
 def make_spotty_completer(

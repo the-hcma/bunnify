@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -232,7 +233,7 @@ def _run_gh(
 ) -> subprocess.CompletedProcess[str]:
     run = runner or subprocess.run
     kwargs: dict[str, Any] = {
-        "args": ["gh", *args],
+        "args": [resolve_gh_executable(), *args],
         "text": True,
         "timeout": timeout,
         "check": False,
@@ -264,6 +265,24 @@ def github_token_from_gh(
         return None
     token = (completed.stdout or "").strip()
     return token or None
+
+
+def resolve_gh_executable() -> str:
+    """Return an absolute ``gh`` path when possible (LaunchAgent-safe PATH)."""
+    found = shutil.which("gh")
+    if found:
+        return found
+    for candidate in (
+        Path("/opt/homebrew/bin/gh"),
+        Path("/usr/local/bin/gh"),
+        Path.home() / ".local" / "bin" / "gh",
+    ):
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        except OSError:
+            continue
+    return "gh"
 
 
 def resolve_github_token(
