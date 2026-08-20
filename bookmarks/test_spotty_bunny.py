@@ -885,6 +885,49 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 Path.home() / ".local/share/uv/python/cpython-3.14/bin/python",
             )
 
+    def test_interpreter_for_program_expands_longest_assignment_name_first(
+        self,
+    ) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                "a=/x\n"
+                "ab=/y\n"
+                'exec "$ab/.venv/bin/python" -m app.spotty_bunny_cli "$@"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path("/y/.venv/bin/python"),
+            )
+
+    def test_interpreter_for_program_expands_nested_home_assignment(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                'UV_DIR="$HOME/.local/share/uv"\n'
+                'exec "$UV_DIR/python/cpython-3.14/bin/python" '
+                '-m app.spotty_bunny_cli "$@"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path.home()
+                / ".local"
+                / "share"
+                / "uv"
+                / "python"
+                / "cpython-3.14"
+                / "bin"
+                / "python",
+            )
+
     def test_interpreter_for_program_expands_shell_var_assignment(self) -> None:
         from app.spotty_bunny_agent import interpreter_for_program
 
@@ -2390,7 +2433,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("TAB_KEYCODE", source)
         self.assertIn("completeWithTab_", source)
         self.assertIn("is_tab_completion_selector", source)
-        self.assertIn("tap Tab → complete", source)
+        self.assertNotIn("tap Tab → complete", source)
         self.assertIn("setRefusesFirstResponder_(True)", source)
         self.assertIn("_escape_held", source)
         self.assertNotIn("ESCAPE_DISMISS_WINDOW_S", source)

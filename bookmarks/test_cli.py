@@ -3303,6 +3303,17 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertEqual(names, ["bunnify"])
         self.assertEqual(calls["n"], 2)
 
+    def test_resolve_gh_executable_falls_back_to_bare_name(self) -> None:
+        import os
+        from pathlib import Path
+
+        from app.github_complete import resolve_gh_executable
+
+        with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+            with patch("app.github_complete.shutil.which", return_value=None):
+                with patch.object(Path, "is_file", return_value=False):
+                    self.assertEqual(resolve_gh_executable(), "gh")
+
     def test_resolve_gh_executable_finds_local_bin_off_path(self) -> None:
         import os
         import stat

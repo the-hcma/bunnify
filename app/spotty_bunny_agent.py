@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -490,6 +490,21 @@ def _bootout_agent(
     )
 
 
+def _expand_shell_vars(token: str, assignments: Mapping[str, str]) -> str:
+    """Expand ``$HOME`` / ``$name`` / ``${name}`` with longest-name-first passes."""
+    home = str(Path.home())
+    values: dict[str, str] = {"HOME": home}
+    for name in sorted(assignments, key=len, reverse=True):
+        values[name] = _substitute_shell_vars(
+            assignments[name].replace("${HOME}", home).replace("$HOME", home),
+            values,
+        )
+    return _substitute_shell_vars(
+        token.replace("${HOME}", home).replace("$HOME", home),
+        values,
+    )
+
+
 def _gui_domain(uid: int | None = None) -> str:
     return f"gui/{os.getuid() if uid is None else uid}"
 
@@ -756,17 +771,26 @@ def _shell_exec_python_from_wrapper(raw: str) -> Path | None:
         if match is None:
             continue
         token = match.group("python").strip("\"'")
-        expanded = token.replace("$HOME", str(Path.home())).replace(
-            "${HOME}", str(Path.home())
-        )
-        for name, value in assignments.items():
+        expanded = _expand_shell_vars(token, assignments)
+        # Prefer a partially expanded exec path over falling through to the
+        # shebang shell (which misleads TCC probing).
+        return Path(expanded).expanduser()
+    return None
+
+
+def _substitute_shell_vars(text: str, values: Mapping[str, str]) -> str:
+    """Replace ``$name`` / ``${name}`` until stable (longest names first)."""
+    expanded = text
+    for _ in range(len(values) + 2):
+        previous = expanded
+        for name in sorted(values, key=len, reverse=True):
+            value = values[name]
             expanded = expanded.replace(f"${{{name}}}", value).replace(
                 f"${name}", value
             )
-        if "$" in expanded:
-            continue
-        return Path(expanded).expanduser()
-    return None
+        if expanded == previous:
+            break
+    return expanded
 
 
 def _write_plist(plist: Path, *, home: Path, program_arguments: Sequence[str]) -> None:

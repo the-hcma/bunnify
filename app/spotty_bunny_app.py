@@ -198,7 +198,7 @@ class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
 
     def completeWithTab_(self, _sender) -> None:
-        """Run Tab completion (field editor, key-view loop, or event-tap fallback)."""
+        """Run Tab completion (field editor or panel key-view)."""
         self._request_completions()
 
     def controlTextDidBeginEditing_(self, _notification) -> None:
@@ -1306,15 +1306,6 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
                 _run_on_main(lambda: controller.dismissWithEscape_(None))
             elif event_type == kCGEventKeyUp:
                 _run_on_main(lambda: controller.releaseEscape_(None))
-            return event
-        if keycode == TAB_KEYCODE:
-            if (
-                event_type == kCGEventKeyDown
-                and controller.visible
-                and not controller._about_open
-            ):
-                logger.info("tap Tab → complete")
-                _run_on_main(lambda: controller.completeWithTab_(None))
             return event
         if event_type != kCGEventFlagsChanged:
             logger.debug(
