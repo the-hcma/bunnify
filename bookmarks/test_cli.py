@@ -3303,17 +3303,33 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertEqual(names, ["bunnify"])
         self.assertEqual(calls["n"], 2)
 
-    def test_resolve_gh_executable_finds_homebrew_off_path(self) -> None:
+    def test_resolve_gh_executable_finds_local_bin_off_path(self) -> None:
         import os
+        import stat
+        import tempfile
         from pathlib import Path
 
         from app.github_complete import resolve_gh_executable
 
-        with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
-            with patch("app.github_complete.shutil.which", return_value=None):
-                resolved = resolve_gh_executable()
-        self.assertTrue(resolved.endswith("/gh"))
-        self.assertTrue(Path(resolved).is_file())
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local_gh = home / ".local" / "bin" / "gh"
+            local_gh.parent.mkdir(parents=True)
+            local_gh.write_text("#!/bin/sh\n", encoding="utf-8")
+            local_gh.chmod(local_gh.stat().st_mode | stat.S_IXUSR)
+            with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+                with patch("app.github_complete.shutil.which", return_value=None):
+                    with patch("app.github_complete.Path.home", return_value=home):
+                        with patch.object(
+                            Path,
+                            "is_file",
+                            lambda self: os.fspath(self) == os.fspath(local_gh),
+                        ):
+                            with patch(
+                                "app.github_complete.os.access", return_value=True
+                            ):
+                                resolved = resolve_gh_executable()
+            self.assertEqual(resolved, str(local_gh))
 
     def test_resolve_github_token_prefers_env_over_gh(self) -> None:
         import subprocess
