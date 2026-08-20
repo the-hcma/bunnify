@@ -2531,7 +2531,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("_install_edit_menu", source)
         self.assertIn("_dispatch_edit_key_equivalent", source)
         self.assertIn("edit_action_for_key", source)
-        self.assertIn("is_completion_navigation_selector", source)
+        self.assertIn("completion_navigation_disposition", source)
         self.assertIn("PAGE_UP_KEYCODE", source)
         self.assertIn("PAGE_DOWN_KEYCODE", source)
         complete_source = (
