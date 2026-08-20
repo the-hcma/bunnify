@@ -112,13 +112,15 @@ Example (from `bunnify.json.example`):
 GitHub-backed completion needs auth **and** a way to talk to GitHub:
 
 - Prefer `GITHUB_TOKEN` or `GH_TOKEN` in the environment, **or**
-- install the GitHub CLI (`gh`) and run `gh auth login`.
+- install the GitHub CLI (`gh`) and run `gh auth login`
+  (`brew install gh` on macOS/Linux with Homebrew).
 
-Without a token, `github_repo` / `github_pull_request` / `github_issue`
-completions stay empty (fail-soft — no hard error in Tab UI). Spotty Bunny’s
-LaunchAgent ships a PATH that includes Homebrew and `~/.local/bin` so a
-typical `gh` install is found; if `gh` is missing entirely and no env token is
-set, those completions simply return nothing. Results are cached under
+The interactive CLI and Spotty Bunny surface this when `gh` is missing. On
+macOS, **admin** users with Homebrew are offered an in-app / REPL confirm to
+run `brew install gh` and then verify the binary. Without a token, `github_repo`
+/ `github_pull_request` / `github_issue` completions stay empty (fail-soft).
+Spotty Bunny’s LaunchAgent PATH includes Homebrew and `~/.local/bin` so a
+typical install is found after setup. Results are cached under
 `~/scratch/bunnify/github-completions.json`.
 
 ### Shell Tab completion

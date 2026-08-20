@@ -3378,6 +3378,65 @@ class KeyUsageAndCompletionTests(TestCase):
         )
         self.assertEqual(token, "gh-token")
 
+    def test_ensure_github_authenticated_offers_brew_install_when_admin(
+        self,
+    ) -> None:
+        import subprocess
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            ensure_github_authenticated,
+        )
+
+        clear_github_completion_cache()
+        brew_calls: list[list[str]] = []
+        prompts: list[str] = []
+
+        def brew_runner(args, **_kwargs):
+            brew_calls.append(list(args))
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=0, stdout="", stderr=""
+            )
+
+        def gh_runner(*, args, **_kwargs):
+            if args[1:3] == ["auth", "token"]:
+                if brew_calls:
+                    return subprocess.CompletedProcess(
+                        args=list(args),
+                        returncode=0,
+                        stdout="after-install-token\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=1, stdout="", stderr=""
+                )
+            if args[1:3] == ["auth", "login"]:
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=0, stdout="", stderr=""
+                )
+            raise AssertionError(args)
+
+        def fake_which(name: str) -> str | None:
+            if name == "brew":
+                return "/opt/homebrew/bin/brew"
+            return None
+
+        with (
+            patch("app.github_complete.gh_is_available", side_effect=[False, True]),
+            patch("app.github_complete.can_offer_gh_install", return_value=True),
+            patch("app.github_complete.shutil.which", side_effect=fake_which),
+        ):
+            token = ensure_github_authenticated(
+                interactive=True,
+                environ={"PATH": "/usr/bin"},
+                runner=gh_runner,
+                confirm_install=lambda message: prompts.append(message) or True,
+                brew_runner=brew_runner,
+            )
+        self.assertEqual(token, "after-install-token")
+        self.assertEqual(brew_calls[0][1:], ["install", "gh"])
+        self.assertTrue(prompts)
+
     def test_ensure_github_authenticated_runs_login_when_needed(self) -> None:
         import subprocess
 
@@ -3409,13 +3468,21 @@ class KeyUsageAndCompletionTests(TestCase):
                 )
             raise AssertionError(args)
 
-        token = ensure_github_authenticated(
-            interactive=True,
-            environ={"PATH": "/usr/bin"},
-            runner=runner,
-        )
+        with patch("app.github_complete.gh_is_available", return_value=True):
+            token = ensure_github_authenticated(
+                interactive=True,
+                environ={"PATH": "/usr/bin"},
+                runner=runner,
+            )
         self.assertEqual(token, "fresh-token")
         self.assertTrue(any(c[1:3] == ["auth", "login"] for c in calls))
+
+    def test_gh_install_guidance_mentions_brew(self) -> None:
+        from app.github_complete import gh_install_guidance
+
+        text = gh_install_guidance()
+        self.assertIn("brew install gh", text)
+        self.assertIn("gh auth login", text)
 
     def test_warm_github_completion_cache_lists_orgs_and_repos(self) -> None:
         from app.github_complete import (

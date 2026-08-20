@@ -99,6 +99,13 @@ from Quartz import (
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
 from app.config import resolve_base_url
+from app.github_complete import (
+    can_offer_gh_install,
+    gh_install_guidance,
+    gh_is_available,
+    github_token_from_environ,
+    install_gh_via_homebrew,
+)
 from app.spotty_bunny_about import (
     apply_spotty_chrome,
     build_about_panel,
@@ -372,6 +379,7 @@ class SpottyBunnyController(NSObject):
             self.panel.makeFirstResponder_(self.field)
             self._paint_search_editor()
         self._io.submit(self._load_completer, self._completer_loaded)
+        self._maybe_offer_gh_install()
         if cache_is_stale(self._update_status.checked_at):
             self._schedule_update_check()
 
@@ -643,6 +651,19 @@ class SpottyBunnyController(NSObject):
 
         _run_on_main(apply)
 
+    def _gh_install_ready(self, result: object) -> None:
+        def apply() -> None:
+            if isinstance(result, Exception):
+                logger.warning("gh install failed: %s", result)
+                self._set_status(format_spotty_bunny_status(result))
+                return
+            if result:
+                self._set_status("gh installed — run: gh auth login")
+                return
+            self._set_status(gh_install_guidance())
+
+        _run_on_main(apply)
+
     def _hide_about_panel(self) -> None:
         if self._about_panel is not None:
             self._about_panel.orderOut_(None)
@@ -716,6 +737,17 @@ class SpottyBunnyController(NSObject):
             suggestions_fn=lambda query: fetch_suggestions(query, base_url=base_url),
         )
         return completer, base_url
+
+    def _maybe_offer_gh_install(self) -> None:
+        """Surface missing ``gh``; admins with Homebrew may install in-place."""
+        if github_token_from_environ() or gh_is_available():
+            return
+        guidance = gh_install_guidance()
+        if can_offer_gh_install() and _confirm_install_gh():
+            self._set_status("Installing gh via Homebrew…")
+            self._io.submit(install_gh_via_homebrew, self._gh_install_ready)
+            return
+        self._set_status(guidance)
 
     def _move_completion(self, selector: str) -> None:
         if not self._completion_rows or self.table is None or self.field is None:
@@ -1230,6 +1262,20 @@ class _CenteredWrappingFieldCell(NSTextFieldCell):
             rect.size.width,
             text_height,
         )
+
+
+def _confirm_install_gh() -> bool:
+    """Ask before running ``brew install gh`` from the overlay."""
+    alert = NSAlert.alloc().init()
+    alert.setAlertStyle_(NSAlertStyleWarning)
+    alert.setMessageText_("Install GitHub CLI?")
+    alert.setInformativeText_(
+        "Repo Tab completion needs the GitHub CLI (gh). "
+        "Install it with Homebrew now (brew install gh)?"
+    )
+    alert.addButtonWithTitle_("Install")
+    alert.addButtonWithTitle_("Not now")
+    return int(alert.runModal()) == int(NSAlertFirstButtonReturn)
 
 
 def _confirm_uninstall() -> bool:

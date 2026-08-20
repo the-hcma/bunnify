@@ -2434,6 +2434,8 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("completeWithTab_", source)
         self.assertIn("is_tab_completion_selector", source)
         self.assertNotIn("tap Tab → complete", source)
+        self.assertIn("_maybe_offer_gh_install", source)
+        self.assertIn("_confirm_install_gh", source)
         self.assertIn("setRefusesFirstResponder_(True)", source)
         self.assertIn("_escape_held", source)
         self.assertNotIn("ESCAPE_DISMISS_WINDOW_S", source)

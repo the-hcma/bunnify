@@ -46,6 +46,8 @@ from app.config import (
 from app.github_complete import (
     bootstrap_github_completion_cache,
     ensure_github_authenticated,
+    gh_install_guidance,
+    gh_is_available,
     suggest_param_values,
 )
 from app.interactive import (
@@ -1058,7 +1060,14 @@ def _run_repl(
         return
 
     interactive_auth = sys.stdin.isatty() and sys.stdout.isatty()
-    github_token = ensure_github_authenticated(interactive=interactive_auth)
+    github_token = ensure_github_authenticated(
+        interactive=interactive_auth,
+        confirm_install=(
+            (lambda message: click.confirm(message, default=True))
+            if interactive_auth
+            else None
+        ),
+    )
     if github_token:
         bootstrapped = bootstrap_github_completion_cache(
             url_templates=[entry.url for entry in entries],
@@ -1077,12 +1086,15 @@ def _run_repl(
             status += " (warming in background…)"
         click.echo(theme.dim(status))
     else:
-        click.echo(
-            theme.meta(
-                "GitHub not authenticated — set GITHUB_TOKEN / GH_TOKEN "
-                "or run `gh auth login` for repo Tab completion"
+        if not gh_is_available():
+            click.echo(theme.meta(gh_install_guidance()))
+        else:
+            click.echo(
+                theme.meta(
+                    "GitHub not authenticated — set GITHUB_TOKEN / GH_TOKEN "
+                    "or run `gh auth login` for repo Tab completion"
+                )
             )
-        )
 
     def suggestions_fn(query: str) -> list[str]:
         return fetch_suggestions(query, base_url=base_url)
