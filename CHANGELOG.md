@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.0...bunnify-v0.8.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* restore Spotty Bunny Tab completion and Google fallback ([#336](https://github.com/the-hcma/bunnify/issues/336)) ([b69539c](https://github.com/the-hcma/bunnify/commit/b69539c0e081f5e8027fcaf7c23ab07fa9b01deb))
+
 ## [0.8.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.7.1...bunnify-v0.8.0) (2026-08-20)
 
 
