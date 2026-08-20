@@ -1345,6 +1345,39 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         self.assertTrue(is_completion_navigation_selector("scrollPageUp:"))
         self.assertTrue(is_completion_navigation_selector("pageDown:"))
 
+    def test_completion_navigation_disposition_scopes_page_visibility(self) -> None:
+        from app.spotty_bunny_complete import completion_navigation_disposition
+
+        self.assertEqual(
+            completion_navigation_disposition(
+                "moveDown:", has_rows=True, table_visible=False
+            ),
+            "consume",
+        )
+        self.assertEqual(
+            completion_navigation_disposition(
+                "moveUp:", has_rows=True, table_visible=True
+            ),
+            "move",
+        )
+        self.assertEqual(
+            completion_navigation_disposition(
+                "scrollPageDown:", has_rows=True, table_visible=False
+            ),
+            "ignore",
+        )
+        self.assertEqual(
+            completion_navigation_disposition(
+                "pageUp:", has_rows=True, table_visible=True
+            ),
+            "move",
+        )
+        self.assertIsNone(
+            completion_navigation_disposition(
+                "moveDown:", has_rows=False, table_visible=False
+            )
+        )
+
     def test_edit_action_for_key_maps_command_chords(self) -> None:
         from app.spotty_bunny_edit import (
             edit_action_for_key,
@@ -2508,6 +2541,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("scrollPageDown:", complete_source)
         self.assertIn("edit_command_modifiers_ok", source)
         self.assertIn("_completion_table_visible", source)
+        self.assertIn("completion_navigation_disposition", source)
         self.assertIn("page_selector_for_keycode", source)
         self.assertIn("dismissWithEscape_", source)
         self.assertIn("releaseEscape_", source)

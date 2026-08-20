@@ -127,11 +127,11 @@ from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
     apply_completion,
+    completion_navigation_disposition,
     completion_row_after_selector,
     completion_still_current,
     completions_for,
     field_editor_selector_name,
-    is_completion_navigation_selector,
     is_tab_completion_selector,
     make_spotty_completer,
 )
@@ -242,13 +242,18 @@ class SpottyBunnyController(NSObject):
         if is_tab_completion_selector(name):
             self.completeWithTab_(None)
             return True
-        if (
-            self._completion_rows
-            and self._completion_table_visible()
-            and is_completion_navigation_selector(name)
-        ):
+        disposition = completion_navigation_disposition(
+            name,
+            has_rows=bool(self._completion_rows),
+            table_visible=self._completion_table_visible(),
+        )
+        if disposition == "move":
             self._move_completion(name)
             return True
+        if disposition == "consume":
+            return True
+        if disposition == "ignore":
+            return False
         current = ""
         if self.field is not None:
             current = str(self.field.stringValue())

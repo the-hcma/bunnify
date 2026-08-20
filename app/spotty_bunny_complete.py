@@ -34,6 +34,15 @@ COMPLETION_NAVIGATION_SELECTORS = frozenset(
     }
 )
 
+COMPLETION_PAGE_SELECTORS = frozenset(
+    {
+        "pageDown:",
+        "pageUp:",
+        "scrollPageDown:",
+        "scrollPageUp:",
+    }
+)
+
 COMPLETION_PAGE_STEP = 5
 
 TAB_COMPLETION_SELECTORS = frozenset(
@@ -52,6 +61,25 @@ def apply_completion(current: str, row: CompletionRow) -> str:
     if begin < 0:
         begin = 0
     return current[:begin] + row.insert
+
+
+def completion_navigation_disposition(
+    selector: str,
+    *,
+    has_rows: bool,
+    table_visible: bool,
+) -> str | None:
+    """How the field editor should treat a completion-navigation selector.
+
+    Returns ``move`` (update selection), ``consume`` (swallow without moving),
+    ``ignore`` (do not handle; do not fall through to history), or ``None``
+    when the selector is not completion navigation / there are no rows.
+    """
+    if not has_rows or not is_completion_navigation_selector(selector):
+        return None
+    if is_page_navigation_selector(selector):
+        return "move" if table_visible else "ignore"
+    return "move" if table_visible else "consume"
 
 
 def completion_row_after_selector(
@@ -126,6 +154,11 @@ def field_editor_selector_name(selector: object) -> str:
 def is_completion_navigation_selector(selector: object) -> bool:
     """True when *selector* should move the Tab completion selection."""
     return field_editor_selector_name(selector) in COMPLETION_NAVIGATION_SELECTORS
+
+
+def is_page_navigation_selector(selector: object) -> bool:
+    """True when *selector* is a Page Up/Down (or scroll-page) command."""
+    return field_editor_selector_name(selector) in COMPLETION_PAGE_SELECTORS
 
 
 def is_tab_completion_selector(selector: object) -> bool:
