@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -20,8 +22,11 @@ from app.completion_spec import ParamCompleteSpec, repo_arg_from_filled
 
 logger = logging.getLogger(__name__)
 
+ConfirmInstallFn = Callable[[str], bool]
+
 _CACHE_TTL_SECONDS = 300.0
 _DEFAULT_TIMEOUT_SECONDS = 8.0
+_GH_BREW_INSTALL_TIMEOUT_SECONDS = 600.0
 _GH_TOKEN_TIMEOUT_SECONDS = 8.0
 _GH_LOGIN_TIMEOUT_SECONDS = 600.0
 _PERSIST_VERSION = 1
@@ -131,12 +136,41 @@ def _cache_counts() -> dict[str, int]:
     return {"orgs": orgs, "repos": repos, "entries": len(snapshot)}
 
 
+def can_offer_gh_install() -> bool:
+    """True when an admin user can run ``brew install gh``."""
+    return user_is_admin() and shutil.which("brew") is not None
+
+
 def clear_github_completion_cache() -> None:
     """Test helper: drop in-process completion + token caches."""
     global _token_cache
     with _cache_lock:
         _cache.clear()
     _token_cache = _UNSET
+
+
+def gh_install_guidance() -> str:
+    """User-facing text when ``gh`` is missing and no env token is set."""
+    parts = [
+        "GitHub Tab completion needs the GitHub CLI (gh) or GITHUB_TOKEN / GH_TOKEN",
+        "Install: brew install gh",
+        "Then: gh auth login",
+    ]
+    if sys.platform == "darwin" and shutil.which("brew") is None:
+        parts.insert(1, "Homebrew: https://brew.sh")
+    return " · ".join(parts)
+
+
+def gh_is_available() -> bool:
+    """True when ``resolve_gh_executable`` points at a runnable binary."""
+    resolved = resolve_gh_executable()
+    if resolved != "gh":
+        path = Path(resolved)
+        try:
+            return path.is_file() and os.access(path, os.X_OK)
+        except OSError:
+            return False
+    return shutil.which("gh") is not None
 
 
 def load_github_completion_cache(
@@ -232,7 +266,7 @@ def _run_gh(
 ) -> subprocess.CompletedProcess[str]:
     run = runner or subprocess.run
     kwargs: dict[str, Any] = {
-        "args": ["gh", *args],
+        "args": [resolve_gh_executable(), *args],
         "text": True,
         "timeout": timeout,
         "check": False,
@@ -266,6 +300,53 @@ def github_token_from_gh(
     return token or None
 
 
+def resolve_gh_executable() -> str:
+    """Return an absolute ``gh`` path when possible (LaunchAgent-safe PATH)."""
+    found = shutil.which("gh")
+    if found:
+        return found
+    for candidate in (
+        Path("/opt/homebrew/bin/gh"),
+        Path("/usr/local/bin/gh"),
+        Path.home() / ".local" / "bin" / "gh",
+    ):
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        except OSError:
+            continue
+    return "gh"
+
+
+def install_gh_via_homebrew(
+    *,
+    brew: str | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> bool:
+    """Run ``brew install gh`` and return whether ``gh`` is then available."""
+    brew_bin = brew or shutil.which("brew")
+    if brew_bin is None:
+        logger.info("Homebrew not found; cannot install gh")
+        return False
+    run = runner or subprocess.run
+    try:
+        completed = run(
+            [brew_bin, "install", "gh"],
+            text=True,
+            timeout=_GH_BREW_INSTALL_TIMEOUT_SECONDS,
+            check=False,
+            capture_output=True,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.info("brew install gh failed: %s", exc)
+        return False
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        logger.info("brew install gh exited %s: %s", completed.returncode, stderr)
+        return False
+    return gh_is_available()
+
+
 def resolve_github_token(
     *,
     environ: dict[str, str] | None = None,
@@ -294,12 +375,17 @@ def ensure_github_authenticated(
     interactive: bool = False,
     environ: dict[str, str] | None = None,
     runner: GhRunner | None = None,
+    confirm_install: ConfirmInstallFn | None = None,
+    brew_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> str | None:
     """
-    Return a usable GitHub token, optionally running ``gh auth login`` first.
+    Return a usable GitHub token, optionally installing ``gh`` / logging in.
 
-    When ``interactive`` is true and no token is available, launches the
-    browser-oriented ``gh auth login`` flow (stdin/stdout inherited).
+    When ``interactive`` is true and no token is available:
+
+    - If ``gh`` is missing and the user is an admin with Homebrew, optionally
+      offer ``brew install gh`` (via ``confirm_install``).
+    - Then launch the browser-oriented ``gh auth login`` flow.
     """
     global _token_cache
     token = resolve_github_token(environ=environ, runner=runner)
@@ -307,6 +393,19 @@ def ensure_github_authenticated(
         return token
     if not interactive:
         return None
+    if not gh_is_available():
+        logger.info("%s", gh_install_guidance())
+        if not can_offer_gh_install():
+            return None
+        prompt = (
+            "GitHub CLI (gh) is required for repo Tab completion. "
+            "Install with Homebrew now (brew install gh)?"
+        )
+        confirm = confirm_install or (lambda _message: False)
+        if not confirm(prompt):
+            return None
+        if not install_gh_via_homebrew(runner=brew_runner):
+            return None
     logger.info("No GitHub token found; starting gh auth login")
     try:
         completed = _run_gh(
@@ -331,6 +430,22 @@ def ensure_github_authenticated(
         return None
     _token_cache = _UNSET
     return resolve_github_token(environ=environ, runner=runner, use_cache=True)
+
+
+def user_is_admin() -> bool:
+    """True for root or macOS users in the ``admin`` group."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return True
+    if sys.platform != "darwin":
+        return False
+    try:
+        import grp
+        import pwd
+
+        username = pwd.getpwuid(os.getuid()).pw_name
+        return username in grp.getgrnam("admin").gr_mem
+    except KeyError, OSError:
+        return False
 
 
 def _github_get_json(

@@ -11,6 +11,12 @@
     <string>__SPOTTY_BUNNY__</string>
   </array>
 
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__LAUNCHD_PATH__</string>
+  </dict>
+
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>

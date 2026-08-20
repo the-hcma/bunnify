@@ -1,4 +1,4 @@
-"""Resolve a Spotty Bunny query the same way as the CLI (strict)."""
+"""Resolve a Spotty Bunny query like browser search (Google fallback)."""
 
 from __future__ import annotations
 
@@ -15,12 +15,16 @@ def lookup_resolved_url(
     base_url: str,
     resolve_fn: Callable[..., object] | None = None,
 ) -> str:
-    """Strict-resolve *query* and return the URL without opening or history."""
+    """Resolve *query* and return the URL without opening or history.
+
+    Uses non-strict resolve so unknown shortcuts become a Google search, matching
+    the browser ``/search/`` behavior. The CLI stays strict separately.
+    """
     text = query.strip()
     if not text:
         raise ValueError("empty query")
     resolve = resolve_fn or resolve_shortcut
-    resolved = resolve(text, base_url=base_url, strict=True)
+    resolved = resolve(text, base_url=base_url, strict=False)
     url = getattr(resolved, "url", None)
     if not isinstance(url, str) or not url:
         raise ValueError("resolve response missing url")
@@ -35,10 +39,11 @@ def resolve_query(
     open_fn: Callable[..., None] | None = None,
     resolve_fn: Callable[..., object] | None = None,
 ) -> str:
-    """Resolve *query* strictly, open the URL, then append REPL history.
+    """Resolve *query*, open the URL, then append REPL history.
 
-    Returns the opened URL. Raises ``ClientError`` (or the resolver's error)
-    on failure; history is not written then.
+    Unknown shortcuts fall back to Google search (same as the browser). Returns
+    the opened URL. Raises ``ClientError`` (or the resolver's error) on failure;
+    history is not written then.
     """
     text = query.strip()
     opener = open_fn or open_url

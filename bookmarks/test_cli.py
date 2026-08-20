@@ -3303,6 +3303,45 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertEqual(names, ["bunnify"])
         self.assertEqual(calls["n"], 2)
 
+    def test_resolve_gh_executable_falls_back_to_bare_name(self) -> None:
+        import os
+        from pathlib import Path
+
+        from app.github_complete import resolve_gh_executable
+
+        with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+            with patch("app.github_complete.shutil.which", return_value=None):
+                with patch.object(Path, "is_file", return_value=False):
+                    self.assertEqual(resolve_gh_executable(), "gh")
+
+    def test_resolve_gh_executable_finds_local_bin_off_path(self) -> None:
+        import os
+        import stat
+        import tempfile
+        from pathlib import Path
+
+        from app.github_complete import resolve_gh_executable
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local_gh = home / ".local" / "bin" / "gh"
+            local_gh.parent.mkdir(parents=True)
+            local_gh.write_text("#!/bin/sh\n", encoding="utf-8")
+            local_gh.chmod(local_gh.stat().st_mode | stat.S_IXUSR)
+            with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+                with patch("app.github_complete.shutil.which", return_value=None):
+                    with patch("app.github_complete.Path.home", return_value=home):
+                        with patch.object(
+                            Path,
+                            "is_file",
+                            lambda self: os.fspath(self) == os.fspath(local_gh),
+                        ):
+                            with patch(
+                                "app.github_complete.os.access", return_value=True
+                            ):
+                                resolved = resolve_gh_executable()
+            self.assertEqual(resolved, str(local_gh))
+
     def test_resolve_github_token_prefers_env_over_gh(self) -> None:
         import subprocess
 
@@ -3325,7 +3364,10 @@ class KeyUsageAndCompletionTests(TestCase):
         clear_github_completion_cache()
 
         def gh_runner(*, args, **_kwargs):
-            self.assertEqual(args[:3], ["gh", "auth", "token"])
+            from app.github_complete import resolve_gh_executable
+
+            self.assertEqual(args[0], resolve_gh_executable())
+            self.assertEqual(list(args[1:3]), ["auth", "token"])
             return subprocess.CompletedProcess(
                 args=list(args), returncode=0, stdout="gh-token\n", stderr=""
             )
@@ -3335,6 +3377,65 @@ class KeyUsageAndCompletionTests(TestCase):
             runner=gh_runner,
         )
         self.assertEqual(token, "gh-token")
+
+    def test_ensure_github_authenticated_offers_brew_install_when_admin(
+        self,
+    ) -> None:
+        import subprocess
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            ensure_github_authenticated,
+        )
+
+        clear_github_completion_cache()
+        brew_calls: list[list[str]] = []
+        prompts: list[str] = []
+
+        def brew_runner(args, **_kwargs):
+            brew_calls.append(list(args))
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=0, stdout="", stderr=""
+            )
+
+        def gh_runner(*, args, **_kwargs):
+            if args[1:3] == ["auth", "token"]:
+                if brew_calls:
+                    return subprocess.CompletedProcess(
+                        args=list(args),
+                        returncode=0,
+                        stdout="after-install-token\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=1, stdout="", stderr=""
+                )
+            if args[1:3] == ["auth", "login"]:
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=0, stdout="", stderr=""
+                )
+            raise AssertionError(args)
+
+        def fake_which(name: str) -> str | None:
+            if name == "brew":
+                return "/opt/homebrew/bin/brew"
+            return None
+
+        with (
+            patch("app.github_complete.gh_is_available", side_effect=[False, True]),
+            patch("app.github_complete.can_offer_gh_install", return_value=True),
+            patch("app.github_complete.shutil.which", side_effect=fake_which),
+        ):
+            token = ensure_github_authenticated(
+                interactive=True,
+                environ={"PATH": "/usr/bin"},
+                runner=gh_runner,
+                confirm_install=lambda message: prompts.append(message) or True,
+                brew_runner=brew_runner,
+            )
+        self.assertEqual(token, "after-install-token")
+        self.assertEqual(brew_calls[0][1:], ["install", "gh"])
+        self.assertTrue(prompts)
 
     def test_ensure_github_authenticated_runs_login_when_needed(self) -> None:
         import subprocess
@@ -3367,13 +3468,21 @@ class KeyUsageAndCompletionTests(TestCase):
                 )
             raise AssertionError(args)
 
-        token = ensure_github_authenticated(
-            interactive=True,
-            environ={"PATH": "/usr/bin"},
-            runner=runner,
-        )
+        with patch("app.github_complete.gh_is_available", return_value=True):
+            token = ensure_github_authenticated(
+                interactive=True,
+                environ={"PATH": "/usr/bin"},
+                runner=runner,
+            )
         self.assertEqual(token, "fresh-token")
         self.assertTrue(any(c[1:3] == ["auth", "login"] for c in calls))
+
+    def test_gh_install_guidance_mentions_brew(self) -> None:
+        from app.github_complete import gh_install_guidance
+
+        text = gh_install_guidance()
+        self.assertIn("brew install gh", text)
+        self.assertIn("gh auth login", text)
 
     def test_warm_github_completion_cache_lists_orgs_and_repos(self) -> None:
         from app.github_complete import (

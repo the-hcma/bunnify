@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -31,7 +31,7 @@ AGENT_COMMANDS = frozenset({"install", "status", "uninstall", "upgrade"})
 AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
-LAUNCHD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+LAUNCHD_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 POST_INSTALL_HINT = (
     f"{COMMAND_NAME}: hold one Control and press the other to test the overlay."
 )
@@ -94,8 +94,11 @@ def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
     args_xml = "\n".join(
         f"    <string>{escape(arg)}</string>" for arg in program_arguments
     )
-    return _PLIST_TEMPLATE.replace("__PROGRAM_ARGUMENTS__", args_xml).replace(
-        "__HOME__", escape(str(home))
+    path = launchd_path_for_home(home)
+    return (
+        _PLIST_TEMPLATE.replace("__PROGRAM_ARGUMENTS__", args_xml)
+        .replace("__HOME__", escape(str(home)))
+        .replace("__LAUNCHD_PATH__", escape(path))
     )
 
 
@@ -217,6 +220,12 @@ def is_agent_loaded(
         launchctl=launchctl,
     )
     return completed.returncode == 0
+
+
+def launchd_path_for_home(home: Path) -> str:
+    """PATH for the Spotty Bunny LaunchAgent (Homebrew + ``~/.local/bin``)."""
+    local_bin = str((home / ".local" / "bin").resolve())
+    return f"{local_bin}:{LAUNCHD_PATH}"
 
 
 def refresh_agent_plist(
@@ -481,6 +490,21 @@ def _bootout_agent(
     )
 
 
+def _expand_shell_vars(token: str, assignments: Mapping[str, str]) -> str:
+    """Expand ``$HOME`` / ``$name`` / ``${name}`` with longest-name-first passes."""
+    home = str(Path.home())
+    values: dict[str, str] = {"HOME": home}
+    for name in sorted(assignments, key=len, reverse=True):
+        values[name] = _substitute_shell_vars(
+            assignments[name].replace("${HOME}", home).replace("$HOME", home),
+            values,
+        )
+    return _substitute_shell_vars(
+        token.replace("${HOME}", home).replace("$HOME", home),
+        values,
+    )
+
+
 def _gui_domain(uid: int | None = None) -> str:
     return f"gui/{os.getuid() if uid is None else uid}"
 
@@ -728,6 +752,10 @@ def _probe_tcc_for_status(
 
 def _shell_exec_python_from_wrapper(raw: str) -> Path | None:
     """Return the python path from a bash ``exec`` line, ignoring comments."""
+    assignments: dict[str, str] = {}
+    assign_pattern = re.compile(
+        r"^(?P<name>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>[\"']?)(?P<body>[^\"'\n]*)(?P=value)$"
+    )
     pattern = re.compile(
         r"^exec\s+(?:\"|\')?(?P<python>[^\"'\n]+?/bin/python(?:3(?:\.\d+)?)?)",
     )
@@ -735,13 +763,34 @@ def _shell_exec_python_from_wrapper(raw: str) -> Path | None:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
+        assign = assign_pattern.match(stripped)
+        if assign is not None:
+            assignments[assign.group("name")] = assign.group("body")
+            continue
         match = pattern.match(stripped)
         if match is None:
             continue
         token = match.group("python").strip("\"'")
-        expanded = token.replace("$HOME", str(Path.home()))
+        expanded = _expand_shell_vars(token, assignments)
+        # Prefer a partially expanded exec path over falling through to the
+        # shebang shell (which misleads TCC probing).
         return Path(expanded).expanduser()
     return None
+
+
+def _substitute_shell_vars(text: str, values: Mapping[str, str]) -> str:
+    """Replace ``$name`` / ``${name}`` until stable (longest names first)."""
+    expanded = text
+    for _ in range(len(values) + 2):
+        previous = expanded
+        for name in sorted(values, key=len, reverse=True):
+            value = values[name]
+            expanded = expanded.replace(f"${{{name}}}", value).replace(
+                f"${name}", value
+            )
+        if expanded == previous:
+            break
+    return expanded
 
 
 def _write_plist(plist: Path, *, home: Path, program_arguments: Sequence[str]) -> None:
@@ -765,6 +814,12 @@ _PLIST_TEMPLATE = """\
   <array>
 __PROGRAM_ARGUMENTS__
   </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__LAUNCHD_PATH__</string>
+  </dict>
 
   <key>KeepAlive</key>
   <true/>

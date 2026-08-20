@@ -99,6 +99,13 @@ from Quartz import (
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
 from app.config import resolve_base_url
+from app.github_complete import (
+    can_offer_gh_install,
+    gh_install_guidance,
+    gh_is_available,
+    github_token_from_environ,
+    install_gh_via_homebrew,
+)
 from app.spotty_bunny_about import (
     apply_spotty_chrome,
     build_about_panel,
@@ -118,6 +125,8 @@ from app.spotty_bunny_complete import (
     completion_row_after_selector,
     completion_still_current,
     completions_for,
+    field_editor_selector_name,
+    is_tab_completion_selector,
     make_spotty_completer,
 )
 from app.spotty_bunny_history import (
@@ -132,6 +141,7 @@ from app.spotty_bunny_hotkey import (
     DEVICE_LEFT_CONTROL_MASK,
     DEVICE_RIGHT_CONTROL_MASK,
     ESCAPE_KEYCODE,
+    TAB_KEYCODE,
     ChordTracker,
     apply_control_event,
     describe_key,
@@ -194,6 +204,10 @@ logger = logging.getLogger(__name__)
 class SpottyBunnyController(NSObject):
     """Owns the floating search panel and toggles it from the Control chord."""
 
+    def completeWithTab_(self, _sender) -> None:
+        """Run Tab completion (field editor or panel key-view)."""
+        self._request_completions()
+
     def controlTextDidBeginEditing_(self, _notification) -> None:
         self._paint_search_editor()
 
@@ -202,14 +216,21 @@ class SpottyBunnyController(NSObject):
             return
         if self.status is not None and str(self.status.stringValue()):
             self._set_status("")
-        if self._completion_rows:
-            self._hide_completions()
+        if not self._completion_rows:
+            return
+        text = str(self.field.stringValue()) if self.field is not None else ""
+        if any(
+            apply_completion(self._completion_prefix, row) == text
+            for row in self._completion_rows
+        ):
+            return
+        self._hide_completions()
 
     def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
         """Tab completions, history up/down, dismiss on Esc/Return."""
-        name = selector if isinstance(selector, str) else str(selector)
-        if name == "insertTab:":
-            self._request_completions()
+        name = field_editor_selector_name(selector)
+        if is_tab_completion_selector(name):
+            self.completeWithTab_(None)
             return True
         if self._completion_rows and name in {
             "moveDown:",
@@ -358,6 +379,7 @@ class SpottyBunnyController(NSObject):
             self.panel.makeFirstResponder_(self.field)
             self._paint_search_editor()
         self._io.submit(self._load_completer, self._completer_loaded)
+        self._maybe_offer_gh_install()
         if cache_is_stale(self._update_status.checked_at):
             self._schedule_update_check()
 
@@ -469,6 +491,7 @@ class SpottyBunnyController(NSObject):
         logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
         logo.setTarget_(self)
         logo.setAction_("showAbout:")
+        logo.setRefusesFirstResponder_(True)
         menu = NSMenu.alloc().initWithTitle_("")
         menu.setDelegate_(self)
         self._logo_menu = menu
@@ -564,6 +587,7 @@ class SpottyBunnyController(NSObject):
         table.setDataSource_(self)
         table.setDelegate_(self)
         table.setHeaderView_(None)
+        table.setRefusesFirstResponder_(True)
         scroll.setDocumentView_(table)
         panel.contentView().addSubview_(scroll)
 
@@ -624,6 +648,19 @@ class SpottyBunnyController(NSObject):
                 logger.warning("completion failed: %s", result)
                 return
             self._show_completions(result)  # type: ignore[arg-type]
+
+        _run_on_main(apply)
+
+    def _gh_install_ready(self, result: object) -> None:
+        def apply() -> None:
+            if isinstance(result, Exception):
+                logger.warning("gh install failed: %s", result)
+                self._set_status(format_spotty_bunny_status(result))
+                return
+            if result:
+                self._set_status("gh installed — run: gh auth login")
+                return
+            self._set_status(gh_install_guidance())
 
         _run_on_main(apply)
 
@@ -700,6 +737,17 @@ class SpottyBunnyController(NSObject):
             suggestions_fn=lambda query: fetch_suggestions(query, base_url=base_url),
         )
         return completer, base_url
+
+    def _maybe_offer_gh_install(self) -> None:
+        """Surface missing ``gh``; admins with Homebrew may install in-place."""
+        if github_token_from_environ() or gh_is_available():
+            return
+        guidance = gh_install_guidance()
+        if can_offer_gh_install() and _confirm_install_gh():
+            self._set_status("Installing gh via Homebrew…")
+            self._io.submit(install_gh_via_homebrew, self._gh_install_ready)
+            return
+        self._set_status(guidance)
 
     def _move_completion(self, selector: str) -> None:
         if not self._completion_rows or self.table is None or self.field is None:
@@ -782,6 +830,7 @@ class SpottyBunnyController(NSObject):
                 self._set_status(SHORTCUTS_LOAD_FAILED)
             return
         text = str(self.field.stringValue())
+        logger.info("tab complete %r", text)
         self._completion_rows = []
         if self.table is not None:
             self.table.reloadData()
@@ -814,10 +863,18 @@ class SpottyBunnyController(NSObject):
         if self.field is None:
             return
         self._applying_completion = True
-        try:
-            self.field.setStringValue_(text)
-        finally:
+        self.field.setStringValue_(text)
+        editor = self.field.currentEditor()
+        if editor is not None:
+            editor.setString_(text)
+            editor.setSelectedRange_(NSMakeRange(len(text), 0))
+
+        def clear_flag() -> None:
             self._applying_completion = False
+
+        # Deferred so a delayed controlTextDidChange_ still sees the flag and
+        # does not immediately hide the completion table we just showed.
+        NSOperationQueue.mainQueue().addOperationWithBlock_(clear_flag)
 
     def _set_status(self, message: str) -> None:
         if self.status is None:
@@ -1040,6 +1097,11 @@ class SpottyBunnyPanel(NSPanel):
         if int(event.keyCode()) == ESCAPE_KEYCODE:
             self.cancelOperation_(self)
             return
+        if int(event.keyCode()) == TAB_KEYCODE:
+            delegate = self.delegate()
+            if delegate is not None:
+                delegate.completeWithTab_(self)
+            return
         objc.super(SpottyBunnyPanel, self).keyDown_(event)
 
     def keyUp_(self, event) -> None:
@@ -1200,6 +1262,20 @@ class _CenteredWrappingFieldCell(NSTextFieldCell):
             rect.size.width,
             text_height,
         )
+
+
+def _confirm_install_gh() -> bool:
+    """Ask before running ``brew install gh`` from the overlay."""
+    alert = NSAlert.alloc().init()
+    alert.setAlertStyle_(NSAlertStyleWarning)
+    alert.setMessageText_("Install GitHub CLI?")
+    alert.setInformativeText_(
+        "Repo Tab completion needs the GitHub CLI (gh). "
+        "Install it with Homebrew now (brew install gh)?"
+    )
+    alert.addButtonWithTitle_("Install")
+    alert.addButtonWithTitle_("Not now")
+    return int(alert.runModal()) == int(NSAlertFirstButtonReturn)
 
 
 def _confirm_uninstall() -> bool:

@@ -8,6 +8,7 @@ from collections.abc import Callable
 CONTROL_LEFT_KEYCODE = 59
 CONTROL_RIGHT_KEYCODE = 62
 ESCAPE_KEYCODE = 53
+TAB_KEYCODE = 48
 
 
 class ChordTracker:

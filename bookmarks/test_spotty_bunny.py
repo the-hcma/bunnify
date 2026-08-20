@@ -28,6 +28,7 @@ from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
     ESCAPE_KEYCODE,
+    TAB_KEYCODE,
     ChordTracker,
     apply_control_event,
     apply_hid_snapshot,
@@ -543,19 +544,28 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         self.assertFalse(any(call[1] == "bootout" for call in ctl.calls))
 
     def test_format_agent_plist_matches_example_placeholders(self) -> None:
-        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist
+        from app.spotty_bunny_agent import (
+            AGENT_LABEL,
+            format_agent_plist,
+            launchd_path_for_home,
+        )
 
         root = Path(__file__).resolve().parents[1]
         example = (
             root / "etc" / "launchd" / "com.thehcma.bunnify.spotty-bunny.plist.example"
         ).read_text(encoding="utf-8")
-        expected = example.replace(
-            "    <string>__SPOTTY_BUNNY__</string>",
-            "    <string>/opt/spotty-bunny</string>",
-        ).replace("__HOME__", "/Users/test")
+        home = Path("/Users/test")
+        expected = (
+            example.replace(
+                "    <string>__SPOTTY_BUNNY__</string>",
+                "    <string>/opt/spotty-bunny</string>",
+            )
+            .replace("__HOME__", "/Users/test")
+            .replace("__LAUNCHD_PATH__", launchd_path_for_home(home))
+        )
         self.assertEqual(
             format_agent_plist(
-                home=Path("/Users/test"),
+                home=home,
                 program_arguments=["/opt/spotty-bunny"],
             ),
             expected,
@@ -563,6 +573,8 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         self.assertIn(AGENT_LABEL, expected)
         self.assertIn("<key>KeepAlive</key>", expected)
         self.assertIn("<key>RunAtLoad</key>", expected)
+        self.assertIn("<key>EnvironmentVariables</key>", expected)
+        self.assertIn("/opt/homebrew/bin", expected)
 
     def test_format_agent_plist_supports_module_argv(self) -> None:
         from app.spotty_bunny_agent import format_agent_plist
@@ -871,6 +883,65 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(
                 interpreter_for_program(script),
                 Path.home() / ".local/share/uv/python/cpython-3.14/bin/python",
+            )
+
+    def test_interpreter_for_program_expands_longest_assignment_name_first(
+        self,
+    ) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                "a=/x\n"
+                "ab=/y\n"
+                'exec "$ab/.venv/bin/python" -m app.spotty_bunny_cli "$@"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path("/y/.venv/bin/python"),
+            )
+
+    def test_interpreter_for_program_expands_nested_home_assignment(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                'UV_DIR="$HOME/.local/share/uv"\n'
+                'exec "$UV_DIR/python/cpython-3.14/bin/python" '
+                '-m app.spotty_bunny_cli "$@"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path.home()
+                / ".local"
+                / "share"
+                / "uv"
+                / "python"
+                / "cpython-3.14"
+                / "bin"
+                / "python",
+            )
+
+    def test_interpreter_for_program_expands_shell_var_assignment(self) -> None:
+        from app.spotty_bunny_agent import interpreter_for_program
+
+        with TemporaryDirectory() as tmp:
+            script = Path(tmp) / "spotty-bunny"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                "wt=/opt/bunnify-wt\n"
+                'exec "$wt/.venv/bin/python" "$wt/.venv/bin/spotty-bunny" "$@"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                interpreter_for_program(script),
+                Path("/opt/bunnify-wt/.venv/bin/python"),
             )
 
     def test_interpreter_for_program_ignores_commented_exec_line(self) -> None:
@@ -1258,6 +1329,21 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
             1,
         )
 
+    def test_field_editor_selector_name_normalizes_forms(self) -> None:
+        from app.spotty_bunny_complete import field_editor_selector_name
+
+        self.assertEqual(field_editor_selector_name("insertTab:"), "insertTab:")
+        self.assertEqual(field_editor_selector_name(b"insertTab:"), "insertTab:")
+        self.assertEqual(
+            field_editor_selector_name("<unbound selector insertTab: at 0x10ccfd840>"),
+            "insertTab:",
+        )
+
+        class _Sel:
+            selector = b"selectNextKeyView:"
+
+        self.assertEqual(field_editor_selector_name(_Sel()), "selectNextKeyView:")
+
     def test_first_token_fuzzy_matches_description(self) -> None:
         from app.client import KeyEntry
         from app.spotty_bunny_complete import completions_for, make_spotty_completer
@@ -1270,6 +1356,14 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         )
         rows = completions_for("hub", completer)
         self.assertEqual([row.insert for row in rows], ["gh"])
+
+    def test_is_tab_completion_selector_accepts_key_view_loop(self) -> None:
+        from app.spotty_bunny_complete import is_tab_completion_selector
+
+        self.assertTrue(is_tab_completion_selector("insertTab:"))
+        self.assertTrue(is_tab_completion_selector(b"selectNextKeyView:"))
+        self.assertTrue(is_tab_completion_selector("insertBacktab:"))
+        self.assertFalse(is_tab_completion_selector("insertNewline:"))
 
     def test_meta_commands_are_excluded(self) -> None:
         from app.spotty_bunny_complete import completions_for, make_spotty_completer
@@ -1439,6 +1533,10 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
     def test_describe_key_escape(self) -> None:
         self.assertEqual(ESCAPE_KEYCODE, 53)
         self.assertEqual(describe_key(ESCAPE_KEYCODE), "Escape")
+
+    def test_describe_key_tab(self) -> None:
+        self.assertEqual(TAB_KEYCODE, 48)
+        self.assertEqual(describe_key(TAB_KEYCODE), "Tab")
 
     def test_describe_key_letter_a(self) -> None:
         self.assertEqual(describe_key(0), "A")
@@ -2332,6 +2430,13 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("dismissWithEscape_", source)
         self.assertIn("releaseEscape_", source)
         self.assertIn("ESCAPE_KEYCODE", source)
+        self.assertIn("TAB_KEYCODE", source)
+        self.assertIn("completeWithTab_", source)
+        self.assertIn("is_tab_completion_selector", source)
+        self.assertNotIn("tap Tab → complete", source)
+        self.assertIn("_maybe_offer_gh_install", source)
+        self.assertIn("_confirm_install_gh", source)
+        self.assertIn("setRefusesFirstResponder_(True)", source)
         self.assertIn("_escape_held", source)
         self.assertNotIn("ESCAPE_DISMISS_WINDOW_S", source)
         self.assertIn('{"cancel:", "cancelOperation:"}', source)
@@ -2439,7 +2544,29 @@ class SpottyBunnyResolveTests(SimpleTestCase):
             resolve_fn=resolve_fn,
         )
         self.assertEqual(url, "https://github.com")
-        self.assertIs(seen.get("strict"), True)
+        self.assertIs(seen.get("strict"), False)
+
+    def test_lookup_google_fallback_for_unknown_shortcut(self) -> None:
+        from app.client import ResolvedShortcut
+        from app.spotty_bunny_resolve import lookup_resolved_url
+
+        seen: dict[str, object] = {}
+
+        def resolve_fn(query: str, **kwargs: object) -> ResolvedShortcut:
+            seen.update(kwargs)
+            return ResolvedShortcut(
+                url=f"https://www.google.com/search?q={query}",
+                kind="google_fallback",
+                key=query.split()[0],
+            )
+
+        url = lookup_resolved_url(
+            "asdfasdf",
+            base_url="http://127.0.0.1:8000",
+            resolve_fn=resolve_fn,
+        )
+        self.assertEqual(url, "https://www.google.com/search?q=asdfasdf")
+        self.assertIs(seen.get("strict"), False)
 
     def test_open_failure_does_not_append_history(self) -> None:
         from app.client import ClientError, ResolvedShortcut
@@ -2504,7 +2631,7 @@ class SpottyBunnyResolveTests(SimpleTestCase):
             self.assertEqual(url, "https://github.com")
             self.assertEqual(opened, ["https://github.com"])
             self.assertEqual(load_history_lines(path=path), ["gh"])
-            self.assertIs(seen.get("strict"), True)
+            self.assertIs(seen.get("strict"), False)
 
 
 class SpottyBunnyStatusTests(SimpleTestCase):
