@@ -22,7 +22,9 @@ from Cocoa import (
     NSColor,
     NSEvent,
     NSEventModifierFlagCommand,
+    NSEventModifierFlagControl,
     NSEventModifierFlagDeviceIndependentFlagsMask,
+    NSEventModifierFlagOption,
     NSEventModifierFlagShift,
     NSEventTypeApplicationDefined,
     NSFloatingWindowLevel,
@@ -133,7 +135,7 @@ from app.spotty_bunny_complete import (
     is_tab_completion_selector,
     make_spotty_completer,
 )
-from app.spotty_bunny_edit import edit_action_for_key
+from app.spotty_bunny_edit import edit_action_for_key, edit_command_modifiers_ok
 from app.spotty_bunny_history import (
     HistoryNavigator,
     append_history_line,
@@ -1106,7 +1108,13 @@ class SpottyBunnyPanel(NSPanel):
             return
         if int(event.keyCode()) in {PAGE_DOWN_KEYCODE, PAGE_UP_KEYCODE}:
             delegate = self.delegate()
-            if delegate is not None and getattr(delegate, "_completion_rows", None):
+            scroll = getattr(delegate, "scroll", None) if delegate is not None else None
+            if (
+                delegate is not None
+                and scroll is not None
+                and not scroll.isHidden()
+                and getattr(delegate, "_completion_rows", None)
+            ):
                 selector = (
                     "pageDown:"
                     if int(event.keyCode()) == PAGE_DOWN_KEYCODE
@@ -1336,10 +1344,10 @@ def _dispatch_edit_key_equivalent(event) -> bool:
         NSEventModifierFlagDeviceIndependentFlagsMask
     )
     command = bool(flags & int(NSEventModifierFlagCommand))
+    control = bool(flags & int(NSEventModifierFlagControl))
+    option = bool(flags & int(NSEventModifierFlagOption))
     shift = bool(flags & int(NSEventModifierFlagShift))
-    if not command:
-        return False
-    if flags & ~(int(NSEventModifierFlagCommand) | int(NSEventModifierFlagShift)):
+    if not edit_command_modifiers_ok(command=command, control=control, option=option):
         return False
     characters = event.charactersIgnoringModifiers() or ""
     action = edit_action_for_key(str(characters), command=True, shift=shift)

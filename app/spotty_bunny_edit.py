@@ -30,3 +30,13 @@ def edit_action_for_key(
     if shift:
         return EDIT_COMMAND_SHIFT_ACTIONS.get(key)
     return EDIT_COMMAND_ACTIONS.get(key)
+
+
+def edit_command_modifiers_ok(
+    *,
+    command: bool,
+    control: bool,
+    option: bool,
+) -> bool:
+    """True when modifiers are a Command edit chord (Caps Lock / Fn ignored)."""
+    return command and not control and not option

@@ -1343,7 +1343,10 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         self.assertTrue(is_completion_navigation_selector("pageDown:"))
 
     def test_edit_action_for_key_maps_command_chords(self) -> None:
-        from app.spotty_bunny_edit import edit_action_for_key
+        from app.spotty_bunny_edit import (
+            edit_action_for_key,
+            edit_command_modifiers_ok,
+        )
 
         self.assertEqual(
             edit_action_for_key("v", command=True, shift=False),
@@ -1371,6 +1374,18 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         )
         self.assertIsNone(edit_action_for_key("v", command=False, shift=False))
         self.assertIsNone(edit_action_for_key("b", command=True, shift=False))
+        self.assertTrue(
+            edit_command_modifiers_ok(command=True, control=False, option=False)
+        )
+        self.assertFalse(
+            edit_command_modifiers_ok(command=True, control=True, option=False)
+        )
+        self.assertFalse(
+            edit_command_modifiers_ok(command=True, control=False, option=True)
+        )
+        self.assertFalse(
+            edit_command_modifiers_ok(command=False, control=False, option=False)
+        )
 
     def test_field_editor_selector_name_normalizes_forms(self) -> None:
         from app.spotty_bunny_complete import field_editor_selector_name
@@ -2483,6 +2498,8 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("scrollPageUp:", complete_source)
         self.assertIn("scrollPageDown:", complete_source)
+        self.assertIn("edit_command_modifiers_ok", source)
+        self.assertIn("not scroll.isHidden()", source)
         self.assertIn("dismissWithEscape_", source)
         self.assertIn("releaseEscape_", source)
         self.assertIn("ESCAPE_KEYCODE", source)
