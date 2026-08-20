@@ -301,6 +301,15 @@ def describe_key(
     return "-".join(parts)
 
 
+def page_selector_for_keycode(keycode: int) -> str | None:
+    """Map Page Up/Down keycodes to completion navigation selectors."""
+    if keycode == PAGE_UP_KEYCODE:
+        return "pageUp:"
+    if keycode == PAGE_DOWN_KEYCODE:
+        return "pageDown:"
+    return None
+
+
 def resolve_control_snapshot(
     *,
     keycode: int,

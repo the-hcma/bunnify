@@ -154,6 +154,7 @@ from app.spotty_bunny_hotkey import (
     ChordTracker,
     apply_control_event,
     describe_key,
+    page_selector_for_keycode,
 )
 from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
@@ -241,7 +242,11 @@ class SpottyBunnyController(NSObject):
         if is_tab_completion_selector(name):
             self.completeWithTab_(None)
             return True
-        if self._completion_rows and is_completion_navigation_selector(name):
+        if (
+            self._completion_rows
+            and self._completion_table_visible()
+            and is_completion_navigation_selector(name)
+        ):
             self._move_completion(name)
             return True
         current = ""
@@ -636,6 +641,9 @@ class SpottyBunnyController(NSObject):
 
         _run_on_main(apply)
 
+    def _completion_table_visible(self) -> bool:
+        return self.scroll is not None and not self.scroll.isHidden()
+
     def _completions_ready(self, result: object, *, seq: int) -> None:
         def apply() -> None:
             field = str(self.field.stringValue()) if self.field is not None else ""
@@ -754,7 +762,12 @@ class SpottyBunnyController(NSObject):
         self._set_status(guidance)
 
     def _move_completion(self, selector: str) -> None:
-        if not self._completion_rows or self.table is None or self.field is None:
+        if (
+            not self._completion_rows
+            or not self._completion_table_visible()
+            or self.table is None
+            or self.field is None
+        ):
             return
         idx = completion_row_after_selector(
             int(self.table.selectedRow()),
@@ -1108,18 +1121,13 @@ class SpottyBunnyPanel(NSPanel):
             return
         if int(event.keyCode()) in {PAGE_DOWN_KEYCODE, PAGE_UP_KEYCODE}:
             delegate = self.delegate()
-            scroll = getattr(delegate, "scroll", None) if delegate is not None else None
+            selector = page_selector_for_keycode(int(event.keyCode()))
             if (
                 delegate is not None
-                and scroll is not None
-                and not scroll.isHidden()
+                and selector is not None
+                and getattr(delegate, "_completion_table_visible", lambda: False)()
                 and getattr(delegate, "_completion_rows", None)
             ):
-                selector = (
-                    "pageDown:"
-                    if int(event.keyCode()) == PAGE_DOWN_KEYCODE
-                    else "pageUp:"
-                )
                 delegate._move_completion(selector)
                 return
         objc.super(SpottyBunnyPanel, self).keyDown_(event)
