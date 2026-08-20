@@ -205,7 +205,9 @@ Hold **one** Control, then press the **other** to show the search box. Esc
 (or the same chord again) hides it. Up/down walks the CLI REPL history file
 (`platformdirs` cache `bunnify/repl_history`). Tab uses the same completers as
 the CLI (`FirstTokenFuzzyCompleter` / `ShortcutCompleter`) and lists matches
-under the field. Enter resolves via `/api/resolve/` (same as browser search:
+under the field. GitHub-backed parameter completions (e.g. `repoh <repo>`) need
+`gh` installed (or `GITHUB_TOKEN`/`GH_TOKEN`); otherwise those candidates stay
+empty — see `docs/CONFIG.md`. Enter resolves via `/api/resolve/` (same as browser search:
 unknown text opens a Google query) and opens the URL in the default browser.
 Ctrl-C in a foreground terminal quits. Startup prints the log file path on stderr
 (`spotty-bunny: logging to …`). Default log level is **INFO** (use `--verbose`
