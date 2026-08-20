@@ -1314,7 +1314,10 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         )
 
     def test_completion_row_after_selector_supports_page_keys(self) -> None:
-        from app.spotty_bunny_complete import completion_row_after_selector
+        from app.spotty_bunny_complete import (
+            completion_row_after_selector,
+            is_completion_navigation_selector,
+        )
 
         self.assertEqual(
             completion_row_after_selector(7, row_count=20, selector="pageUp:"),
@@ -1325,9 +1328,49 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
             12,
         )
         self.assertEqual(
+            completion_row_after_selector(7, row_count=20, selector="scrollPageUp:"),
+            2,
+        )
+        self.assertEqual(
+            completion_row_after_selector(7, row_count=20, selector="scrollPageDown:"),
+            12,
+        )
+        self.assertEqual(
             completion_row_after_selector(0, row_count=3, selector="moveDown:"),
             1,
         )
+        self.assertTrue(is_completion_navigation_selector("scrollPageUp:"))
+        self.assertTrue(is_completion_navigation_selector("pageDown:"))
+
+    def test_edit_action_for_key_maps_command_chords(self) -> None:
+        from app.spotty_bunny_edit import edit_action_for_key
+
+        self.assertEqual(
+            edit_action_for_key("v", command=True, shift=False),
+            "paste:",
+        )
+        self.assertEqual(
+            edit_action_for_key("c", command=True, shift=False),
+            "copy:",
+        )
+        self.assertEqual(
+            edit_action_for_key("x", command=True, shift=False),
+            "cut:",
+        )
+        self.assertEqual(
+            edit_action_for_key("a", command=True, shift=False),
+            "selectAll:",
+        )
+        self.assertEqual(
+            edit_action_for_key("z", command=True, shift=False),
+            "undo:",
+        )
+        self.assertEqual(
+            edit_action_for_key("z", command=True, shift=True),
+            "redo:",
+        )
+        self.assertIsNone(edit_action_for_key("v", command=False, shift=False))
+        self.assertIsNone(edit_action_for_key("b", command=True, shift=False))
 
     def test_field_editor_selector_name_normalizes_forms(self) -> None:
         from app.spotty_bunny_complete import field_editor_selector_name
@@ -2427,6 +2470,15 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("class SpottyBunnyPanel", source)
         self.assertIn("canBecomeKeyWindow", source)
         self.assertIn("SpottyBunnyPanel.alloc()", source)
+        self.assertIn("class SpottyBunnySearchField", source)
+        self.assertIn("SpottyBunnySearchField.alloc()", source)
+        self.assertIn("_install_edit_menu", source)
+        self.assertIn("_dispatch_edit_key_equivalent", source)
+        self.assertIn("edit_action_for_key", source)
+        self.assertIn("is_completion_navigation_selector", source)
+        self.assertIn("scrollPageUp:", source)
+        self.assertIn("PAGE_UP_KEYCODE", source)
+        self.assertIn("PAGE_DOWN_KEYCODE", source)
         self.assertIn("dismissWithEscape_", source)
         self.assertIn("releaseEscape_", source)
         self.assertIn("ESCAPE_KEYCODE", source)
