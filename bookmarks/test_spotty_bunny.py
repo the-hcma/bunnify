@@ -2476,9 +2476,13 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("_dispatch_edit_key_equivalent", source)
         self.assertIn("edit_action_for_key", source)
         self.assertIn("is_completion_navigation_selector", source)
-        self.assertIn("scrollPageUp:", source)
         self.assertIn("PAGE_UP_KEYCODE", source)
         self.assertIn("PAGE_DOWN_KEYCODE", source)
+        complete_source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_complete.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("scrollPageUp:", complete_source)
+        self.assertIn("scrollPageDown:", complete_source)
         self.assertIn("dismissWithEscape_", source)
         self.assertIn("releaseEscape_", source)
         self.assertIn("ESCAPE_KEYCODE", source)
