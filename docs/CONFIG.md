@@ -1,6 +1,6 @@
 # Bunnify configuration
 
-`bunnify.json.example` (and the packaged `app/data/bookmarks.example.json`) is
+`bunnify.json.example` at the repository root is the single source of truth for
 the template for creating your personal bookmarks file. It ships Google
 properties (Search, Gmail, Calendar, YouTube, Drive, Docs, and related),
 generic GitHub shortcuts, and a `bun` key for this repository’s source.
@@ -141,8 +141,8 @@ Positional arguments after `--complete-param KEY` are already-filled parameters;
 
 ## Bookmark examples
 
-Shipped examples (`app/data/bookmarks.example.json`, `bunnify.json.example`)
-include GitHub shortcuts with `complete` markers (org-scoped repos, PRs,
+Shipped example (`bunnify.json.example`, bundled into installed wheels as
+`app/data/bookmarks.example.json`) includes GitHub shortcuts with `complete` markers (org-scoped repos, PRs,
 issues, merge queue, and Graphite review links). Copy or merge into your
 personal file when upgrading an existing install:
 

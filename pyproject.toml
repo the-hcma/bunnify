@@ -55,8 +55,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["app", "bookmarks"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"bunnify.json.example" = "app/data/bookmarks.example.json"
+
 [tool.hatch.build.targets.sdist]
 packages = ["app", "bookmarks"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"bunnify.json.example" = "app/data/bookmarks.example.json"
 
 [dependency-groups]
 dev = [
