@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.7.1...bunnify-v0.8.0) (2026-08-20)
+
+
+### Features
+
+* declare bookmark placeholder completion kinds in JSON ([#328](https://github.com/the-hcma/bunnify/issues/328)) ([6bf90db](https://github.com/the-hcma/bunnify/commit/6bf90dbda4b04ba7a7e8cdce738bb8131350fa64))
+* extend bookmark examples with GitHub complete markers ([#329](https://github.com/the-hcma/bunnify/issues/329)) ([ace673f](https://github.com/the-hcma/bunnify/commit/ace673f7b1720ee38b55fd798a7b47fa257ad5af))
+
+
+### Bug Fixes
+
+* harden spotty-bunny LaunchAgent install and TCC handling ([#330](https://github.com/the-hcma/bunnify/issues/330)) ([aa5d766](https://github.com/the-hcma/bunnify/commit/aa5d76615ff0b1cf80e26881c52a1be72b198c98))
+* tighten About panel links for repository and version ([#326](https://github.com/the-hcma/bunnify/issues/326)) ([0f1b8ba](https://github.com/the-hcma/bunnify/commit/0f1b8baf7d65ed39cd7f639dc7f453304b870e92))
+
 ## [0.7.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.7.0...bunnify-v0.7.1) (2026-08-19)
 
 

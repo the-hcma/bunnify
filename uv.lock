@@ -2,11 +2,6 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 
-[options]
-
-[options.exclude-newer-package]
-platformdirs = "2026-08-11T07:01:31Z"
-
 [[package]]
 name = "asgiref"
 version = "3.12.1"
@@ -27,7 +22,7 @@ wheels = [
 
 [[package]]
 name = "bunnify"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "asgiref" },
