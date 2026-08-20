@@ -444,7 +444,7 @@ def user_is_admin() -> bool:
 
         username = pwd.getpwuid(os.getuid()).pw_name
         return username in grp.getgrnam("admin").gr_mem
-    except (KeyError, OSError):
+    except KeyError, OSError:
         return False
 
 
