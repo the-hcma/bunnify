@@ -61,8 +61,10 @@ packages = ["app", "bookmarks"]
 [tool.hatch.build.targets.sdist]
 packages = ["app", "bookmarks"]
 
+# Keep the repo-root path inside the sdist so `uv build` (wheel-from-sdist) can
+# still resolve the wheel force-include source path above.
 [tool.hatch.build.targets.sdist.force-include]
-"bunnify.json.example" = "app/data/bookmarks.example.json"
+"bunnify.json.example" = "bunnify.json.example"
 
 [dependency-groups]
 dev = [
