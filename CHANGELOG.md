@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.2...bunnify-v0.8.3) (2026-08-21)
+
+
+### Bug Fixes
+
+* keep example bookmarks path in sdist for uv build ([#342](https://github.com/the-hcma/bunnify/issues/342)) ([bab2286](https://github.com/the-hcma/bunnify/commit/bab2286536571afb1c135764508578231eccc881))
+
 ## [0.8.2](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.1...bunnify-v0.8.2) (2026-08-21)
 
 
