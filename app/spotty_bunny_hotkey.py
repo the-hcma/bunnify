@@ -8,6 +8,8 @@ from collections.abc import Callable
 CONTROL_LEFT_KEYCODE = 59
 CONTROL_RIGHT_KEYCODE = 62
 ESCAPE_KEYCODE = 53
+PAGE_DOWN_KEYCODE = 121
+PAGE_UP_KEYCODE = 116
 TAB_KEYCODE = 48
 
 
@@ -297,6 +299,15 @@ def describe_key(
         parts.append("FN")
     parts.append(name)
     return "-".join(parts)
+
+
+def page_selector_for_keycode(keycode: int) -> str | None:
+    """Map Page Up/Down keycodes to completion navigation selectors."""
+    if keycode == PAGE_UP_KEYCODE:
+        return "pageUp:"
+    if keycode == PAGE_DOWN_KEYCODE:
+        return "pageDown:"
+    return None
 
 
 def resolve_control_snapshot(

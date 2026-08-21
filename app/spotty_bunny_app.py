@@ -21,6 +21,11 @@ from Cocoa import (
     NSButton,
     NSColor,
     NSEvent,
+    NSEventModifierFlagCommand,
+    NSEventModifierFlagControl,
+    NSEventModifierFlagDeviceIndependentFlagsMask,
+    NSEventModifierFlagOption,
+    NSEventModifierFlagShift,
     NSEventTypeApplicationDefined,
     NSFloatingWindowLevel,
     NSFocusRingTypeNone,
@@ -122,6 +127,7 @@ from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
     apply_completion,
+    completion_navigation_disposition,
     completion_row_after_selector,
     completion_still_current,
     completions_for,
@@ -129,6 +135,7 @@ from app.spotty_bunny_complete import (
     is_tab_completion_selector,
     make_spotty_completer,
 )
+from app.spotty_bunny_edit import edit_action_for_key, edit_command_modifiers_ok
 from app.spotty_bunny_history import (
     HistoryNavigator,
     append_history_line,
@@ -141,10 +148,13 @@ from app.spotty_bunny_hotkey import (
     DEVICE_LEFT_CONTROL_MASK,
     DEVICE_RIGHT_CONTROL_MASK,
     ESCAPE_KEYCODE,
+    PAGE_DOWN_KEYCODE,
+    PAGE_UP_KEYCODE,
     TAB_KEYCODE,
     ChordTracker,
     apply_control_event,
     describe_key,
+    page_selector_for_keycode,
 )
 from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
@@ -232,14 +242,18 @@ class SpottyBunnyController(NSObject):
         if is_tab_completion_selector(name):
             self.completeWithTab_(None)
             return True
-        if self._completion_rows and name in {
-            "moveDown:",
-            "moveUp:",
-            "pageDown:",
-            "pageUp:",
-        }:
+        disposition = completion_navigation_disposition(
+            name,
+            has_rows=bool(self._completion_rows),
+            table_visible=self._completion_table_visible(),
+        )
+        if disposition == "move":
             self._move_completion(name)
             return True
+        if disposition == "consume":
+            return True
+        if disposition == "ignore":
+            return False
         current = ""
         if self.field is not None:
             current = str(self.field.stringValue())
@@ -499,7 +513,7 @@ class SpottyBunnyController(NSObject):
         logo.setMenu_(menu)
         panel.contentView().addSubview_(logo)
 
-        field = NSTextField.alloc().initWithFrame_(
+        field = SpottyBunnySearchField.alloc().initWithFrame_(
             NSMakeRect(FIELD_LEFT, PANEL_INSET, FIELD_WIDTH, FIELD_HEIGHT)
         )
         cell = _CenteredFieldCell.alloc().initTextCell_("")
@@ -632,6 +646,9 @@ class SpottyBunnyController(NSObject):
 
         _run_on_main(apply)
 
+    def _completion_table_visible(self) -> bool:
+        return self.scroll is not None and not self.scroll.isHidden()
+
     def _completions_ready(self, result: object, *, seq: int) -> None:
         def apply() -> None:
             field = str(self.field.stringValue()) if self.field is not None else ""
@@ -750,7 +767,12 @@ class SpottyBunnyController(NSObject):
         self._set_status(guidance)
 
     def _move_completion(self, selector: str) -> None:
-        if not self._completion_rows or self.table is None or self.field is None:
+        if (
+            not self._completion_rows
+            or not self._completion_table_visible()
+            or self.table is None
+            or self.field is None
+        ):
             return
         idx = completion_row_after_selector(
             int(self.table.selectedRow()),
@@ -1102,6 +1124,17 @@ class SpottyBunnyPanel(NSPanel):
             if delegate is not None:
                 delegate.completeWithTab_(self)
             return
+        if int(event.keyCode()) in {PAGE_DOWN_KEYCODE, PAGE_UP_KEYCODE}:
+            delegate = self.delegate()
+            selector = page_selector_for_keycode(int(event.keyCode()))
+            if (
+                delegate is not None
+                and selector is not None
+                and getattr(delegate, "_completion_table_visible", lambda: False)()
+                and getattr(delegate, "_completion_rows", None)
+            ):
+                delegate._move_completion(selector)
+                return
         objc.super(SpottyBunnyPanel, self).keyDown_(event)
 
     def keyUp_(self, event) -> None:
@@ -1116,7 +1149,20 @@ class SpottyBunnyPanel(NSPanel):
         if int(event.keyCode()) == ESCAPE_KEYCODE:
             self.cancelOperation_(self)
             return True
+        if _dispatch_edit_key_equivalent(event):
+            return True
         return bool(objc.super(SpottyBunnyPanel, self).performKeyEquivalent_(event))
+
+
+class SpottyBunnySearchField(NSTextField):
+    """Search field that keeps Cut/Copy/Paste working without an Edit menu bar."""
+
+    def performKeyEquivalent_(self, event) -> bool:
+        if _dispatch_edit_key_equivalent(event):
+            return True
+        return bool(
+            objc.super(SpottyBunnySearchField, self).performKeyEquivalent_(event)
+        )
 
 
 def _primary_screen():
@@ -1130,6 +1176,7 @@ def run_spotty_bunny_app() -> int:
     NSApplication.sharedApplication()
     NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     NSApp.finishLaunching()
+    _install_edit_menu()
     controller = SpottyBunnyController.alloc().init()
     logger.info("NSApplication ready (activationPolicy=accessory)")
     _install_event_tap(controller)
@@ -1304,6 +1351,24 @@ def _describe_event_key(keycode: int, flags: int) -> str:
     )
 
 
+def _dispatch_edit_key_equivalent(event) -> bool:
+    """Send Cut/Copy/Paste/Select All/Undo to the first responder when possible."""
+    flags = int(event.modifierFlags()) & int(
+        NSEventModifierFlagDeviceIndependentFlagsMask
+    )
+    command = bool(flags & int(NSEventModifierFlagCommand))
+    control = bool(flags & int(NSEventModifierFlagControl))
+    option = bool(flags & int(NSEventModifierFlagOption))
+    shift = bool(flags & int(NSEventModifierFlagShift))
+    if not edit_command_modifiers_ok(command=command, control=control, option=option):
+        return False
+    characters = event.charactersIgnoringModifiers() or ""
+    action = edit_action_for_key(str(characters), command=True, shift=shift)
+    if action is None:
+        return False
+    return bool(NSApp.sendAction_to_from_(action, None, None))
+
+
 def _event_mask() -> int:
     return (
         CGEventMaskBit(kCGEventKeyDown)
@@ -1321,6 +1386,31 @@ def _event_type_name(event_type: int) -> str:
         int(kCGEventTapDisabledByUserInput): "tapDisabledByUserInput",
     }
     return names.get(int(event_type), f"type:{event_type}")
+
+
+def _install_edit_menu() -> None:
+    """Install a hidden Edit menu so Command cut/copy/paste reach the field editor."""
+    main = NSMenu.alloc().initWithTitle_("MainMenu")
+    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", None, "")
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    command = int(NSEventModifierFlagCommand)
+    command_shift = command | int(NSEventModifierFlagShift)
+    for title, action, key, modifiers in (
+        ("Undo", "undo:", "z", command),
+        ("Redo", "redo:", "z", command_shift),
+        ("Cut", "cut:", "x", command),
+        ("Copy", "copy:", "c", command),
+        ("Paste", "paste:", "v", command),
+        ("Select All", "selectAll:", "a", command),
+    ):
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            title, action, key
+        )
+        item.setKeyEquivalentModifierMask_(modifiers)
+        edit_menu.addItem_(item)
+    edit_item.setSubmenu_(edit_menu)
+    main.addItem_(edit_item)
+    NSApp.setMainMenu_(main)
 
 
 def _install_event_tap(controller: SpottyBunnyController) -> None:

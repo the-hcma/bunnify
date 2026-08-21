@@ -23,6 +23,26 @@ class CompletionRow:
     start_position: int
 
 
+COMPLETION_NAVIGATION_SELECTORS = frozenset(
+    {
+        "moveDown:",
+        "moveUp:",
+        "pageDown:",
+        "pageUp:",
+        "scrollPageDown:",
+        "scrollPageUp:",
+    }
+)
+
+COMPLETION_PAGE_SELECTORS = frozenset(
+    {
+        "pageDown:",
+        "pageUp:",
+        "scrollPageDown:",
+        "scrollPageUp:",
+    }
+)
+
 COMPLETION_PAGE_STEP = 5
 
 TAB_COMPLETION_SELECTORS = frozenset(
@@ -33,6 +53,33 @@ TAB_COMPLETION_SELECTORS = frozenset(
         "selectPreviousKeyView:",
     }
 )
+
+
+def apply_completion(current: str, row: CompletionRow) -> str:
+    """Apply *row* like prompt_toolkit (start_position is relative to the cursor)."""
+    begin = len(current) + row.start_position
+    if begin < 0:
+        begin = 0
+    return current[:begin] + row.insert
+
+
+def completion_navigation_disposition(
+    selector: str,
+    *,
+    has_rows: bool,
+    table_visible: bool,
+) -> str | None:
+    """How the field editor should treat a completion-navigation selector.
+
+    Returns ``move`` (update selection), ``consume`` (swallow without moving),
+    ``ignore`` (do not handle; do not fall through to history), or ``None``
+    when the selector is not completion navigation / there are no rows.
+    """
+    if not has_rows or not is_completion_navigation_selector(selector):
+        return None
+    if is_page_navigation_selector(selector):
+        return "move" if table_visible else "ignore"
+    return "move" if table_visible else "consume"
 
 
 def completion_row_after_selector(
@@ -46,23 +93,16 @@ def completion_row_after_selector(
     if row_count <= 0:
         return 0
     idx = current if current >= 0 else 0
-    if selector == "moveUp:":
+    action = normalize_completion_navigation_selector(selector)
+    if action == "moveUp:":
         return max(0, idx - 1)
-    if selector == "moveDown:":
+    if action == "moveDown:":
         return min(row_count - 1, idx + 1)
-    if selector == "pageUp:":
+    if action == "pageUp:":
         return max(0, idx - page_step)
-    if selector == "pageDown:":
+    if action == "pageDown:":
         return min(row_count - 1, idx + page_step)
     return idx
-
-
-def apply_completion(current: str, row: CompletionRow) -> str:
-    """Apply *row* like prompt_toolkit (start_position is relative to the cursor)."""
-    begin = len(current) + row.start_position
-    if begin < 0:
-        begin = 0
-    return current[:begin] + row.insert
 
 
 def completion_still_current(
@@ -111,6 +151,16 @@ def field_editor_selector_name(selector: object) -> str:
     return text
 
 
+def is_completion_navigation_selector(selector: object) -> bool:
+    """True when *selector* should move the Tab completion selection."""
+    return field_editor_selector_name(selector) in COMPLETION_NAVIGATION_SELECTORS
+
+
+def is_page_navigation_selector(selector: object) -> bool:
+    """True when *selector* is a Page Up/Down (or scroll-page) command."""
+    return field_editor_selector_name(selector) in COMPLETION_PAGE_SELECTORS
+
+
 def is_tab_completion_selector(selector: object) -> bool:
     """True when *selector* should trigger Spotty Bunny Tab completion."""
     return field_editor_selector_name(selector) in TAB_COMPLETION_SELECTORS
@@ -133,6 +183,15 @@ def make_spotty_completer(
         param_suggest_fn=param_suggest_fn,
     )
     return FirstTokenFuzzyCompleter(inner)
+
+
+def normalize_completion_navigation_selector(selector: str) -> str:
+    """Map Cocoa page-scroll selectors to Spotty Bunny page navigation names."""
+    if selector == "scrollPageUp:":
+        return "pageUp:"
+    if selector == "scrollPageDown:":
+        return "pageDown:"
+    return selector
 
 
 def _plain(value: object) -> str:

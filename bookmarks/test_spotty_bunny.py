@@ -28,11 +28,14 @@ from app.spotty_bunny_hotkey import (
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
     ESCAPE_KEYCODE,
+    PAGE_DOWN_KEYCODE,
+    PAGE_UP_KEYCODE,
     TAB_KEYCODE,
     ChordTracker,
     apply_control_event,
     apply_hid_snapshot,
     describe_key,
+    page_selector_for_keycode,
     resolve_control_snapshot,
 )
 from app.spotty_bunny_quit import (
@@ -1314,7 +1317,10 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         )
 
     def test_completion_row_after_selector_supports_page_keys(self) -> None:
-        from app.spotty_bunny_complete import completion_row_after_selector
+        from app.spotty_bunny_complete import (
+            completion_row_after_selector,
+            is_completion_navigation_selector,
+        )
 
         self.assertEqual(
             completion_row_after_selector(7, row_count=20, selector="pageUp:"),
@@ -1325,8 +1331,96 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
             12,
         )
         self.assertEqual(
+            completion_row_after_selector(7, row_count=20, selector="scrollPageUp:"),
+            2,
+        )
+        self.assertEqual(
+            completion_row_after_selector(7, row_count=20, selector="scrollPageDown:"),
+            12,
+        )
+        self.assertEqual(
             completion_row_after_selector(0, row_count=3, selector="moveDown:"),
             1,
+        )
+        self.assertTrue(is_completion_navigation_selector("scrollPageUp:"))
+        self.assertTrue(is_completion_navigation_selector("pageDown:"))
+
+    def test_completion_navigation_disposition_scopes_page_visibility(self) -> None:
+        from app.spotty_bunny_complete import completion_navigation_disposition
+
+        self.assertEqual(
+            completion_navigation_disposition(
+                "moveDown:", has_rows=True, table_visible=False
+            ),
+            "consume",
+        )
+        self.assertEqual(
+            completion_navigation_disposition(
+                "moveUp:", has_rows=True, table_visible=True
+            ),
+            "move",
+        )
+        self.assertEqual(
+            completion_navigation_disposition(
+                "scrollPageDown:", has_rows=True, table_visible=False
+            ),
+            "ignore",
+        )
+        self.assertEqual(
+            completion_navigation_disposition(
+                "pageUp:", has_rows=True, table_visible=True
+            ),
+            "move",
+        )
+        self.assertIsNone(
+            completion_navigation_disposition(
+                "moveDown:", has_rows=False, table_visible=False
+            )
+        )
+
+    def test_edit_action_for_key_maps_command_chords(self) -> None:
+        from app.spotty_bunny_edit import (
+            edit_action_for_key,
+            edit_command_modifiers_ok,
+        )
+
+        self.assertEqual(
+            edit_action_for_key("v", command=True, shift=False),
+            "paste:",
+        )
+        self.assertEqual(
+            edit_action_for_key("c", command=True, shift=False),
+            "copy:",
+        )
+        self.assertEqual(
+            edit_action_for_key("x", command=True, shift=False),
+            "cut:",
+        )
+        self.assertEqual(
+            edit_action_for_key("a", command=True, shift=False),
+            "selectAll:",
+        )
+        self.assertEqual(
+            edit_action_for_key("z", command=True, shift=False),
+            "undo:",
+        )
+        self.assertEqual(
+            edit_action_for_key("z", command=True, shift=True),
+            "redo:",
+        )
+        self.assertIsNone(edit_action_for_key("v", command=False, shift=False))
+        self.assertIsNone(edit_action_for_key("b", command=True, shift=False))
+        self.assertTrue(
+            edit_command_modifiers_ok(command=True, control=False, option=False)
+        )
+        self.assertFalse(
+            edit_command_modifiers_ok(command=True, control=True, option=False)
+        )
+        self.assertFalse(
+            edit_command_modifiers_ok(command=True, control=False, option=True)
+        )
+        self.assertFalse(
+            edit_command_modifiers_ok(command=False, control=False, option=False)
         )
 
     def test_field_editor_selector_name_normalizes_forms(self) -> None:
@@ -1555,6 +1649,11 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
             describe_key(200, control=True, shift=True),
             "CTRL-SHIFT-keycode:200",
         )
+
+    def test_page_selector_for_keycode(self) -> None:
+        self.assertEqual(page_selector_for_keycode(PAGE_UP_KEYCODE), "pageUp:")
+        self.assertEqual(page_selector_for_keycode(PAGE_DOWN_KEYCODE), "pageDown:")
+        self.assertIsNone(page_selector_for_keycode(TAB_KEYCODE))
 
     def test_device_flag_sees_right_control_without_hid(self) -> None:
         left, right = resolve_control_snapshot(
@@ -2427,6 +2526,23 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("class SpottyBunnyPanel", source)
         self.assertIn("canBecomeKeyWindow", source)
         self.assertIn("SpottyBunnyPanel.alloc()", source)
+        self.assertIn("class SpottyBunnySearchField", source)
+        self.assertIn("SpottyBunnySearchField.alloc()", source)
+        self.assertIn("_install_edit_menu", source)
+        self.assertIn("_dispatch_edit_key_equivalent", source)
+        self.assertIn("edit_action_for_key", source)
+        self.assertIn("completion_navigation_disposition", source)
+        self.assertIn("PAGE_UP_KEYCODE", source)
+        self.assertIn("PAGE_DOWN_KEYCODE", source)
+        complete_source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_complete.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("scrollPageUp:", complete_source)
+        self.assertIn("scrollPageDown:", complete_source)
+        self.assertIn("edit_command_modifiers_ok", source)
+        self.assertIn("_completion_table_visible", source)
+        self.assertIn("completion_navigation_disposition", source)
+        self.assertIn("page_selector_for_keycode", source)
         self.assertIn("dismissWithEscape_", source)
         self.assertIn("releaseEscape_", source)
         self.assertIn("ESCAPE_KEYCODE", source)
