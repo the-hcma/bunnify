@@ -43,15 +43,43 @@ export BUNNIFY_EMBED_VERSION="${version}"
 export BUNNIFY_EMBED_COMMIT="${commit}"
 uv run python "${embed_build_metadata}"
 
-echo "📦 Building wheel..."
-timeout 120 uv build --wheel --out-dir "$build_dir"
+echo "📦 Building sdist + wheel (same path as Publish PyPI)..."
+# Prefer full `uv build` over `--wheel`: publish builds the wheel from the sdist,
+# and hatch force-include paths must still resolve in that layout.
+timeout 120 uv build --out-dir "$build_dir"
 restore_build_metadata
 wheels=("$build_dir"/*.whl)
+sdists=("$build_dir"/*.tar.gz)
 wheel_path="${wheels[0]}"
+sdist_path="${sdists[0]}"
 if [[ ! -f "$wheel_path" ]]; then
     echo "No wheel produced under $build_dir" >&2
     exit 1
 fi
+if [[ ! -f "$sdist_path" ]]; then
+    echo "No sdist produced under $build_dir" >&2
+    exit 1
+fi
+
+echo "📦 Verifying sdist keeps bunnify.json.example at repo-root path..."
+uv run python - "$repo_root/bunnify.json.example" "$sdist_path" <<'PY'
+import sys
+import tarfile
+from pathlib import Path
+
+canonical = Path(sys.argv[1]).read_bytes()
+with tarfile.open(sys.argv[2], "r:gz") as sdist:
+    members = [
+        name
+        for name in sdist.getnames()
+        if name.endswith("/bunnify.json.example") or name == "bunnify.json.example"
+    ]
+    if len(members) != 1:
+        raise SystemExit(f"Expected one bunnify.json.example in sdist, got {members!r}")
+    packaged = sdist.extractfile(members[0]).read()
+if packaged != canonical:
+    raise SystemExit("Sdist bunnify.json.example does not match repo file")
+PY
 
 echo "📦 Verifying wheel bundles bunnify.json.example..."
 uv run python - "$repo_root/bunnify.json.example" "$wheel_path" <<'PY'
