@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.1...bunnify-v0.8.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* restore Spotty Bunny clipboard and page navigation ([#338](https://github.com/the-hcma/bunnify/issues/338)) ([664e63a](https://github.com/the-hcma/bunnify/commit/664e63a474602e5729e1c48a587c960dfa3dbffc))
+
 ## [0.8.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.0...bunnify-v0.8.1) (2026-08-20)
 
 
