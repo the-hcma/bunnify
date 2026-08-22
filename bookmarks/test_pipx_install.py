@@ -45,6 +45,15 @@ class PipxInstallTests(SimpleTestCase):
                 python,
             )
 
+    def test_pipx_bunnify_venv_python_checks_local_pipx_home(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".local" / "pipx"
+            python = root / "venvs" / "bunnify" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text("", encoding="utf-8")
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                self.assertEqual(pipx_bunnify_venv_python(), python)
+
     def test_pipx_bunnify_path_honors_pipx_bin_dir(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -72,11 +72,23 @@ def pipx_bunnify_path() -> Path | None:
 
 def pipx_bunnify_venv_python(*, pipx_home: Path | None = None) -> Path | None:
     """Return the pipx venv python for ``bunnify``, if present."""
-    root = pipx_home
-    if root is None:
-        env_home = os.environ.get("PIPX_HOME", "").strip()
-        root = Path(env_home) if env_home else Path.home() / ".local" / "share" / "pipx"
-    python = root / "venvs" / "bunnify" / "bin" / "python"
-    if python.is_file():
-        return python
+    roots = [pipx_home] if pipx_home is not None else _pipx_home_candidates()
+    for root in roots:
+        python = root / "venvs" / "bunnify" / "bin" / "python"
+        if python.is_file():
+            return python
     return None
+
+
+def _pipx_home_candidates() -> list[Path]:
+    """Return likely pipx home directories (``PIPX_HOME`` and common defaults)."""
+    candidates: list[Path] = []
+    env_home = os.environ.get("PIPX_HOME", "").strip()
+    if env_home:
+        candidates.append(Path(env_home))
+    home = Path.home()
+    for relative in (Path(".local") / "share" / "pipx", Path(".local") / "pipx"):
+        candidate = home / relative
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates

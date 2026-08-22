@@ -2217,41 +2217,39 @@ class ConfigUnitTests(TestCase):
     def test_onboard_prints_next_steps(self) -> None:
         from app.cli import main
 
+        mock_state = InstallState(
+            bookmarks_ready=False,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=False,
+            macos_platform=False,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.3 (abc12345)",
+            preferences_ready=False,
+            pypi_latest="0.8.3",
+            source_checkout=False,
+            spotty_agent_installed=False,
+            upgrade_available=False,
+            version_label="0.8.3 (abc12345)",
+        )
         with (
-            patch(
-                "app.onboard.detect_install_state",
-                return_value=InstallState(
-                    bookmarks_ready=False,
-                    command_path="/Users/me/.local/bin/bunnify",
-                    macos_extra=False,
-                    macos_platform=False,
-                    pipx_app_path="/Users/me/.local/bin/bunnify",
-                    pipx_version_label="0.8.3 (abc12345)",
-                    preferences_ready=False,
-                    pypi_latest="0.8.3",
-                    source_checkout=False,
-                    spotty_agent_installed=False,
-                    upgrade_available=False,
-                    version_label="0.8.3 (abc12345)",
-                ),
-            ),
+            patch("app.onboard.detect_install_state", return_value=mock_state),
             patch("app.onboard.sys.stdin") as stdin,
             patch("app.onboard.sys.stdout") as stdout_tty,
         ):
             stdin.isatty.return_value = False
             stdout_tty.isatty.return_value = False
             result = CliRunner().invoke(main, ["onboard"])
-        self.assertEqual(result.exit_code, 0)
-        self.assertIn("Already installed:", result.output)
-        self.assertIn("bookmarks.json", result.output)
-        self.assertIn("bunnify setup", result.output)
-        self.assertIn("CHROME_SETUP.md", result.output)
-        self.assertIn("bunnify upgrade", result.output)
-        self.assertIn("preferred", result.output.lower())
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("Already installed:", result.output)
+            self.assertIn("bookmarks.json", result.output)
+            self.assertIn("bunnify setup", result.output)
+            self.assertIn("CHROME_SETUP.md", result.output)
+            self.assertIn("bunnify upgrade", result.output)
+            self.assertIn("preferred", result.output.lower())
 
-        flagged = CliRunner().invoke(main, ["--onboard"])
-        self.assertEqual(flagged.exit_code, 0)
-        self.assertIn("bunnify setup", flagged.output)
+            flagged = CliRunner().invoke(main, ["--onboard"])
+            self.assertEqual(flagged.exit_code, 0)
+            self.assertIn("bunnify setup", flagged.output)
 
     def test_upgrade_runs_pipx_and_explains_checkout(self) -> None:
         import subprocess
@@ -2292,6 +2290,41 @@ class ConfigUnitTests(TestCase):
         self.assertIn("git checkout", result.output)
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], ["/usr/bin/pipx", "upgrade", "bunnify"])
+
+    def test_upgrade_restores_macos_extra_after_pipx_upgrade(self) -> None:
+        import subprocess
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import main
+
+        completed = subprocess.CompletedProcess(
+            ["pipx", "upgrade", "bunnify"], 0, "", ""
+        )
+        with (
+            patch("app.cli.is_source_checkout", return_value=False),
+            patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch(
+                "app.cli.macos_extra_installed",
+                side_effect=[True, False],
+            ),
+            patch("app.cli.install_macos_extra", return_value=True) as restore,
+            patch("app.cli._pypi_latest_version", return_value="0.5.0"),
+            patch(
+                "app.cli._pipx_bunnify_path",
+                return_value=Path("/Users/me/.local/bin/bunnify"),
+            ),
+            patch(
+                "app.cli._read_executable_build",
+                side_effect=["0.4.0 (oldoldoldold)", "0.5.0 (newnewnewnew)"],
+            ),
+            patch("app.cli.subprocess.run", return_value=completed),
+        ):
+            result = CliRunner().invoke(main, ["upgrade"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        restore.assert_called_once()
+        self.assertEqual(restore.call_args.args[0], "/usr/bin/pipx")
 
     def test_upgrade_errors_when_pipx_missing(self) -> None:
         from unittest.mock import patch

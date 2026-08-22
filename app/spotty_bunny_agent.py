@@ -744,9 +744,8 @@ def _require_current_tcc(
             err(f"Then re-run: {COMMAND_NAME} install")
             return None
         while not status.ok:
-            err(TCC_RECHECK_PROMPT)
             try:
-                (prompt_fn or input)()
+                (prompt_fn or input)(TCC_RECHECK_PROMPT)
             except EOFError, KeyboardInterrupt:
                 return None
             try:

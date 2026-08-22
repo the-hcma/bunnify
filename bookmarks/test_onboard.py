@@ -48,7 +48,7 @@ class OnboardTests(SimpleTestCase):
 
     def test_run_onboard_offers_macos_extra_install(self) -> None:
         stdout = StringIO()
-        state = InstallState(
+        state_without_extra = InstallState(
             bookmarks_ready=True,
             command_path="/Users/me/.local/bin/bunnify",
             macos_extra=False,
@@ -62,18 +62,41 @@ class OnboardTests(SimpleTestCase):
             upgrade_available=False,
             version_label="0.8.3 (abc12345)",
         )
+        state_with_extra = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=True,
+            macos_platform=True,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.3 (abc12345)",
+            preferences_ready=True,
+            pypi_latest="0.8.3",
+            source_checkout=False,
+            spotty_agent_installed=False,
+            upgrade_available=False,
+            version_label="0.8.3 (abc12345)",
+        )
+        def ask(_message: str) -> str:
+            return "y"
+
         with (
-            patch("app.onboard.detect_install_state", return_value=state),
+            patch(
+                "app.onboard.detect_install_state",
+                side_effect=[state_without_extra, state_with_extra],
+            ),
             patch("app.onboard.sys.stdin") as stdin,
             patch("app.onboard.sys.stdout") as stdout_tty,
             patch("app.onboard.shutil.which", return_value="/usr/bin/pipx"),
             patch("app.onboard.install_macos_extra", return_value=True) as install,
+            patch("app.spotty_bunny_agent.install_agent", return_value=0) as agent,
             patch("app.cli._confirm_explicit_yes", side_effect=[True, False]),
         ):
             stdin.isatty.return_value = True
             stdout_tty.isatty.return_value = True
-            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "y")
+            run_onboard(print_fn=stdout.write, prompt_fn=ask)
         install.assert_called_once_with("/usr/bin/pipx")
+        agent.assert_called_once()
+        self.assertIs(agent.call_args.kwargs.get("prompt_fn"), ask)
         self.assertIn("Already installed:", stdout.getvalue())
 
     def test_cli_onboard_prints_install_summary(self) -> None:

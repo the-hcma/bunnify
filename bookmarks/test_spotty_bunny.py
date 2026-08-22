@@ -798,6 +798,50 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(tcc.probes, 3)
             self.assertEqual(tcc.requests, 1)
 
+    def test_install_interactive_tcc_recheck_with_prompt_fn(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import (
+            TCC_RECHECK_PROMPT,
+            install_agent,
+        )
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(
+            TccStatus(False, False),
+            TccStatus(False, False),
+            TccStatus(True, True),
+        )
+        prompts: list[str] = []
+
+        def ask(message: str) -> str:
+            prompts.append(message)
+            return ""
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            _write_executable(program, content="#!/opt/venv/bin/python\n")
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    prompt_fn=ask,
+                    request_tcc=tcc.request,
+                    skip_chord_confirm=True,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(prompts, [TCC_RECHECK_PROMPT])
+
     def test_install_interactive_chord_retry_bounces_until_confirmed(self) -> None:
         from unittest.mock import patch
 
