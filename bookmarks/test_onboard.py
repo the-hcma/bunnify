@@ -134,6 +134,40 @@ class OnboardTests(SimpleTestCase):
         self.assertIn("pipx install --force 'bunnify[macos]' failed.", output)
         agent.assert_not_called()
 
+    def test_run_onboard_warns_when_pipx_missing(self) -> None:
+        stdout = StringIO()
+        state = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=False,
+            macos_platform=True,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.3 (abc12345)",
+            preferences_ready=True,
+            pypi_latest="0.8.3",
+            source_checkout=False,
+            spotty_agent_installed=False,
+            upgrade_available=False,
+            version_label="0.8.3 (abc12345)",
+        )
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.onboard.shutil.which", return_value=None),
+            patch("app.onboard.install_macos_extra") as install,
+            patch("app.spotty_bunny_agent.install_agent") as agent,
+            patch("app.cli._confirm_explicit_yes", return_value=True),
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "y")
+        output = stdout.getvalue()
+        self.assertIn("pipx not found on PATH", output)
+        self.assertIn("pipx install --force 'bunnify[macos]'", output)
+        install.assert_not_called()
+        agent.assert_not_called()
+
     def test_run_onboard_offers_upgrade_when_available(self) -> None:
         stdout = StringIO()
         before = InstallState(
