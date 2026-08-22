@@ -10,6 +10,7 @@ from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
+from app.client import ClientError
 from app.config import default_bookmarks_path, env_file_path, load_preferences
 from app.pipx_install import (
     install_macos_extra,
@@ -183,8 +184,12 @@ def run_onboard(
             if upgrade is None:
                 from app.cli import run_upgrade as upgrade  # noqa: PLC0415
 
-            upgrade(print_fn=log, theme=colors)
-            state = detect_install_state(read_executable_build=reader)
+            try:
+                upgrade(print_fn=log, theme=colors)
+            except ClientError as exc:
+                log(colors.err(f"error: {exc}"))
+            else:
+                state = detect_install_state(read_executable_build=reader)
 
     if interactive and state.macos_platform and not state.macos_extra:
         if yes(

@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 from django.test import SimpleTestCase
 
+from app.cli import run_upgrade
+from app.client import ClientError
 from app.onboard import (
     InstallState,
     detect_install_state,
@@ -130,7 +132,7 @@ class OnboardTests(SimpleTestCase):
             upgrade_available=False,
             version_label="0.9.0 (def67890)",
         )
-        upgrade = MagicMock()
+        upgrade = MagicMock(spec=run_upgrade)
         with (
             patch(
                 "app.onboard.detect_install_state",
@@ -148,6 +150,40 @@ class OnboardTests(SimpleTestCase):
                 run_upgrade=upgrade,
             )
         upgrade.assert_called_once()
+        self.assertIn("print_fn", upgrade.call_args.kwargs)
+        self.assertIn("theme", upgrade.call_args.kwargs)
+
+    def test_run_onboard_reports_upgrade_client_error(self) -> None:
+        stdout = StringIO()
+        state = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=True,
+            macos_platform=False,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.0 (abc12345)",
+            preferences_ready=True,
+            pypi_latest="0.9.0",
+            source_checkout=False,
+            spotty_agent_installed=True,
+            upgrade_available=True,
+            version_label="0.8.0 (abc12345)",
+        )
+        upgrade = MagicMock(spec=run_upgrade, side_effect=ClientError("pipx not found"))
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.cli._confirm_explicit_yes", return_value=True),
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(
+                print_fn=stdout.write,
+                prompt_fn=lambda _m: "y",
+                run_upgrade=upgrade,
+            )
+        self.assertIn("error: pipx not found", stdout.getvalue())
 
     def test_cli_onboard_prints_install_summary(self) -> None:
         from app.cli import main

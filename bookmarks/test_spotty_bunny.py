@@ -2344,7 +2344,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                         spawn=lambda _cmd: self.fail("should not spawn"),
                     )
                 )
-            install.assert_called_once()
+            install.assert_called_once_with(skip_chord_confirm=True)
 
     def test_ensure_spotty_bunny_running_polls_until_launchd_overlay_is_live(
         self,
@@ -2557,6 +2557,13 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 self.assertTrue(stop_spotty_bunny(pid_dir=pid_dir))
             terminate.assert_called_once_with(4242)
             self.assertFalse(pid_path.exists())
+
+    def test_perform_install_skips_chord_confirm(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("def _perform_install(self) -> None:", source)
+        self.assertIn("install_agent(skip_chord_confirm=True)", source)
 
     def test_placeholder_documents_examples(self) -> None:
         source = (
