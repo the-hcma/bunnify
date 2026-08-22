@@ -16,6 +16,33 @@ EDIT_COMMAND_SHIFT_ACTIONS: dict[str, str] = {
     "z": "redo:",
 }
 
+# Home/End (and document-scroll aliases) → caret begin/end of the field.
+# On macOS, dedicated Home/End keys historically map to document scroll, which
+# is a no-op in a single-line NSTextField — remap them to line begin/end.
+LINE_END_SELECTORS = frozenset(
+    {
+        "moveToEndOfDocument:",
+        "moveToEndOfDocumentAndModifySelection:",
+        "moveToEndOfLine:",
+        "moveToEndOfLineAndModifySelection:",
+        "moveToRightEndOfLine:",
+        "moveToRightEndOfLineAndModifySelection:",
+        "scrollToEndOfDocument:",
+    }
+)
+
+LINE_START_SELECTORS = frozenset(
+    {
+        "moveToBeginningOfDocument:",
+        "moveToBeginningOfDocumentAndModifySelection:",
+        "moveToBeginningOfLine:",
+        "moveToBeginningOfLineAndModifySelection:",
+        "moveToLeftEndOfLine:",
+        "moveToLeftEndOfLineAndModifySelection:",
+        "scrollToBeginningOfDocument:",
+    }
+)
+
 
 def edit_action_for_key(
     characters: str,
@@ -40,3 +67,23 @@ def edit_command_modifiers_ok(
 ) -> bool:
     """True when modifiers are a Command edit chord (Caps Lock / Fn ignored)."""
     return command and not control and not option
+
+
+def is_line_end_selector(selector: str) -> bool:
+    """True when *selector* should place the caret (or selection) at line end."""
+    return selector in LINE_END_SELECTORS
+
+
+def is_line_navigation_selector(selector: str) -> bool:
+    """True when *selector* is Home/End / line / document begin-or-end."""
+    return selector in LINE_START_SELECTORS or selector in LINE_END_SELECTORS
+
+
+def is_line_start_selector(selector: str) -> bool:
+    """True when *selector* should place the caret (or selection) at line start."""
+    return selector in LINE_START_SELECTORS
+
+
+def line_navigation_modifies_selection(selector: str) -> bool:
+    """True when *selector* extends the selection (Shift+Home/End variants)."""
+    return selector.endswith("AndModifySelection:")

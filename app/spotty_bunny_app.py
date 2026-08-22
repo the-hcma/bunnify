@@ -130,12 +130,21 @@ from app.spotty_bunny_complete import (
     completion_navigation_disposition,
     completion_row_after_selector,
     completion_still_current,
+    completion_table_should_show,
     completions_for,
     field_editor_selector_name,
     is_tab_completion_selector,
     make_spotty_completer,
+    should_auto_insert_completion,
 )
-from app.spotty_bunny_edit import edit_action_for_key, edit_command_modifiers_ok
+from app.spotty_bunny_edit import (
+    edit_action_for_key,
+    edit_command_modifiers_ok,
+    is_line_end_selector,
+    is_line_navigation_selector,
+    is_line_start_selector,
+    line_navigation_modifies_selection,
+)
 from app.spotty_bunny_history import (
     HistoryNavigator,
     append_history_line,
@@ -236,11 +245,14 @@ class SpottyBunnyController(NSObject):
             return
         self._hide_completions()
 
-    def control_textView_doCommandBySelector_(self, _control, _text_view, selector):
-        """Tab completions, history up/down, dismiss on Esc/Return."""
+    def control_textView_doCommandBySelector_(self, _control, text_view, selector):
+        """Tab completions, history up/down, Home/End, dismiss on Esc/Return."""
         name = field_editor_selector_name(selector)
         if is_tab_completion_selector(name):
             self.completeWithTab_(None)
+            return True
+        if is_line_navigation_selector(name):
+            self._apply_line_navigation(text_view, name)
             return True
         disposition = completion_navigation_disposition(
             name,
@@ -447,6 +459,25 @@ class SpottyBunnyController(NSObject):
         resigning = notification.object()
         if resigning is self.panel and self._became_key:
             self.hide()
+
+    def _apply_line_navigation(self, text_view, selector: str) -> None:
+        """Move or extend the caret for Home/End (and Cocoa document aliases)."""
+        length = int(text_view.string().length())
+        selected = text_view.selectedRange()
+        location = int(selected.location)
+        if is_line_start_selector(selector):
+            if line_navigation_modifies_selection(selector):
+                text_view.setSelectedRange_(NSMakeRange(0, location))
+            else:
+                text_view.setSelectedRange_(NSMakeRange(0, 0))
+            return
+        if is_line_end_selector(selector):
+            if line_navigation_modifies_selection(selector):
+                text_view.setSelectedRange_(
+                    NSMakeRange(location, max(0, length - location))
+                )
+            else:
+                text_view.setSelectedRange_(NSMakeRange(length, 0))
 
     def _apply_update_status(self) -> None:
         outdated = self._update_status.outdated
@@ -953,7 +984,9 @@ class SpottyBunnyController(NSObject):
         if not rows:
             self._hide_completions()
             return
-        if self.field is not None:
+        if self.field is not None and should_auto_insert_completion(
+            self._completion_prefix, rows
+        ):
             self._set_field_text(apply_completion(self._completion_prefix, rows[0]))
         if self.table is not None:
             self.table.reloadData()
@@ -962,7 +995,9 @@ class SpottyBunnyController(NSObject):
                 False,
             )
             self.table.scrollRowToVisible_(0)
-        self._set_table_visible(len(rows) > 1)
+        self._set_table_visible(
+            completion_table_should_show(self._completion_prefix, rows)
+        )
 
     def _status_attributed(self, message: str, *, color):
         """Build wrapping, centered status copy with Courier command spans."""
@@ -1047,6 +1082,20 @@ class SpottyBunnyController(NSObject):
         if self.field is None or self._resolving:
             return
         query = str(self.field.stringValue()).strip()
+        if (
+            not query
+            and self._completion_table_visible()
+            and self._completion_rows
+            and self.table is not None
+        ):
+            idx = int(self.table.selectedRow())
+            if idx < 0:
+                idx = 0
+            if idx < len(self._completion_rows):
+                query = apply_completion(
+                    self._completion_prefix, self._completion_rows[idx]
+                ).strip()
+                self._set_field_text(query)
         if not query:
             self.hide()
             return
