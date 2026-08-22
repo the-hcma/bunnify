@@ -15,6 +15,7 @@ from app import interactive
 from app.cli import _run, matching_keys
 from app.client import ClientError, KeyEntry, ResolvedShortcut, parse_keys_payload
 from app.completion_spec import ParamCompleteSpec
+from app.onboard import InstallState
 
 from .models import Bookmark
 
@@ -2216,14 +2217,37 @@ class ConfigUnitTests(TestCase):
     def test_onboard_prints_next_steps(self) -> None:
         from app.cli import main
 
-        result = CliRunner().invoke(main, ["onboard"])
+        with (
+            patch(
+                "app.onboard.detect_install_state",
+                return_value=InstallState(
+                    bookmarks_ready=False,
+                    command_path="/Users/me/.local/bin/bunnify",
+                    macos_extra=False,
+                    macos_platform=False,
+                    pipx_app_path="/Users/me/.local/bin/bunnify",
+                    pipx_version_label="0.8.3 (abc12345)",
+                    preferences_ready=False,
+                    pypi_latest="0.8.3",
+                    source_checkout=False,
+                    spotty_agent_installed=False,
+                    upgrade_available=False,
+                    version_label="0.8.3 (abc12345)",
+                ),
+            ),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+        ):
+            stdin.isatty.return_value = False
+            stdout_tty.isatty.return_value = False
+            result = CliRunner().invoke(main, ["onboard"])
         self.assertEqual(result.exit_code, 0)
+        self.assertIn("Already installed:", result.output)
         self.assertIn("bookmarks.json", result.output)
         self.assertIn("bunnify setup", result.output)
         self.assertIn("CHROME_SETUP.md", result.output)
         self.assertIn("bunnify upgrade", result.output)
         self.assertIn("preferred", result.output.lower())
-        self.assertIn("spotty-bunny install", result.output)
 
         flagged = CliRunner().invoke(main, ["--onboard"])
         self.assertEqual(flagged.exit_code, 0)
@@ -2245,6 +2269,7 @@ class ConfigUnitTests(TestCase):
         with (
             patch("app.cli.is_source_checkout", return_value=True),
             patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli.macos_extra_installed", return_value=False),
             patch("app.cli._pypi_latest_version", return_value="0.5.0"),
             patch(
                 "app.cli._pipx_bunnify_path",
