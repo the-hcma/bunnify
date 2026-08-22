@@ -76,6 +76,7 @@ class OnboardTests(SimpleTestCase):
             upgrade_available=False,
             version_label="0.8.3 (abc12345)",
         )
+
         def ask(_message: str) -> str:
             return "y"
 
