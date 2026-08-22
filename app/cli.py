@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -33,7 +32,6 @@ from app.config import (
     LOCAL_PORT_FILE_NAME,
     MIN_LOCAL_PORT,
     ServerPreferences,
-    default_bookmarks_path,
     ensure_user_bookmarks,
     env_file_path,
     legacy_env_file_path,
@@ -61,6 +59,12 @@ from app.interactive import (
     repl_prompt_message,
 )
 from app.local_server import ensure_local_server, port_is_free, stop_local_server
+from app.onboard import run_onboard
+from app.pipx_install import (
+    install_macos_extra,
+    macos_extra_installed,
+    pipx_bunnify_path,
+)
 from app.pypi import pypi_latest_version as _pypi_latest_version
 from app.theme import Theme, stdout_color_enabled
 from app.usage import format_key_usage_lines
@@ -210,50 +214,6 @@ def format_browser_setup_text(base_url: str) -> str:
             "",
             f"Saved server base URL: {normalized}",
             "Guide: https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md",
-        ]
-    )
-
-
-def format_onboarding_text() -> str:
-    """Return post-install / post-upgrade next steps for the terminal."""
-    bookmarks = default_bookmarks_path()
-    config = env_file_path()
-    return "\n".join(
-        [
-            "Bunnify — next steps after install or upgrade",
-            "",
-            "1. Bookmarks (required before the server starts):",
-            "     bunnify setup   # offers to install the example shortcuts",
-            f"     # or create {bookmarks} yourself from bunnify.json.example",
-            "",
-            "2. Configure and start the server (local on a laptop; remote for a",
-            "   home/always-on host):",
-            "     bunnify setup",
-            "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
-            "",
-            "3. Configure Chrome or Edge using BUNNIFY_BASE_URL from:",
-            f"     {config}",
-            "   Guide: https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md",
-            "",
-            "4. Try it:  bunnify gh   (or address-bar keyword, e.g. b gh)",
-            "",
-            "5. macOS Spotty Bunny (optional search box):",
-            "     pipx install 'bunnify[macos]'   # if the extra is not installed",
-            "     bunnify spotty-bunny install    # login LaunchAgent",
-            "     bunnify spotty-bunny status",
-            "     bunnify upgrade && bunnify spotty-bunny upgrade",
-            "     bunnify spotty-bunny uninstall",
-            "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
-            "",
-            "Upgrade later (preferred):",
-            "     bunnify upgrade   # shows from/to versions, then pipx upgrade",
-            "   Bookmarks and config.env are kept across upgrades.",
-            "   If --version still shows a checkout SHA, PATH is using",
-            "   ./scripts/bunnify or a repo .venv — the pipx app lives in",
-            "   ~/.local/bin/bunnify.",
-            "",
-            "Docs: https://github.com/the-hcma/bunnify",
-            "Re-print this message anytime:  bunnify onboard",
         ]
     )
 
@@ -524,6 +484,7 @@ def run_upgrade(
     pypi_version = _pypi_latest_version()
     pipx_app = _pipx_bunnify_path()
     before_pipx = _read_executable_build(pipx_app) if pipx_app is not None else None
+    had_macos_extra = macos_extra_installed()
     if before_pipx is not None and pipx_app is not None:
         log(f"pipx app now: {before_pipx}")
         log(f"              {pipx_app}")
@@ -544,6 +505,20 @@ def run_upgrade(
         raise ClientError("Timed out running `pipx upgrade bunnify`") from exc
     if completed.returncode != 0:
         raise ClientError("pipx upgrade bunnify failed")
+
+    if had_macos_extra and not macos_extra_installed():
+        log(
+            colors.dim(
+                "Restoring macOS optional dependencies (PyObjC) after pipx upgrade…"
+            )
+        )
+        if not install_macos_extra(pipx, run_fn=runner):
+            log(
+                colors.warn(
+                    "Could not restore bunnify[macos] after upgrade. "
+                    "Run: pipx install --force 'bunnify[macos]'"
+                )
+            )
 
     pipx_app = _pipx_bunnify_path() or pipx_app
     after_pipx = _read_executable_build(pipx_app) if pipx_app is not None else None
@@ -716,18 +691,7 @@ def _parse_version_line(output: str) -> str | None:
 
 def _pipx_bunnify_path() -> Path | None:
     """Return the pipx ``bunnify`` app path when it exists."""
-    override = os.environ.get("PIPX_BIN_DIR", "").strip()
-    candidates = []
-    if override:
-        candidates.append(Path(override) / "bunnify")
-    candidates.append(Path.home() / ".local" / "bin" / "bunnify")
-    for candidate in candidates:
-        if candidate.is_file():
-            try:
-                return candidate.resolve()
-            except OSError:
-                return candidate
-    return None
+    return pipx_bunnify_path()
 
 
 def _prompt_local_port(
@@ -1550,15 +1514,6 @@ def main(
         _echo_version()
         return
 
-    if onboard_requested or shortcut_args == ("onboard",):
-        click.echo(format_onboarding_text())
-        return
-
-    if shortcut_args and shortcut_args[0] == "spotty-bunny":
-        from app.spotty_bunny_cli import main as spotty_bunny_main
-
-        raise SystemExit(spotty_bunny_main(list(shortcut_args[1:])))
-
     theme = Theme(enabled=stdout_color_enabled(color_mode.lower()))
 
     def prompt_fn(message: str) -> str:
@@ -1567,6 +1522,15 @@ def main(
             default="",
             show_default=False,
         )
+
+    if onboard_requested or shortcut_args == ("onboard",):
+        run_onboard(print_fn=click.echo, prompt_fn=prompt_fn, theme=theme)
+        return
+
+    if shortcut_args and shortcut_args[0] == "spotty-bunny":
+        from app.spotty_bunny_cli import main as spotty_bunny_main
+
+        raise SystemExit(spotty_bunny_main(list(shortcut_args[1:])))
 
     mode_name = (
         normalize_edit_mode_choice(edit_mode)

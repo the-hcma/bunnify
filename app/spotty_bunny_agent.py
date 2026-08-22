@@ -32,6 +32,11 @@ AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
 LAUNCHD_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+CHORD_RETRY_HINT = f"""\
+{COMMAND_NAME}: the overlay may need a fresh launchd process after granting
+Accessibility / Input Monitoring. Restarting the agent — test again when ready.
+"""
+CHORD_TEST_PROMPT = f"{COMMAND_NAME}: did the search box appear? [y/N]: "
 POST_INSTALL_HINT = (
     f"{COMMAND_NAME}: hold one Control and press the other to test the overlay."
 )
@@ -42,9 +47,11 @@ spotty-bunny), not only Terminal.app.
 
 System Settings → Privacy & Security → Accessibility
 System Settings → Privacy & Security → Input Monitoring
-
-Then re-run: {COMMAND_NAME} install
 """
+TCC_RECHECK_PROMPT = (
+    "Press Enter after granting Accessibility/Input Monitoring to re-check "
+    "(or Ctrl-C to cancel)."
+)
 TCC_PROBE_TIMEOUT_S = 15
 UNKNOWN_COMMAND_MESSAGE = (
     f"{COMMAND_NAME}: unknown command '{{command}}'. "
@@ -106,11 +113,14 @@ def install_agent(
     *,
     home: Path | None = None,
     launchctl: LaunchctlFn | None = None,
+    pid_dir: Path | None = None,
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
     probe_tcc: TccFn | None = None,
     program: Path | None = None,
+    prompt_fn: Callable[[str], str] | None = None,
     request_tcc: TccFn | None = None,
+    skip_chord_confirm: bool = False,
 ) -> int:
     """Write the LaunchAgent, verify TCC, and bootstrap it."""
     err = print_err or _print_err
@@ -139,6 +149,7 @@ def install_agent(
         interpreter,
         err=err,
         probe_tcc=probe_tcc,
+        prompt_fn=prompt_fn,
         request_tcc=request_tcc,
     )
     if status is None:
@@ -146,15 +157,25 @@ def install_agent(
     root = home if home is not None else Path.home()
     plist = agent_plist_path(home=root)
     _write_plist(plist, home=root, program_arguments=program_argv)
-    _bootout_agent(launchctl=launchctl)
-    if not _bootstrap_agent(plist, launchctl=launchctl):
+    if not _reload_agent(
+        plist,
+        launchctl=launchctl,
+        pid_dir=pid_dir,
+    ):
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: plist {plist}")
     err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")
-    err(POST_INSTALL_HINT)
-    return 0
+    if skip_chord_confirm or _confirm_chord_works(
+        plist,
+        err=err,
+        launchctl=launchctl,
+        pid_dir=pid_dir,
+        prompt_fn=prompt_fn,
+    ):
+        return 0
+    return 1
 
 
 def interpreter_for_program(program: Path) -> Path:
@@ -412,11 +433,14 @@ def upgrade_agent(
     *,
     home: Path | None = None,
     launchctl: LaunchctlFn | None = None,
+    pid_dir: Path | None = None,
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
     probe_tcc: TccFn | None = None,
     program: Path | None = None,
+    prompt_fn: Callable[[str], str] | None = None,
     request_tcc: TccFn | None = None,
+    skip_chord_confirm: bool = False,
 ) -> int:
     """Rewrite the plist for the current binary, re-check TCC, and bounce."""
     err = print_err or _print_err
@@ -452,23 +476,31 @@ def upgrade_agent(
         interpreter,
         err=err,
         probe_tcc=probe_tcc,
+        prompt_fn=prompt_fn,
         request_tcc=request_tcc,
     )
     if status is None:
         return 1
-    was_loaded = is_agent_loaded(launchctl=launchctl)
     _write_plist(plist, home=root, program_arguments=program_argv)
-    if was_loaded:
-        _bootout_agent(launchctl=launchctl)
-    if was_loaded or not is_agent_loaded(launchctl=launchctl):
-        if not _bootstrap_agent(plist, launchctl=launchctl):
-            err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
-            return 1
+    if not _reload_agent(
+        plist,
+        launchctl=launchctl,
+        pid_dir=pid_dir,
+    ):
+        err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
+        return 1
     err(f"{COMMAND_NAME}: refreshed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: binary {binary}")
     err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")
-    err(POST_INSTALL_HINT)
-    return 0
+    if skip_chord_confirm or _confirm_chord_works(
+        plist,
+        err=err,
+        launchctl=launchctl,
+        pid_dir=pid_dir,
+        prompt_fn=prompt_fn,
+    ):
+        return 0
+    return 1
 
 
 def _bootstrap_agent(
@@ -644,6 +676,33 @@ def _print_err(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def _confirm_chord_works(
+    plist: Path,
+    *,
+    err: Callable[[str], None],
+    launchctl: LaunchctlFn | None,
+    pid_dir: Path | None,
+    prompt_fn: Callable[[str], str] | None,
+) -> bool:
+    """Prompt until the user confirms the Control chord works, bouncing on retry."""
+    ask = prompt_fn or input
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        err(POST_INSTALL_HINT)
+        return True
+    while True:
+        err(POST_INSTALL_HINT)
+        try:
+            answer = ask(CHORD_TEST_PROMPT)
+        except EOFError, KeyboardInterrupt:
+            return False
+        if answer.strip().lower() in {"y", "yes"}:
+            return True
+        err(CHORD_RETRY_HINT)
+        if not _reload_agent(plist, launchctl=launchctl, pid_dir=pid_dir):
+            err(f"{COMMAND_NAME}: could not restart the LaunchAgent.")
+            return False
+
+
 def _probe_tcc(interpreter: Path) -> TccStatus:
     return _run_tcc_probe(interpreter, prompt=False)
 
@@ -657,6 +716,7 @@ def _require_current_tcc(
     *,
     err: Callable[[str], None],
     probe_tcc: TccFn | None,
+    prompt_fn: Callable[[str], str] | None = None,
     request_tcc: TccFn | None,
 ) -> TccStatus | None:
     probe = probe_tcc or _probe_tcc
@@ -680,16 +740,12 @@ def _require_current_tcc(
             f"{'yes' if status.accessibility else 'no'} "
             f"input_monitoring={'yes' if status.input_monitoring else 'no'}"
         )
-        # TCC prompts can be granted after we've already probed once.
-        # When running interactively, let the user confirm and re-check.
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            err(
-                f"{COMMAND_NAME}: press Enter after granting "
-                f"Accessibility/Input Monitoring to {interpreter} "
-                "to re-check (or Ctrl-C to cancel)."
-            )
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            err(f"Then re-run: {COMMAND_NAME} install")
+            return None
+        while not status.ok:
             try:
-                input()
+                (prompt_fn or input)(TCC_RECHECK_PROMPT)
             except EOFError, KeyboardInterrupt:
                 return None
             try:
@@ -702,8 +758,29 @@ def _require_current_tcc(
                 return None
             if status.ok:
                 return status
-        return None
+            err(
+                f"{COMMAND_NAME}: accessibility="
+                f"{'yes' if status.accessibility else 'no'} "
+                f"input_monitoring={'yes' if status.input_monitoring else 'no'}"
+            )
+        return status
     return status
+
+
+def _reload_agent(
+    plist: Path,
+    *,
+    launchctl: LaunchctlFn | None = None,
+    pid_dir: Path | None = None,
+) -> bool:
+    """Boot out, stop stale overlays, and bootstrap the LaunchAgent."""
+    _bootout_agent(launchctl=launchctl)
+    stop_spotty_bunny(pid_dir=pid_dir)
+    clear_spotty_bunny_pid(pid_dir=pid_dir)
+    if _bootstrap_agent(plist, launchctl=launchctl):
+        return True
+    _bootout_agent(launchctl=launchctl)
+    return _bootstrap_agent(plist, launchctl=launchctl)
 
 
 def _run_tcc_probe(interpreter: Path, *, prompt: bool) -> TccStatus:

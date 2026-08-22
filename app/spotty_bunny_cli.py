@@ -36,7 +36,8 @@ LOG_MAX_BYTES = 10 * 1024 * 1024
 MACOS_EXTRA_HINT = f"""\
 {COMMAND_NAME}: PyObjC is required (optional extra 'macos').
 
-  pipx install 'bunnify[macos]'
+  pipx install --force 'bunnify[macos]'
+  # or: bunnify onboard   (offers to install macOS dependencies)
   # development checkout:
   uv sync --extra macos
 """

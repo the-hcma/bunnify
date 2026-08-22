@@ -95,7 +95,7 @@ def ensure_spotty_bunny_running(
     if installed:
         from app.spotty_bunny_agent import install_agent
 
-        if install_agent() == 0:
+        if install_agent(skip_chord_confirm=True) == 0:
             deadline = time.monotonic() + SPOTTY_BUNNY_LAUNCHD_WAIT_S
             while True:
                 if spotty_bunny_is_running(pid_dir=directory):
