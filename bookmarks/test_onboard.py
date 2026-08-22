@@ -93,6 +93,20 @@ class OnboardTests(SimpleTestCase):
             upgrade_available=False,
             version_label="0.8.3 (abc12345)",
         )
+        state_with_agent = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=True,
+            macos_platform=True,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.3 (abc12345)",
+            preferences_ready=True,
+            pypi_latest="0.8.3",
+            source_checkout=False,
+            spotty_agent_installed=True,
+            upgrade_available=False,
+            version_label="0.8.3 (abc12345)",
+        )
 
         def ask(_message: str) -> str:
             return "y"
@@ -100,7 +114,11 @@ class OnboardTests(SimpleTestCase):
         with (
             patch(
                 "app.onboard.detect_install_state",
-                side_effect=[state_without_extra, state_with_extra],
+                side_effect=[
+                    state_without_extra,
+                    state_with_extra,
+                    state_with_agent,
+                ],
             ),
             patch("app.onboard.sys.stdin") as stdin,
             patch("app.onboard.sys.stdout") as stdout_tty,
@@ -115,7 +133,9 @@ class OnboardTests(SimpleTestCase):
         install.assert_called_once_with("/usr/bin/pipx")
         agent.assert_called_once()
         self.assertIs(agent.call_args.kwargs.get("prompt_fn"), ask)
-        self.assertIn("Already installed:", stdout.getvalue())
+        output = stdout.getvalue()
+        self.assertIn("Already installed:", output)
+        self.assertIn("Spotty Bunny LaunchAgent: installed", output)
 
     def test_run_onboard_warns_when_macos_extra_install_fails(self) -> None:
         stdout = StringIO()

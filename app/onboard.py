@@ -223,6 +223,7 @@ def run_onboard(
                         "✓ Spotty Bunny is installed and the Control chord works."
                     )
                 )
+                state = detect_install_state(read_executable_build=reader)
             else:
                 log(
                     colors.warn(
