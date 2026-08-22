@@ -17,15 +17,30 @@ from app.onboard import (
     run_onboard,
 )
 
+_FIXTURE_COMMIT = "test-fixture-commit"
+_FIXTURE_INSTALLED_VERSION = "0.0.0+test-fixture-installed"
+_FIXTURE_PYPI_LATEST_VERSION = "0.0.0+test-fixture-pypi-latest"
+
 
 class OnboardTests(SimpleTestCase):
     def test_detect_install_state_marks_upgrade_when_pypi_is_newer(self) -> None:
-        with patch("app.onboard.pypi_latest_version", return_value="0.9.0"):
+        with (
+            patch(
+                "app.onboard.get_build_info",
+                return_value=(_FIXTURE_INSTALLED_VERSION, _FIXTURE_COMMIT),
+            ),
+            patch(
+                "app.onboard.pypi_latest_version",
+                return_value=_FIXTURE_PYPI_LATEST_VERSION,
+            ),
+        ):
             state = detect_install_state(
-                read_executable_build=lambda _path: "0.8.0 (abc12345)",
+                read_executable_build=lambda _path: (
+                    f"{_FIXTURE_INSTALLED_VERSION} ({_FIXTURE_COMMIT})"
+                ),
             )
         self.assertTrue(state.upgrade_available)
-        self.assertEqual(state.pypi_latest, "0.9.0")
+        self.assertEqual(state.pypi_latest, _FIXTURE_PYPI_LATEST_VERSION)
 
     def test_format_onboarding_text_includes_install_summary(self) -> None:
         state = InstallState(
