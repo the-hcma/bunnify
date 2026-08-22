@@ -1504,6 +1504,11 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         from app.spotty_bunny_edit import (
             edit_action_for_key,
             edit_command_modifiers_ok,
+            is_line_end_selector,
+            is_line_navigation_selector,
+            is_line_start_selector,
+            line_navigation_modifies_selection,
+            line_navigation_selected_range,
         )
 
         self.assertEqual(
@@ -1544,6 +1549,106 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         self.assertFalse(
             edit_command_modifiers_ok(command=False, control=False, option=False)
         )
+        self.assertTrue(is_line_start_selector("scrollToBeginningOfDocument:"))
+        self.assertTrue(is_line_start_selector("moveToBeginningOfLine:"))
+        self.assertTrue(is_line_end_selector("scrollToEndOfDocument:"))
+        self.assertTrue(is_line_end_selector("moveToEndOfLine:"))
+        self.assertTrue(is_line_navigation_selector("moveToBeginningOfLine:"))
+        self.assertFalse(is_line_navigation_selector("moveUp:"))
+        self.assertTrue(
+            line_navigation_modifies_selection(
+                "moveToBeginningOfLineAndModifySelection:"
+            )
+        )
+        self.assertFalse(line_navigation_modifies_selection("moveToBeginningOfLine:"))
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=6,
+                selected_length=2,
+                to_start=True,
+                modify=True,
+                affinity_upstream=True,
+            ),
+            (0, 8),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=6,
+                selected_length=2,
+                to_start=False,
+                modify=True,
+                affinity_upstream=True,
+            ),
+            (8, 0),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=0,
+                selected_length=2,
+                to_start=True,
+                modify=True,
+                affinity_upstream=False,
+            ),
+            (0, 0),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=0,
+                selected_length=2,
+                to_start=False,
+                modify=True,
+                affinity_upstream=False,
+            ),
+            (0, 8),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=5,
+                selected_length=0,
+                to_start=True,
+                modify=False,
+                affinity_upstream=False,
+            ),
+            (0, 0),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=5,
+                selected_length=0,
+                to_start=False,
+                modify=False,
+                affinity_upstream=False,
+            ),
+            (8, 0),
+        )
+
+    def test_empty_prefix_tab_lists_without_auto_insert(self) -> None:
+        from app.spotty_bunny_complete import (
+            CompletionRow,
+            completion_browse_all,
+            completion_table_should_show,
+            should_auto_insert_completion,
+        )
+
+        rows = [
+            CompletionRow(insert="gh", meta="GitHub", start_position=0),
+            CompletionRow(insert="gm", meta="Gmail", start_position=0),
+        ]
+        self.assertTrue(completion_browse_all(""))
+        self.assertFalse(completion_browse_all("   "))
+        self.assertFalse(completion_browse_all("g"))
+        self.assertFalse(should_auto_insert_completion("", rows))
+        self.assertTrue(should_auto_insert_completion("g", rows))
+        self.assertTrue(completion_table_should_show("", rows))
+        self.assertTrue(completion_table_should_show("", rows[:1]))
+        self.assertFalse(completion_table_should_show("g", rows[:1]))
+        self.assertTrue(completion_table_should_show("g", rows))
 
     def test_field_editor_selector_name_normalizes_forms(self) -> None:
         from app.spotty_bunny_complete import field_editor_selector_name

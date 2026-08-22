@@ -63,6 +63,15 @@ def apply_completion(current: str, row: CompletionRow) -> str:
     return current[:begin] + row.insert
 
 
+def completion_browse_all(prefix: str) -> bool:
+    """True when Tab should list every shortcut without inserting the first.
+
+    Only the empty field qualifies. Whitespace-only input is handed to the
+    suggestion path (separator present), so it must not claim browse-all.
+    """
+    return prefix == ""
+
+
 def completion_navigation_disposition(
     selector: str,
     *,
@@ -114,6 +123,15 @@ def completion_still_current(
 ) -> bool:
     """True when an async Tab result still matches the field that requested it."""
     return seq == expected_seq and field == prefix
+
+
+def completion_table_should_show(prefix: str, rows: list[CompletionRow]) -> bool:
+    """Whether the completion table should appear for *rows* under *prefix*."""
+    if not rows:
+        return False
+    if completion_browse_all(prefix):
+        return True
+    return len(rows) > 1
 
 
 def completions_for(text: str, completer: Completer) -> list[CompletionRow]:
@@ -192,6 +210,11 @@ def normalize_completion_navigation_selector(selector: str) -> str:
     if selector == "scrollPageDown:":
         return "pageDown:"
     return selector
+
+
+def should_auto_insert_completion(prefix: str, rows: list[CompletionRow]) -> bool:
+    """True when the first Tab candidate should replace the field text."""
+    return bool(rows) and not completion_browse_all(prefix)
 
 
 def _plain(value: object) -> str:
