@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.9.0...bunnify-v0.9.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* refresh onboard summary after Spotty Bunny install ([#351](https://github.com/the-hcma/bunnify/issues/351)) ([1254d6f](https://github.com/the-hcma/bunnify/commit/1254d6f005f6f734db3a6ca133450e289297785b))
+* Spotty Bunny Home/End and empty-Tab browse ([#352](https://github.com/the-hcma/bunnify/issues/352)) ([d1de57a](https://github.com/the-hcma/bunnify/commit/d1de57aeee8b992285738176be5488cbb88bdd5a))
+
 ## [0.9.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.3...bunnify-v0.9.0) (2026-08-22)
 
 
