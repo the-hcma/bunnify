@@ -1641,7 +1641,7 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
             CompletionRow(insert="gm", meta="Gmail", start_position=0),
         ]
         self.assertTrue(completion_browse_all(""))
-        self.assertTrue(completion_browse_all("   "))
+        self.assertFalse(completion_browse_all("   "))
         self.assertFalse(completion_browse_all("g"))
         self.assertFalse(should_auto_insert_completion("", rows))
         self.assertTrue(should_auto_insert_completion("g", rows))

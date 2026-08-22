@@ -64,8 +64,12 @@ def apply_completion(current: str, row: CompletionRow) -> str:
 
 
 def completion_browse_all(prefix: str) -> bool:
-    """True when Tab should list every shortcut without inserting the first."""
-    return not prefix.strip()
+    """True when Tab should list every shortcut without inserting the first.
+
+    Only the empty field qualifies. Whitespace-only input is handed to the
+    suggestion path (separator present), so it must not claim browse-all.
+    """
+    return prefix == ""
 
 
 def completion_navigation_disposition(
