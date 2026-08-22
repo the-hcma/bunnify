@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.3...bunnify-v0.9.0) (2026-08-22)
+
+
+### Features
+
+* seamless macOS onboard and Spotty Bunny install flow ([#348](https://github.com/the-hcma/bunnify/issues/348)) ([55fb2c9](https://github.com/the-hcma/bunnify/commit/55fb2c92ac05553ac9c46f82e98e11a48ae22222))
+
+
+### Bug Fixes
+
+* decouple onboard upgrade test from release version bumps ([#350](https://github.com/the-hcma/bunnify/issues/350)) ([bd8f51e](https://github.com/the-hcma/bunnify/commit/bd8f51e11eb7185c3617a1d5fa570f3aef8f5a97))
+
 ## [0.8.3](https://github.com/the-hcma/bunnify/compare/bunnify-v0.8.2...bunnify-v0.8.3) (2026-08-21)
 
 
