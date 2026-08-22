@@ -21,14 +21,14 @@ from app.onboard import (
 class OnboardTests(SimpleTestCase):
     def test_detect_install_state_marks_upgrade_when_pypi_is_newer(self) -> None:
         with (
-            patch("app.onboard.get_build_info", return_value=("0.8.0", "abc12345")),
-            patch("app.onboard.pypi_latest_version", return_value="0.9.0"),
+            patch("app.onboard.get_build_info", return_value=("1.0.0", "abc12345")),
+            patch("app.onboard.pypi_latest_version", return_value="2.0.0"),
         ):
             state = detect_install_state(
-                read_executable_build=lambda _path: "0.8.0 (abc12345)",
+                read_executable_build=lambda _path: "1.0.0 (abc12345)",
             )
         self.assertTrue(state.upgrade_available)
-        self.assertEqual(state.pypi_latest, "0.9.0")
+        self.assertEqual(state.pypi_latest, "2.0.0")
 
     def test_format_onboarding_text_includes_install_summary(self) -> None:
         state = InstallState(
