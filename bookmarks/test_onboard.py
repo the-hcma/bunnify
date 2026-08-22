@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 from django.test import SimpleTestCase
@@ -99,6 +99,55 @@ class OnboardTests(SimpleTestCase):
         agent.assert_called_once()
         self.assertIs(agent.call_args.kwargs.get("prompt_fn"), ask)
         self.assertIn("Already installed:", stdout.getvalue())
+
+    def test_run_onboard_offers_upgrade_when_available(self) -> None:
+        stdout = StringIO()
+        before = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=True,
+            macos_platform=False,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.0 (abc12345)",
+            preferences_ready=True,
+            pypi_latest="0.9.0",
+            source_checkout=False,
+            spotty_agent_installed=True,
+            upgrade_available=True,
+            version_label="0.8.0 (abc12345)",
+        )
+        after = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=True,
+            macos_platform=False,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.9.0 (def67890)",
+            preferences_ready=True,
+            pypi_latest="0.9.0",
+            source_checkout=False,
+            spotty_agent_installed=True,
+            upgrade_available=False,
+            version_label="0.9.0 (def67890)",
+        )
+        upgrade = MagicMock()
+        with (
+            patch(
+                "app.onboard.detect_install_state",
+                side_effect=[before, after],
+            ),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.cli._confirm_explicit_yes", return_value=True),
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(
+                print_fn=stdout.write,
+                prompt_fn=lambda _m: "y",
+                run_upgrade=upgrade,
+            )
+        upgrade.assert_called_once()
 
     def test_cli_onboard_prints_install_summary(self) -> None:
         from app.cli import main

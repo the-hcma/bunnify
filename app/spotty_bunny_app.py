@@ -807,7 +807,7 @@ class SpottyBunnyController(NSObject):
             container.setLineFragmentPadding_(0.0)
 
     def _perform_install(self) -> None:
-        if install_agent() != 0:
+        if install_agent(skip_chord_confirm=True) != 0:
             raise RuntimeError("LaunchAgent install failed")
 
     def _perform_upgrade(self) -> None:
