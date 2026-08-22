@@ -1508,6 +1508,7 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
             is_line_navigation_selector,
             is_line_start_selector,
             line_navigation_modifies_selection,
+            line_navigation_selected_range,
         )
 
         self.assertEqual(
@@ -1560,6 +1561,72 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
             )
         )
         self.assertFalse(line_navigation_modifies_selection("moveToBeginningOfLine:"))
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=6,
+                selected_length=2,
+                to_start=True,
+                modify=True,
+                affinity_upstream=True,
+            ),
+            (0, 8),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=6,
+                selected_length=2,
+                to_start=False,
+                modify=True,
+                affinity_upstream=True,
+            ),
+            (8, 0),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=0,
+                selected_length=2,
+                to_start=True,
+                modify=True,
+                affinity_upstream=False,
+            ),
+            (0, 0),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=0,
+                selected_length=2,
+                to_start=False,
+                modify=True,
+                affinity_upstream=False,
+            ),
+            (0, 8),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=5,
+                selected_length=0,
+                to_start=True,
+                modify=False,
+                affinity_upstream=False,
+            ),
+            (0, 0),
+        )
+        self.assertEqual(
+            line_navigation_selected_range(
+                text_length=8,
+                selected_location=5,
+                selected_length=0,
+                to_start=False,
+                modify=False,
+                affinity_upstream=False,
+            ),
+            (8, 0),
+        )
 
     def test_empty_prefix_tab_lists_without_auto_insert(self) -> None:
         from app.spotty_bunny_complete import (

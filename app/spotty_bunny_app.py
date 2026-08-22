@@ -46,6 +46,7 @@ from Cocoa import (
     NSParagraphStyleAttributeName,
     NSScreen,
     NSScrollView,
+    NSSelectionAffinityUpstream,
     NSStringDrawingUsesFontLeading,
     NSStringDrawingUsesLineFragmentOrigin,
     NSTableColumn,
@@ -127,6 +128,7 @@ from app.spotty_bunny_cli import SpottyBunnyEventTapError
 from app.spotty_bunny_complete import (
     CompletionRow,
     apply_completion,
+    completion_browse_all,
     completion_navigation_disposition,
     completion_row_after_selector,
     completion_still_current,
@@ -140,10 +142,10 @@ from app.spotty_bunny_complete import (
 from app.spotty_bunny_edit import (
     edit_action_for_key,
     edit_command_modifiers_ok,
-    is_line_end_selector,
     is_line_navigation_selector,
     is_line_start_selector,
     line_navigation_modifies_selection,
+    line_navigation_selected_range,
 )
 from app.spotty_bunny_history import (
     HistoryNavigator,
@@ -464,20 +466,17 @@ class SpottyBunnyController(NSObject):
         """Move or extend the caret for Home/End (and Cocoa document aliases)."""
         length = int(text_view.string().length())
         selected = text_view.selectedRange()
-        location = int(selected.location)
-        if is_line_start_selector(selector):
-            if line_navigation_modifies_selection(selector):
-                text_view.setSelectedRange_(NSMakeRange(0, location))
-            else:
-                text_view.setSelectedRange_(NSMakeRange(0, 0))
-            return
-        if is_line_end_selector(selector):
-            if line_navigation_modifies_selection(selector):
-                text_view.setSelectedRange_(
-                    NSMakeRange(location, max(0, length - location))
-                )
-            else:
-                text_view.setSelectedRange_(NSMakeRange(length, 0))
+        location, sel_length = line_navigation_selected_range(
+            text_length=length,
+            selected_location=int(selected.location),
+            selected_length=int(selected.length),
+            to_start=is_line_start_selector(selector),
+            modify=line_navigation_modifies_selection(selector),
+            affinity_upstream=(
+                int(text_view.selectionAffinity()) == int(NSSelectionAffinityUpstream)
+            ),
+        )
+        text_view.setSelectedRange_(NSMakeRange(location, sel_length))
 
     def _apply_update_status(self) -> None:
         outdated = self._update_status.outdated
@@ -815,6 +814,8 @@ class SpottyBunnyController(NSObject):
             False,
         )
         self.table.scrollRowToVisible_(idx)
+        if completion_browse_all(self._completion_prefix):
+            return
         row = self._completion_rows[idx]
         self._set_field_text(apply_completion(self._completion_prefix, row))
 
