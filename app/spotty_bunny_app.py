@@ -106,11 +106,14 @@ from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
 from app.config import resolve_base_url
 from app.github_complete import (
+    bootstrap_github_completion_cache,
     can_offer_gh_install,
     gh_install_guidance,
     gh_is_available,
+    github_completion_unavailable_message,
     github_token_from_environ,
     install_gh_via_homebrew,
+    resolve_github_token,
 )
 from app.spotty_bunny_about import (
     apply_spotty_chrome,
@@ -135,6 +138,7 @@ from app.spotty_bunny_complete import (
     completion_table_should_show,
     completions_for,
     field_editor_selector_name,
+    github_param_completion_blocked_message,
     is_tab_completion_selector,
     make_spotty_completer,
     should_auto_insert_completion,
@@ -334,6 +338,7 @@ class SpottyBunnyController(NSObject):
         self._completion_prefix = ""
         self._completion_rows: list[CompletionRow] = []
         self._completion_seq = 0
+        self._entries: list = []
         self._escape_held = False
         self._history = HistoryNavigator()
         self._io = ThreadIo()
@@ -667,9 +672,10 @@ class SpottyBunnyController(NSObject):
                 self._shortcuts_load_failed = True
                 self._set_status(format_spotty_bunny_status(result))
                 return
-            completer, base_url = result  # type: ignore[misc]
+            completer, base_url, entries = result  # type: ignore[misc]
             self._completer = completer
             self._base_url = base_url
+            self._entries = entries
             self._shortcuts_load_failed = False
             self._set_status("")
             logger.info("shortcut completer ready")
@@ -779,11 +785,22 @@ class SpottyBunnyController(NSObject):
     def _load_completer(self) -> object:
         base_url = resolve_base_url(persist=False, allow_prompt=False)
         entries = fetch_key_entries(base_url=base_url)
+        token = resolve_github_token()
+        if token:
+            bootstrap_github_completion_cache(
+                url_templates=[entry.url for entry in entries],
+                token=token,
+            )
+        else:
+            logger.warning(
+                "GitHub Tab completion unavailable at startup: %s",
+                github_completion_unavailable_message(),
+            )
         completer = make_spotty_completer(
             entries=entries,
             suggestions_fn=lambda query: fetch_suggestions(query, base_url=base_url),
         )
-        return completer, base_url
+        return completer, base_url, entries
 
     def _maybe_offer_gh_install(self) -> None:
         """Surface missing ``gh``; admins with Homebrew may install in-place."""
@@ -984,7 +1001,19 @@ class SpottyBunnyController(NSObject):
         self._completion_rows = rows
         if not rows:
             self._hide_completions()
+            message = github_param_completion_blocked_message(
+                self._completion_prefix,
+                self._entries,
+            )
+            if message is not None:
+                logger.warning(
+                    "GitHub Tab completion blocked for %r: %s",
+                    self._completion_prefix,
+                    message,
+                )
+                self._set_status(message)
             return
+        self._set_status("")
         if self.field is not None and should_auto_insert_completion(
             self._completion_prefix, rows
         ):

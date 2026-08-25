@@ -1425,6 +1425,85 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         row = CompletionRow(insert="gh", meta="GitHub", start_position=-1)
         self.assertEqual(apply_completion("g", row), "gh")
 
+    def test_github_param_completion_blocked_message_when_unauthenticated(
+        self,
+    ) -> None:
+        import logging
+        import subprocess
+
+        from app.client import KeyEntry
+        from app.completion_spec import ParamCompleteSpec
+        from app.github_complete import (
+            GITHUB_AUTH_NEEDED_MESSAGE,
+            clear_github_completion_cache,
+        )
+        from app.spotty_bunny_complete import github_param_completion_blocked_message
+
+        clear_github_completion_cache()
+        entries = [
+            KeyEntry(
+                key="prh",
+                description="pulls",
+                url="https://github.com/the-hcma/#{repo}/pulls",
+                params=("repo",),
+                complete={
+                    "repo": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+                },
+            )
+        ]
+
+        def gh_runner(*, args, **_kwargs):
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=1, stdout="", stderr=""
+            )
+
+        with self.assertLogs("app.github_complete", level=logging.WARNING):
+            message = github_param_completion_blocked_message(
+                "prh dom",
+                entries,
+                environ={"PATH": "/usr/bin"},
+                runner=gh_runner,
+            )
+        self.assertEqual(message, GITHUB_AUTH_NEEDED_MESSAGE)
+        clear_github_completion_cache()
+
+    def test_github_param_completion_blocked_message_none_when_authed(
+        self,
+    ) -> None:
+        import subprocess
+
+        from app.client import KeyEntry
+        from app.completion_spec import ParamCompleteSpec
+        from app.github_complete import clear_github_completion_cache
+        from app.spotty_bunny_complete import github_param_completion_blocked_message
+
+        clear_github_completion_cache()
+        entries = [
+            KeyEntry(
+                key="prh",
+                description="pulls",
+                url="https://github.com/the-hcma/#{repo}/pulls",
+                params=("repo",),
+                complete={
+                    "repo": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+                },
+            )
+        ]
+
+        def gh_runner(*, args, **_kwargs):
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=0, stdout="tok\n", stderr=""
+            )
+
+        message = github_param_completion_blocked_message(
+            "prh dom",
+            entries,
+            environ={"PATH": "/usr/bin"},
+            runner=gh_runner,
+        )
+        self.assertIsNone(message)
+        clear_github_completion_cache()
+
     def test_completion_still_current_requires_matching_seq_and_field(self) -> None:
         from app.spotty_bunny_complete import completion_still_current
 
