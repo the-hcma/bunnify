@@ -1504,6 +1504,26 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         self.assertIsNone(message)
         clear_github_completion_cache()
 
+    def test_show_completions_captures_prefix_before_hide(self) -> None:
+        """Regression: hide clears _completion_prefix; blocked message needs a copy."""
+        from pathlib import Path
+
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        marker = "def _show_completions(self, rows: list[CompletionRow]) -> None:"
+        start = source.index(marker)
+        chunk = source[start : start + 900]
+        prefix_idx = chunk.index("prefix = self._completion_prefix")
+        hide_idx = chunk.index("self._hide_completions()")
+        blocked_idx = chunk.index("github_param_completion_blocked_message(")
+        self.assertLess(prefix_idx, hide_idx)
+        self.assertLess(hide_idx, blocked_idx)
+        self.assertIn(
+            "github_param_completion_blocked_message(\n                prefix,",
+            chunk,
+        )
+
     def test_completion_still_current_requires_matching_seq_and_field(self) -> None:
         from app.spotty_bunny_complete import completion_still_current
 

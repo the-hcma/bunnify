@@ -1000,15 +1000,16 @@ class SpottyBunnyController(NSObject):
     def _show_completions(self, rows: list[CompletionRow]) -> None:
         self._completion_rows = rows
         if not rows:
+            prefix = self._completion_prefix
             self._hide_completions()
             message = github_param_completion_blocked_message(
-                self._completion_prefix,
+                prefix,
                 self._entries,
             )
             if message is not None:
                 logger.warning(
                     "GitHub Tab completion blocked for %r: %s",
-                    self._completion_prefix,
+                    prefix,
                     message,
                 )
                 self._set_status(message)
