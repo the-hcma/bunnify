@@ -108,6 +108,7 @@ from app.config import resolve_base_url
 from app.github_complete import (
     bootstrap_github_completion_cache,
     can_offer_gh_install,
+    entries_need_github_completion,
     gh_install_guidance,
     gh_is_available,
     github_completion_unavailable_message,
@@ -414,7 +415,6 @@ class SpottyBunnyController(NSObject):
             self.panel.makeFirstResponder_(self.field)
             self._paint_search_editor()
         self._io.submit(self._load_completer, self._completer_loaded)
-        self._maybe_offer_gh_install()
         if cache_is_stale(self._update_status.checked_at):
             self._schedule_update_check()
 
@@ -681,6 +681,7 @@ class SpottyBunnyController(NSObject):
             self._shortcuts_load_failed = False
             self._set_status("")
             logger.info("shortcut completer ready")
+            self._maybe_offer_gh_install()
 
         _run_on_main(apply)
 
@@ -788,18 +789,19 @@ class SpottyBunnyController(NSObject):
     def _load_completer(self) -> object:
         base_url = resolve_base_url(persist=False, allow_prompt=False)
         entries = fetch_key_entries(base_url=base_url)
-        token = resolve_github_token()
-        if token:
-            bootstrap_github_completion_cache(
-                url_templates=[entry.url for entry in entries],
-                token=token,
-            )
-        else:
-            warn_github_completion(
-                "github-startup-unavailable",
-                "GitHub Tab completion unavailable at startup: %s",
-                github_completion_unavailable_message(),
-            )
+        if entries_need_github_completion(entries):
+            token = resolve_github_token()
+            if token:
+                bootstrap_github_completion_cache(
+                    url_templates=[entry.url for entry in entries],
+                    token=token,
+                )
+            else:
+                warn_github_completion(
+                    "github-startup-unavailable",
+                    "GitHub Tab completion unavailable at startup: %s",
+                    github_completion_unavailable_message(),
+                )
         completer = make_spotty_completer(
             entries=entries,
             suggestions_fn=lambda query: fetch_suggestions(query, base_url=base_url),
@@ -808,6 +810,8 @@ class SpottyBunnyController(NSObject):
 
     def _maybe_offer_gh_install(self) -> None:
         """Surface missing ``gh``; admins with Homebrew may install in-place."""
+        if not entries_need_github_completion(self._entries):
+            return
         if github_token_from_environ() or gh_is_available():
             return
         guidance = gh_install_guidance()

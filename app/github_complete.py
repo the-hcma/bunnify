@@ -168,6 +168,19 @@ def clear_github_completion_cache() -> None:
     _token_cache_expires_at = 0.0
 
 
+def entries_need_github_completion(entries: Iterable[Any]) -> bool:
+    """True when any bookmark declares GitHub-backed Tab completion."""
+    for entry in entries:
+        complete = getattr(entry, "complete", None)
+        if complete:
+            return True
+        params = getattr(entry, "params", ()) or ()
+        for name in params:
+            if isinstance(name, str) and param_needs_github_auth(name, None):
+                return True
+    return False
+
+
 def gh_install_guidance() -> str:
     """User-facing text when ``gh`` is missing and no env token is set."""
     parts = [

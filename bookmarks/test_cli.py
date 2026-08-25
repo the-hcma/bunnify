@@ -3514,6 +3514,38 @@ class KeyUsageAndCompletionTests(TestCase):
         self.assertIn("gh auth login", joined)
         clear_github_completion_cache()
 
+    def test_entries_need_github_completion_detects_specs_and_heuristics(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from app.completion_spec import ParamCompleteSpec
+        from app.github_complete import entries_need_github_completion
+
+        self.assertFalse(entries_need_github_completion([]))
+        self.assertFalse(
+            entries_need_github_completion(
+                [SimpleNamespace(params=("query",), complete={})]
+            )
+        )
+        self.assertTrue(
+            entries_need_github_completion(
+                [SimpleNamespace(params=("repo",), complete={})]
+            )
+        )
+        self.assertTrue(
+            entries_need_github_completion(
+                [
+                    SimpleNamespace(
+                        params=("name",),
+                        complete={
+                            "name": ParamCompleteSpec(kind="github_repo", org="o"),
+                        },
+                    )
+                ]
+            )
+        )
+
     def test_ensure_github_authenticated_offers_brew_install_when_admin(
         self,
     ) -> None:
