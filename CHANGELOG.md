@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/the-hcma/bunnify/compare/bunnify-v0.9.1...bunnify-v0.9.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* retry GitHub token for Spotty Bunny Tab completion ([#357](https://github.com/the-hcma/bunnify/issues/357)) ([c2f31c5](https://github.com/the-hcma/bunnify/commit/c2f31c5c320882eb15598fd0bd7a7ac3d1794edf))
+
 ## [0.9.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.9.0...bunnify-v0.9.1) (2026-08-22)
 
 
