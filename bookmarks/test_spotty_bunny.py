@@ -1425,6 +1425,155 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         row = CompletionRow(insert="gh", meta="GitHub", start_position=-1)
         self.assertEqual(apply_completion("g", row), "gh")
 
+    def test_github_param_completion_blocked_message_when_unauthenticated(
+        self,
+    ) -> None:
+        import logging
+        import subprocess
+        from unittest.mock import patch
+
+        from app.client import KeyEntry
+        from app.completion_spec import ParamCompleteSpec
+        from app.github_complete import (
+            GITHUB_AUTH_NEEDED_MESSAGE,
+            clear_github_completion_cache,
+        )
+        from app.spotty_bunny_complete import github_param_completion_blocked_message
+
+        clear_github_completion_cache()
+        entries = [
+            KeyEntry(
+                key="prh",
+                description="pulls",
+                url="https://github.com/the-hcma/#{repo}/pulls",
+                params=("repo",),
+                complete={
+                    "repo": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+                },
+            )
+        ]
+
+        def gh_runner(*, args, **_kwargs):
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=1, stdout="", stderr=""
+            )
+
+        with (
+            patch("app.github_complete.gh_is_available", return_value=True),
+            self.assertLogs("app.github_complete", level=logging.WARNING),
+        ):
+            message = github_param_completion_blocked_message(
+                "prh dom",
+                entries,
+                environ={"PATH": "/usr/bin"},
+                runner=gh_runner,
+            )
+        self.assertEqual(message, GITHUB_AUTH_NEEDED_MESSAGE)
+        clear_github_completion_cache()
+
+    def test_github_param_completion_blocked_message_none_when_authed(
+        self,
+    ) -> None:
+        import subprocess
+
+        from app.client import KeyEntry
+        from app.completion_spec import ParamCompleteSpec
+        from app.github_complete import clear_github_completion_cache
+        from app.spotty_bunny_complete import github_param_completion_blocked_message
+
+        clear_github_completion_cache()
+        entries = [
+            KeyEntry(
+                key="prh",
+                description="pulls",
+                url="https://github.com/the-hcma/#{repo}/pulls",
+                params=("repo",),
+                complete={
+                    "repo": ParamCompleteSpec(kind="github_repo", org="the-hcma"),
+                },
+            )
+        ]
+
+        def gh_runner(*, args, **_kwargs):
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=0, stdout="tok\n", stderr=""
+            )
+
+        message = github_param_completion_blocked_message(
+            "prh dom",
+            entries,
+            environ={"PATH": "/usr/bin"},
+            runner=gh_runner,
+        )
+        self.assertIsNone(message)
+        clear_github_completion_cache()
+
+    def test_show_completions_captures_prefix_before_hide(self) -> None:
+        """Regression: hide clears _completion_prefix; blocked message needs a copy."""
+        from pathlib import Path
+
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        marker = "def _show_completions("
+        start = source.index(marker)
+        chunk = source[start : start + 1100]
+        prefix_idx = chunk.index("prefix = self._completion_prefix")
+        hide_idx = chunk.index("self._hide_completions()")
+        self.assertLess(prefix_idx, hide_idx)
+        self.assertIn("surface_blocked_github_completion(", chunk)
+        self.assertIn(
+            "github_param_completion_blocked_message(text, entries)",
+            source,
+        )
+
+    def test_surface_blocked_github_completion_sets_status_and_warns(self) -> None:
+        import logging
+
+        from app.github_complete import (
+            GITHUB_AUTH_NEEDED_MESSAGE,
+            clear_github_completion_cache,
+        )
+        from app.spotty_bunny_complete import surface_blocked_github_completion
+
+        clear_github_completion_cache()
+        statuses: list[str] = []
+        with self.assertLogs("app.github_complete", level=logging.WARNING) as logged:
+            surfaced = surface_blocked_github_completion(
+                "prh dom",
+                GITHUB_AUTH_NEEDED_MESSAGE,
+                set_status=statuses.append,
+            )
+        self.assertTrue(surfaced)
+        self.assertEqual(statuses, [GITHUB_AUTH_NEEDED_MESSAGE])
+        self.assertTrue(any("blocked" in line.lower() for line in logged.output))
+        # Second call within throttle window should not add another WARNING.
+        with self.assertRaises(AssertionError):
+            with self.assertLogs("app.github_complete", level=logging.WARNING):
+                surface_blocked_github_completion(
+                    "prh bun",
+                    GITHUB_AUTH_NEEDED_MESSAGE,
+                    set_status=statuses.append,
+                )
+        self.assertEqual(
+            statuses,
+            [GITHUB_AUTH_NEEDED_MESSAGE, GITHUB_AUTH_NEEDED_MESSAGE],
+        )
+        clear_github_completion_cache()
+
+    def test_surface_blocked_github_completion_noop_without_message(self) -> None:
+        from app.spotty_bunny_complete import surface_blocked_github_completion
+
+        statuses: list[str] = []
+        self.assertFalse(
+            surface_blocked_github_completion(
+                "prh dom",
+                None,
+                set_status=statuses.append,
+            )
+        )
+        self.assertEqual(statuses, [])
+
     def test_completion_still_current_requires_matching_seq_and_field(self) -> None:
         from app.spotty_bunny_complete import completion_still_current
 

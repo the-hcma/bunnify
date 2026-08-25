@@ -29,6 +29,7 @@ _DEFAULT_TIMEOUT_SECONDS = 8.0
 _GH_BREW_INSTALL_TIMEOUT_SECONDS = 600.0
 _GH_TOKEN_TIMEOUT_SECONDS = 8.0
 _GH_LOGIN_TIMEOUT_SECONDS = 600.0
+_NEGATIVE_TOKEN_TTL_SECONDS = 60.0
 _PERSIST_VERSION = 1
 _REPO_PARAM_NAMES = frozenset({"org_repo", "repo", "repository"})
 _PR_PARAM_NAMES = frozenset(
@@ -37,11 +38,16 @@ _PR_PARAM_NAMES = frozenset(
 _ISSUE_PARAM_NAMES = frozenset({"issue", "issue_id", "issue_num", "issue_number"})
 _API_ROOT = "https://api.github.com"
 _UNSET = object()
+_WARN_THROTTLE_SECONDS = 60.0
+
+GITHUB_AUTH_NEEDED_MESSAGE = "GitHub auth needed — run: gh auth login"
 
 _cache: dict[str, tuple[float, list[str]]] = {}
 _cache_lock = threading.RLock()
 _token_cache: Any = _UNSET
+_token_cache_expires_at: float = 0.0
 _refresh_thread: threading.Thread | None = None
+_warn_throttle: dict[str, float] = {}
 
 _GITHUB_ORG_REPO = re.compile(
     r"(?:github\.com|graphite\.com/github/pr)/([^/#{}]+)/#\{repo\}",
@@ -79,6 +85,17 @@ def _cache_get(key: str) -> list[str] | None:
 def _cache_set(key: str, values: list[str]) -> None:
     with _cache_lock:
         _cache[key] = (time.monotonic() + _CACHE_TTL_SECONDS, list(values))
+
+
+def _warn_throttled(key: str, message: str, *args: object) -> None:
+    """Emit ``logger.warning`` at most once per key within the throttle window."""
+    now = time.monotonic()
+    with _cache_lock:
+        expires_at = _warn_throttle.get(key)
+        if expires_at is not None and now < expires_at:
+            return
+        _warn_throttle[key] = now + _WARN_THROTTLE_SECONDS
+    logger.warning(message, *args)
 
 
 _NAME_SPLIT = re.compile(r"[/_\-.]+")
@@ -143,10 +160,21 @@ def can_offer_gh_install() -> bool:
 
 def clear_github_completion_cache() -> None:
     """Test helper: drop in-process completion + token caches."""
-    global _token_cache
+    global _token_cache, _token_cache_expires_at
     with _cache_lock:
         _cache.clear()
+        _warn_throttle.clear()
     _token_cache = _UNSET
+    _token_cache_expires_at = 0.0
+
+
+def entries_need_github_completion(entries: Iterable[Any]) -> bool:
+    """True when any bookmark declares GitHub-backed Tab completion."""
+    for entry in entries:
+        complete = getattr(entry, "complete", None)
+        if complete:
+            return True
+    return False
 
 
 def gh_install_guidance() -> str:
@@ -245,6 +273,18 @@ def save_github_completion_cache(
     return cache_path
 
 
+def github_completion_unavailable_message(
+    *,
+    environ: dict[str, str] | None = None,
+) -> str:
+    """User-facing text when GitHub Tab completion cannot authenticate."""
+    if github_token_from_environ(environ):
+        return GITHUB_AUTH_NEEDED_MESSAGE
+    if not gh_is_available():
+        return gh_install_guidance()
+    return GITHUB_AUTH_NEEDED_MESSAGE
+
+
 def github_token_from_environ(
     environ: dict[str, str] | None = None,
 ) -> str | None:
@@ -255,6 +295,26 @@ def github_token_from_environ(
         if value:
             return value
     return None
+
+
+def param_needs_github_auth(
+    param_name: str,
+    complete: Mapping[str, ParamCompleteSpec] | None = None,
+) -> bool:
+    """True when *param_name* is completed via the GitHub REST API.
+
+    When a ``complete`` map is attached (including an empty one), only declared
+    specs count — generic names like ``number`` / ``repo`` alone must not light
+    up GitHub auth UX. Name heuristics apply only when *complete* is omitted.
+    """
+    if complete is not None:
+        return complete.get(param_name) is not None
+    name = param_name.lower()
+    return (
+        name in _REPO_PARAM_NAMES
+        or name in _PR_PARAM_NAMES
+        or name in _ISSUE_PARAM_NAMES
+    )
 
 
 def _run_gh(
@@ -290,10 +350,21 @@ def github_token_from_gh(
             capture_output=True,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
+        _warn_throttled(
+            "gh-auth-token-exc",
+            "gh auth token failed: %s",
+            exc,
+        )
         logger.debug("gh auth token failed: %s", exc, exc_info=True)
         return None
     if completed.returncode != 0:
         stderr = (completed.stderr or "").strip()
+        _warn_throttled(
+            "gh-auth-token-exit",
+            "gh auth token exited %s%s",
+            completed.returncode,
+            f": {stderr}" if stderr else "",
+        )
         logger.debug("gh auth token exited %s: %s", completed.returncode, stderr)
         return None
     token = (completed.stdout or "").strip()
@@ -352,21 +423,41 @@ def resolve_github_token(
     environ: dict[str, str] | None = None,
     runner: GhRunner | None = None,
     use_cache: bool = True,
+    monotonic: Callable[[], float] | None = None,
+    negative_ttl_seconds: float = _NEGATIVE_TOKEN_TTL_SECONDS,
 ) -> str | None:
     """
     Resolve a GitHub token for completion API calls.
 
     Precedence: ``GITHUB_TOKEN`` / ``GH_TOKEN`` → ``gh auth token``.
+
+    Successful tokens are cached for the process lifetime. A missing token is
+    cached only for ``negative_ttl_seconds`` so a later ``gh auth login`` is
+    picked up without restarting the process.
     """
-    global _token_cache
+    global _token_cache, _token_cache_expires_at
     env_token = github_token_from_environ(environ)
     if env_token:
         return env_token
+    now = (monotonic or time.monotonic)()
     if use_cache and _token_cache is not _UNSET:
-        return _token_cache if isinstance(_token_cache, str) else None
+        if isinstance(_token_cache, str):
+            return _token_cache
+        if now < _token_cache_expires_at:
+            return None
     token = github_token_from_gh(runner=runner)
     if use_cache:
-        _token_cache = token
+        if token:
+            _token_cache = token
+            _token_cache_expires_at = 0.0
+        else:
+            _token_cache = None
+            _token_cache_expires_at = now + negative_ttl_seconds
+            _warn_throttled(
+                "github-token-missing",
+                "GitHub Tab completion has no token — set GITHUB_TOKEN / "
+                "GH_TOKEN or run: gh auth login",
+            )
     return token
 
 
@@ -387,7 +478,7 @@ def ensure_github_authenticated(
       offer ``brew install gh`` (via ``confirm_install``).
     - Then launch the browser-oriented ``gh auth login`` flow.
     """
-    global _token_cache
+    global _token_cache, _token_cache_expires_at
     token = resolve_github_token(environ=environ, runner=runner)
     if token:
         return token
@@ -429,6 +520,7 @@ def ensure_github_authenticated(
         logger.debug("gh auth login exited %s", completed.returncode)
         return None
     _token_cache = _UNSET
+    _token_cache_expires_at = 0.0
     return resolve_github_token(environ=environ, runner=runner, use_cache=True)
 
 
@@ -446,6 +538,11 @@ def user_is_admin() -> bool:
         return username in grp.getgrnam("admin").gr_mem
     except KeyError, OSError:
         return False
+
+
+def warn_github_completion(key: str, message: str, *args: object) -> None:
+    """Emit a throttled WARNING for GitHub completion UX (no token material)."""
+    _warn_throttled(key, message, *args)
 
 
 def _github_get_json(
@@ -487,6 +584,13 @@ def _github_get_json(
         json.JSONDecodeError,
         OSError,
     ) as exc:
+        status = getattr(exc, "code", None)
+        _warn_throttled(
+            f"github-get:{path}:{status}",
+            "GitHub REST GET %s failed: %s",
+            path,
+            exc,
+        )
         logger.debug("GitHub REST GET %s failed: %s", path, exc, exc_info=True)
         return None
 
@@ -526,6 +630,12 @@ def _github_get_owner_repos_json(
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None, True
+        _warn_throttled(
+            f"github-owner-repos:{path}:{exc.code}",
+            "GitHub REST GET %s failed: %s",
+            path,
+            exc,
+        )
         logger.debug("GitHub REST GET %s failed: %s", path, exc, exc_info=True)
         return None, False
     except (
@@ -534,6 +644,12 @@ def _github_get_owner_repos_json(
         json.JSONDecodeError,
         OSError,
     ) as exc:
+        _warn_throttled(
+            f"github-owner-repos:{path}",
+            "GitHub REST GET %s failed: %s",
+            path,
+            exc,
+        )
         logger.debug("GitHub REST GET %s failed: %s", path, exc, exc_info=True)
         return None, False
 

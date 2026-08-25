@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from prompt_toolkit.completion import CompleteEvent, Completer
@@ -10,7 +10,19 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import to_formatted_text, to_plain_text
 
 from app.client import KeyEntry
-from app.interactive import FirstTokenFuzzyCompleter, ShortcutCompleter
+from app.completion_spec import ParamCompleteSpec
+from app.github_complete import (
+    GhRunner,
+    github_completion_unavailable_message,
+    param_needs_github_auth,
+    resolve_github_token,
+    warn_github_completion,
+)
+from app.interactive import (
+    FirstTokenFuzzyCompleter,
+    ShortcutCompleter,
+    completion_token_state,
+)
 from app.theme import Theme
 
 
@@ -169,6 +181,30 @@ def field_editor_selector_name(selector: object) -> str:
     return text
 
 
+def github_param_completion_blocked_message(
+    text: str,
+    entries: Sequence[KeyEntry] | Mapping[str, KeyEntry],
+    *,
+    environ: dict[str, str] | None = None,
+    runner: GhRunner | None = None,
+) -> str | None:
+    """
+    Return status text when *text* is on a GitHub param and auth is missing.
+
+    ``None`` when the field is not a GitHub-backed param slot, or a token is
+    available (including after negative-cache TTL expiry / re-probe).
+    """
+    entry, param_name = _github_param_slot(text, entries)
+    if entry is None or param_name is None:
+        return None
+    complete: Mapping[str, ParamCompleteSpec] | None = entry.complete
+    if not param_needs_github_auth(param_name, complete):
+        return None
+    if resolve_github_token(environ=environ, runner=runner):
+        return None
+    return github_completion_unavailable_message(environ=environ)
+
+
 def is_completion_navigation_selector(selector: object) -> bool:
     """True when *selector* should move the Tab completion selection."""
     return field_editor_selector_name(selector) in COMPLETION_NAVIGATION_SELECTORS
@@ -215,6 +251,55 @@ def normalize_completion_navigation_selector(selector: str) -> str:
 def should_auto_insert_completion(prefix: str, rows: list[CompletionRow]) -> bool:
     """True when the first Tab candidate should replace the field text."""
     return bool(rows) and not completion_browse_all(prefix)
+
+
+def surface_blocked_github_completion(
+    prefix: str,
+    blocked_message: str | None,
+    *,
+    set_status: Callable[[str], None],
+) -> bool:
+    """Log (throttled) and set status when Tab was blocked by missing GitHub auth."""
+    if blocked_message is None:
+        return False
+    warn_github_completion(
+        "github-tab-blocked",
+        "GitHub Tab completion blocked for %r: %s",
+        prefix,
+        blocked_message,
+    )
+    set_status(blocked_message)
+    return True
+
+
+def _github_param_slot(
+    text: str,
+    entries: Sequence[KeyEntry] | Mapping[str, KeyEntry],
+) -> tuple[KeyEntry | None, str | None]:
+    """Return ``(entry, param_name)`` for the active Tab param slot, if any."""
+    stripped = text.strip()
+    if not stripped:
+        return None, None
+    by_key: Mapping[str, KeyEntry]
+    if isinstance(entries, Mapping):
+        by_key = entries
+    else:
+        by_key = {entry.key: entry for entry in entries}
+    insert_key_prefix = not any(ch.isspace() for ch in text)
+    effective = f"{text.rstrip()} " if insert_key_prefix else text
+    key, _filled_args, _prefix, arg_index = completion_token_state(effective)
+    entry = by_key.get(key)
+    if entry is None:
+        lowered = key.lower()
+        for candidate_key, candidate in by_key.items():
+            if candidate_key.lower() == lowered:
+                entry = candidate
+                break
+    if entry is None or not entry.params:
+        return None, None
+    if arg_index < 0 or arg_index >= len(entry.params):
+        return None, None
+    return entry, entry.params[arg_index]
 
 
 def _plain(value: object) -> str:

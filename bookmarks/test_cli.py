@@ -3436,6 +3436,128 @@ class KeyUsageAndCompletionTests(TestCase):
         )
         self.assertEqual(token, "gh-token")
 
+    def test_resolve_github_token_retries_after_negative_ttl(self) -> None:
+        import subprocess
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            resolve_github_token,
+        )
+
+        clear_github_completion_cache()
+        calls = {"n": 0}
+        clock = {"t": 100.0}
+
+        def gh_runner(*, args, **_kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=1, stdout="", stderr="not logged in"
+                )
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=0, stdout="fresh-token\n", stderr=""
+            )
+
+        first = resolve_github_token(
+            environ={"PATH": "/usr/bin"},
+            runner=gh_runner,
+            monotonic=lambda: clock["t"],
+            negative_ttl_seconds=30.0,
+        )
+        self.assertIsNone(first)
+        self.assertEqual(calls["n"], 1)
+
+        cached = resolve_github_token(
+            environ={"PATH": "/usr/bin"},
+            runner=gh_runner,
+            monotonic=lambda: clock["t"] + 10.0,
+            negative_ttl_seconds=30.0,
+        )
+        self.assertIsNone(cached)
+        self.assertEqual(calls["n"], 1)
+
+        clock["t"] += 31.0
+        second = resolve_github_token(
+            environ={"PATH": "/usr/bin"},
+            runner=gh_runner,
+            monotonic=lambda: clock["t"],
+            negative_ttl_seconds=30.0,
+        )
+        self.assertEqual(second, "fresh-token")
+        self.assertEqual(calls["n"], 2)
+        clear_github_completion_cache()
+
+    def test_resolve_github_token_logs_warning_on_miss(self) -> None:
+        import logging
+        import subprocess
+
+        from app.github_complete import (
+            clear_github_completion_cache,
+            resolve_github_token,
+        )
+
+        clear_github_completion_cache()
+
+        def gh_runner(*, args, **_kwargs):
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=1, stdout="", stderr=""
+            )
+
+        with self.assertLogs("app.github_complete", level=logging.WARNING) as logged:
+            token = resolve_github_token(
+                environ={"PATH": "/usr/bin"},
+                runner=gh_runner,
+            )
+        self.assertIsNone(token)
+        joined = "\n".join(logged.output)
+        self.assertIn("no token", joined.lower())
+        self.assertIn("gh auth login", joined)
+        clear_github_completion_cache()
+
+    def test_entries_need_github_completion_detects_specs_and_heuristics(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from app.completion_spec import ParamCompleteSpec
+        from app.github_complete import (
+            entries_need_github_completion,
+            param_needs_github_auth,
+        )
+
+        self.assertFalse(entries_need_github_completion([]))
+        self.assertFalse(
+            entries_need_github_completion(
+                [SimpleNamespace(params=("query",), complete={})]
+            )
+        )
+        # Param-name heuristics alone must not drive GitHub auth UX.
+        self.assertFalse(
+            entries_need_github_completion(
+                [SimpleNamespace(params=("number",), complete={})]
+            )
+        )
+        self.assertFalse(param_needs_github_auth("number", {}))
+        self.assertTrue(param_needs_github_auth("number", None))
+        self.assertTrue(
+            entries_need_github_completion(
+                [
+                    SimpleNamespace(
+                        params=("name",),
+                        complete={
+                            "name": ParamCompleteSpec(kind="github_repo", org="o"),
+                        },
+                    )
+                ]
+            )
+        )
+        self.assertTrue(
+            param_needs_github_auth(
+                "name",
+                {"name": ParamCompleteSpec(kind="github_repo", org="o")},
+            )
+        )
+
     def test_ensure_github_authenticated_offers_brew_install_when_admin(
         self,
     ) -> None:
