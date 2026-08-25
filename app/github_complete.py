@@ -528,6 +528,11 @@ def user_is_admin() -> bool:
         return False
 
 
+def warn_github_completion(key: str, message: str, *args: object) -> None:
+    """Emit a throttled WARNING for GitHub completion UX (no token material)."""
+    _warn_throttled(key, message, *args)
+
+
 def _github_get_json(
     path: str,
     *,

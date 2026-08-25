@@ -1521,11 +1521,58 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         prefix_idx = chunk.index("prefix = self._completion_prefix")
         hide_idx = chunk.index("self._hide_completions()")
         self.assertLess(prefix_idx, hide_idx)
-        self.assertIn("blocked_message is not None", chunk)
+        self.assertIn("surface_blocked_github_completion(", chunk)
         self.assertIn(
             "github_param_completion_blocked_message(text, entries)",
             source,
         )
+
+    def test_surface_blocked_github_completion_sets_status_and_warns(self) -> None:
+        import logging
+
+        from app.github_complete import (
+            GITHUB_AUTH_NEEDED_MESSAGE,
+            clear_github_completion_cache,
+        )
+        from app.spotty_bunny_complete import surface_blocked_github_completion
+
+        clear_github_completion_cache()
+        statuses: list[str] = []
+        with self.assertLogs("app.github_complete", level=logging.WARNING) as logged:
+            surfaced = surface_blocked_github_completion(
+                "prh dom",
+                GITHUB_AUTH_NEEDED_MESSAGE,
+                set_status=statuses.append,
+            )
+        self.assertTrue(surfaced)
+        self.assertEqual(statuses, [GITHUB_AUTH_NEEDED_MESSAGE])
+        self.assertTrue(any("blocked" in line.lower() for line in logged.output))
+        # Second call within throttle window should not add another WARNING.
+        with self.assertRaises(AssertionError):
+            with self.assertLogs("app.github_complete", level=logging.WARNING):
+                surface_blocked_github_completion(
+                    "prh bun",
+                    GITHUB_AUTH_NEEDED_MESSAGE,
+                    set_status=statuses.append,
+                )
+        self.assertEqual(
+            statuses,
+            [GITHUB_AUTH_NEEDED_MESSAGE, GITHUB_AUTH_NEEDED_MESSAGE],
+        )
+        clear_github_completion_cache()
+
+    def test_surface_blocked_github_completion_noop_without_message(self) -> None:
+        from app.spotty_bunny_complete import surface_blocked_github_completion
+
+        statuses: list[str] = []
+        self.assertFalse(
+            surface_blocked_github_completion(
+                "prh dom",
+                None,
+                set_status=statuses.append,
+            )
+        )
+        self.assertEqual(statuses, [])
 
     def test_completion_still_current_requires_matching_seq_and_field(self) -> None:
         from app.spotty_bunny_complete import completion_still_current

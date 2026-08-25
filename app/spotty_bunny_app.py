@@ -114,6 +114,7 @@ from app.github_complete import (
     github_token_from_environ,
     install_gh_via_homebrew,
     resolve_github_token,
+    warn_github_completion,
 )
 from app.spotty_bunny_about import (
     apply_spotty_chrome,
@@ -142,6 +143,7 @@ from app.spotty_bunny_complete import (
     is_tab_completion_selector,
     make_spotty_completer,
     should_auto_insert_completion,
+    surface_blocked_github_completion,
 )
 from app.spotty_bunny_edit import (
     edit_action_for_key,
@@ -793,7 +795,8 @@ class SpottyBunnyController(NSObject):
                 token=token,
             )
         else:
-            logger.warning(
+            warn_github_completion(
+                "github-startup-unavailable",
                 "GitHub Tab completion unavailable at startup: %s",
                 github_completion_unavailable_message(),
             )
@@ -1018,13 +1021,11 @@ class SpottyBunnyController(NSObject):
         if not rows:
             prefix = self._completion_prefix
             self._hide_completions()
-            if blocked_message is not None:
-                logger.warning(
-                    "GitHub Tab completion blocked for %r: %s",
-                    prefix,
-                    blocked_message,
-                )
-                self._set_status(blocked_message)
+            surface_blocked_github_completion(
+                prefix,
+                blocked_message,
+                set_status=self._set_status,
+            )
             return
         self._set_status("")
         if self.field is not None and should_auto_insert_completion(

@@ -16,6 +16,7 @@ from app.github_complete import (
     github_completion_unavailable_message,
     param_needs_github_auth,
     resolve_github_token,
+    warn_github_completion,
 )
 from app.interactive import (
     FirstTokenFuzzyCompleter,
@@ -250,6 +251,25 @@ def normalize_completion_navigation_selector(selector: str) -> str:
 def should_auto_insert_completion(prefix: str, rows: list[CompletionRow]) -> bool:
     """True when the first Tab candidate should replace the field text."""
     return bool(rows) and not completion_browse_all(prefix)
+
+
+def surface_blocked_github_completion(
+    prefix: str,
+    blocked_message: str | None,
+    *,
+    set_status: Callable[[str], None],
+) -> bool:
+    """Log (throttled) and set status when Tab was blocked by missing GitHub auth."""
+    if blocked_message is None:
+        return False
+    warn_github_completion(
+        "github-tab-blocked",
+        "GitHub Tab completion blocked for %r: %s",
+        prefix,
+        blocked_message,
+    )
+    set_status(blocked_message)
+    return True
 
 
 def _github_param_slot(
