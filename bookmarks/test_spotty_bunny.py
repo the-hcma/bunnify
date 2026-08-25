@@ -1430,6 +1430,7 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
     ) -> None:
         import logging
         import subprocess
+        from unittest.mock import patch
 
         from app.client import KeyEntry
         from app.completion_spec import ParamCompleteSpec
@@ -1457,7 +1458,10 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
                 args=list(args), returncode=1, stdout="", stderr=""
             )
 
-        with self.assertLogs("app.github_complete", level=logging.WARNING):
+        with (
+            patch("app.github_complete.gh_is_available", return_value=True),
+            self.assertLogs("app.github_complete", level=logging.WARNING),
+        ):
             message = github_param_completion_blocked_message(
                 "prh dom",
                 entries,
@@ -1511,17 +1515,16 @@ class SpottyBunnyCompleteTests(SimpleTestCase):
         source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
         ).read_text(encoding="utf-8")
-        marker = "def _show_completions(self, rows: list[CompletionRow]) -> None:"
+        marker = "def _show_completions("
         start = source.index(marker)
-        chunk = source[start : start + 900]
+        chunk = source[start : start + 1100]
         prefix_idx = chunk.index("prefix = self._completion_prefix")
         hide_idx = chunk.index("self._hide_completions()")
-        blocked_idx = chunk.index("github_param_completion_blocked_message(")
         self.assertLess(prefix_idx, hide_idx)
-        self.assertLess(hide_idx, blocked_idx)
+        self.assertIn("blocked_message is not None", chunk)
         self.assertIn(
-            "github_param_completion_blocked_message(\n                prefix,",
-            chunk,
+            "github_param_completion_blocked_message(text, entries)",
+            source,
         )
 
     def test_completion_still_current_requires_matching_seq_and_field(self) -> None:

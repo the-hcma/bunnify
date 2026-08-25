@@ -700,7 +700,8 @@ class SpottyBunnyController(NSObject):
             if isinstance(result, Exception):
                 logger.warning("completion failed: %s", result)
                 return
-            self._show_completions(result)  # type: ignore[arg-type]
+            rows, blocked_message = result  # type: ignore[misc]
+            self._show_completions(rows, blocked_message=blocked_message)
 
         _run_on_main(apply)
 
@@ -910,8 +911,18 @@ class SpottyBunnyController(NSObject):
         self._completion_seq += 1
         seq = self._completion_seq
         completer = self._completer
+        entries = list(self._entries)
+
+        def fetch() -> object:
+            rows = completions_for(text, completer)
+            blocked: str | None = None
+            if not rows:
+                # Resolve token off the AppKit thread (gh auth token / keychain).
+                blocked = github_param_completion_blocked_message(text, entries)
+            return rows, blocked
+
         self._io.submit(
-            lambda: completions_for(text, completer),
+            fetch,
             lambda result: self._completions_ready(result, seq=seq),
         )
 
@@ -997,22 +1008,23 @@ class SpottyBunnyController(NSObject):
         self._update_check_pending = True
         self._io.submit(refresh_update_status, self._update_check_ready)
 
-    def _show_completions(self, rows: list[CompletionRow]) -> None:
+    def _show_completions(
+        self,
+        rows: list[CompletionRow],
+        *,
+        blocked_message: str | None = None,
+    ) -> None:
         self._completion_rows = rows
         if not rows:
             prefix = self._completion_prefix
             self._hide_completions()
-            message = github_param_completion_blocked_message(
-                prefix,
-                self._entries,
-            )
-            if message is not None:
+            if blocked_message is not None:
                 logger.warning(
                     "GitHub Tab completion blocked for %r: %s",
                     prefix,
-                    message,
+                    blocked_message,
                 )
-                self._set_status(message)
+                self._set_status(blocked_message)
             return
         self._set_status("")
         if self.field is not None and should_auto_insert_completion(
