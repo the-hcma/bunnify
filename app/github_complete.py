@@ -174,10 +174,6 @@ def entries_need_github_completion(entries: Iterable[Any]) -> bool:
         complete = getattr(entry, "complete", None)
         if complete:
             return True
-        params = getattr(entry, "params", ()) or ()
-        for name in params:
-            if isinstance(name, str) and param_needs_github_auth(name, None):
-                return True
     return False
 
 
@@ -305,11 +301,14 @@ def param_needs_github_auth(
     param_name: str,
     complete: Mapping[str, ParamCompleteSpec] | None = None,
 ) -> bool:
-    """True when *param_name* is completed via the GitHub REST API."""
+    """True when *param_name* is completed via the GitHub REST API.
+
+    When a ``complete`` map is attached (including an empty one), only declared
+    specs count — generic names like ``number`` / ``repo`` alone must not light
+    up GitHub auth UX. Name heuristics apply only when *complete* is omitted.
+    """
     if complete is not None:
-        spec = complete.get(param_name)
-        if spec is not None:
-            return True
+        return complete.get(param_name) is not None
     name = param_name.lower()
     return (
         name in _REPO_PARAM_NAMES

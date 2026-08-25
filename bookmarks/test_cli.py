@@ -3520,7 +3520,10 @@ class KeyUsageAndCompletionTests(TestCase):
         from types import SimpleNamespace
 
         from app.completion_spec import ParamCompleteSpec
-        from app.github_complete import entries_need_github_completion
+        from app.github_complete import (
+            entries_need_github_completion,
+            param_needs_github_auth,
+        )
 
         self.assertFalse(entries_need_github_completion([]))
         self.assertFalse(
@@ -3528,11 +3531,14 @@ class KeyUsageAndCompletionTests(TestCase):
                 [SimpleNamespace(params=("query",), complete={})]
             )
         )
-        self.assertTrue(
+        # Param-name heuristics alone must not drive GitHub auth UX.
+        self.assertFalse(
             entries_need_github_completion(
-                [SimpleNamespace(params=("repo",), complete={})]
+                [SimpleNamespace(params=("number",), complete={})]
             )
         )
+        self.assertFalse(param_needs_github_auth("number", {}))
+        self.assertTrue(param_needs_github_auth("number", None))
         self.assertTrue(
             entries_need_github_completion(
                 [
@@ -3543,6 +3549,12 @@ class KeyUsageAndCompletionTests(TestCase):
                         },
                     )
                 ]
+            )
+        )
+        self.assertTrue(
+            param_needs_github_auth(
+                "name",
+                {"name": ParamCompleteSpec(kind="github_repo", org="o")},
             )
         )
 
