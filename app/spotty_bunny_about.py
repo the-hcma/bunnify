@@ -207,6 +207,22 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
                 ),
             )
         )
+    if runtime.server_skewed:
+        skew_text = "Server build differs from this Mac — align versions."
+        rows.append(
+            (
+                18.0,
+                lambda y, h: _label(
+                    NSMakeRect(ABOUT_INSET, y, inner, h),
+                    skew_text,
+                    color=_srgb_color(ABOUT_WARN_RGB),
+                ),
+            )
+        )
+        needed_width = max(
+            needed_width,
+            _measure_text(skew_text, body_font, max_width=inner_cap)[0],
+        )
     rows.extend(
         [
             (

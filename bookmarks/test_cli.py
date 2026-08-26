@@ -744,6 +744,16 @@ class CliUnitTests(TestCase):
 
 
 class ConfigUnitTests(TestCase):
+    def setUp(self) -> None:
+        self._spotty_setup_patch = patch(
+            "app.cli._ensure_local_spotty_after_setup",
+            return_value=None,
+        )
+        self._spotty_setup_patch.start()
+
+    def tearDown(self) -> None:
+        self._spotty_setup_patch.stop()
+
     def test_config_dir_respects_xdg_config_home(self) -> None:
         import tempfile
         from pathlib import Path
@@ -2413,7 +2423,7 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.sys.platform", "darwin"),
             patch("app.cli.fetch_health", return_value=matching),
             patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
-            patch("app.cli._builds_match", return_value=True),
+            patch("app.cli.builds_match", return_value=True),
             patch("app.server_agent.is_agent_installed", return_value=True),
             patch("app.server_agent.install_agent") as install,
         ):
@@ -2440,7 +2450,7 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.sys.platform", "darwin"),
             patch("app.cli.fetch_health", return_value=matching),
             patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
-            patch("app.cli._builds_match", return_value=True),
+            patch("app.cli.builds_match", return_value=True),
             patch("app.server_agent.is_agent_installed", return_value=False),
             patch("app.server_agent.install_agent", return_value=0) as install,
             patch(
@@ -2507,8 +2517,8 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.sys.platform", "darwin"),
             patch("app.cli.fetch_health", return_value=old),
             patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
-            patch("app.cli._builds_match", return_value=False),
-            patch("app.cli._cli_is_newer_than", return_value=True),
+            patch("app.cli.builds_match", return_value=False),
+            patch("app.cli.cli_is_newer_than", return_value=True),
             patch("app.server_agent.is_agent_installed", return_value=True),
             patch("app.server_agent.bootout_loaded_agent") as bootout,
             patch("app.cli.stop_local_server") as stop,

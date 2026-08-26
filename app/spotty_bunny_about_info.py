@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote, urlparse
 
+from app.client import fetch_health
+from app.coherence import builds_match, format_build_label
 from app.config import (
     default_bookmarks_path,
     load_preferences,
@@ -31,7 +33,9 @@ class AboutRuntimeInfo:
     bookmarks_uri: str
     github_display: str | None
     github_url: str | None
+    server_build_label: str | None
     server_display: str
+    server_skewed: bool
     server_url: str
 
 
@@ -57,6 +61,9 @@ def about_details_text_and_links(
         links.append((runtime.github_display, runtime.github_url))
     lines.append(runtime.server_display)
     links.append((runtime.server_url, runtime.server_url))
+    if runtime.server_build_label is not None:
+        lines.append(f"Server build: {runtime.server_build_label}")
+        links.append((runtime.server_build_label, runtime.server_url))
     return "\n".join(lines), tuple(links)
 
 
@@ -190,12 +197,22 @@ def load_about_runtime_info(
     if mode is None:
         mode = "local" if _is_loopback_url(base_url) else "remote"
     label = "Local server" if mode == "local" else "Remote server"
+    health = fetch_health(base_url)
+    server_build_label = format_build_label(health) if health.ok else None
+    server_skewed = bool(
+        health.ok
+        and health.version is not None
+        and health.commit is not None
+        and not builds_match(health)
+    )
     return AboutRuntimeInfo(
         bookmarks_display=display_user_path(path),
         bookmarks_uri=bookmarks_uri,
         github_display=github_display,
         github_url=github_url,
+        server_build_label=server_build_label,
         server_display=f"{label} · {base_url}",
+        server_skewed=server_skewed,
         server_url=base_url,
     )
 

@@ -452,7 +452,9 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
             github_display="github.com/acme/repo",
             github_url="https://github.com/acme/repo",
+            server_build_label="0.10.0 (abc123456789)",
             server_display="Local server · http://127.0.0.1:8000",
+            server_skewed=False,
             server_url="http://127.0.0.1:8000",
         )
         text, links = about_details_text_and_links(runtime)
@@ -462,7 +464,8 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             "License: MIT License\n"
             "Bookmarks: ~/.config/bunnify/bookmarks.json\n"
             "GitHub: github.com/acme/repo\n"
-            "Local server · http://127.0.0.1:8000",
+            "Local server · http://127.0.0.1:8000\n"
+            "Server build: 0.10.0 (abc123456789)",
         )
         self.assertEqual(
             links,
@@ -481,6 +484,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                 ),
                 ("github.com/acme/repo", "https://github.com/acme/repo"),
                 ("http://127.0.0.1:8000", "http://127.0.0.1:8000"),
+                ("0.10.0 (abc123456789)", "http://127.0.0.1:8000"),
             ),
         )
 

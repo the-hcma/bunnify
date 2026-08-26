@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Literal
 
 import click
-from packaging.version import InvalidVersion, Version
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
@@ -27,6 +26,14 @@ from app.client import (
     fetch_suggestions,
     lookup_key_entry,
     resolve_shortcut,
+)
+from app.coherence import (
+    assess_local_coherence,
+    builds_match,
+    cli_is_newer_than,
+    ensure_local_spotty_aligned,
+    format_build_label,
+    offer_remote_build_mismatch,
 )
 from app.config import (
     ENV_VAR,
@@ -128,12 +135,23 @@ def ensure_ready_base_url(
     if preferences.mode == "remote":
         if not preferences.base_url:
             raise ClientError("Remote mode requires BUNNIFY_BASE_URL")
-        return _wait_for_healthy_remote(
+        base_url = _wait_for_healthy_remote(
             preferences.base_url,
             prompt_fn=ask,
             interactive=interactive,
             print_fn=log,
         )
+        if interactive:
+            health = fetch_health(base_url)
+            if health.ok and not offer_remote_build_mismatch(
+                ask,
+                base_url=base_url,
+                health=health,
+                print_fn=log,
+                theme=Theme(enabled=stdout_color_enabled()),
+            ):
+                raise ClientError("Remote server version mismatch")
+        return base_url
 
     bookmarks = ensure_user_bookmarks(
         environ=environ,
@@ -348,7 +366,7 @@ def run_setup(
                     local_port=actual_port,
                 )
                 save_preferences(preferences, env_path=path, environ=environ)
-                build_label = _format_running_build(health)
+                build_label = format_build_label(health)
                 if build_label == "unknown build":
                     local_version, local_commit = get_build_info()
                     log(
@@ -364,6 +382,11 @@ def run_setup(
                 log(colors.header("Browser"))
                 for line in format_browser_setup_text(base_url).splitlines():
                     log(line)
+                _ensure_local_spotty_after_setup(
+                    print_fn=log,
+                    prompt_fn=ask,
+                    theme=colors,
+                )
                 return base_url
             if not _retry_requested(
                 ask,
@@ -413,9 +436,19 @@ def run_setup(
             base_url=base_url,
             local_port=None,
         )
+        if reachable:
+            health = fetch_health(base_url)
+            log(colors.ok(f"✓ Health check passed for {base_url}"))
+            if not offer_remote_build_mismatch(
+                ask,
+                base_url=base_url,
+                health=health,
+                print_fn=log,
+                theme=colors,
+            ):
+                raise ClientError("Setup aborted; settings were not changed")
         save_preferences(preferences, env_path=path, environ=environ)
         if reachable:
-            log(colors.ok(f"✓ Health check passed for {base_url}"))
             log(colors.ok(f"✓ Configured remote Bunnify server at {base_url}"))
         else:
             log(
@@ -471,7 +504,7 @@ def run_stop(
                 log(f"URL: {base_url}")
                 health = fetch_health(base_url)
                 if health.ok:
-                    log(f"Running build: {_format_running_build(health)}")
+                    log(f"Running build: {format_build_label(health)}")
             try:
                 stop_local_server(agent_pid_dir, port=port)
             except (OSError, RuntimeError, ValueError) as exc:
@@ -493,7 +526,7 @@ def run_stop(
     log(f"Runtime directory: {pid_dir}")
     health = fetch_health(base_url)
     if health.ok:
-        log(f"Running build: {_format_running_build(health)}")
+        log(f"Running build: {format_build_label(health)}")
     else:
         log(
             colors.dim(
@@ -600,35 +633,112 @@ def run_upgrade(
             print_fn=log,
             theme=colors,
         )
+    _report_post_upgrade_coherence(
+        print_fn=log,
+        theme=colors,
+        refresh_launch_agents=refresh_launch_agents,
+    )
 
 
-def matching_keys(keys: list[str], prefix: str) -> list[str]:
-    """Return keys that start with ``prefix`` (case-insensitive)."""
-    needle = prefix.lower()
-    return [key for key in keys if key.lower().startswith(needle)]
+def _ensure_local_spotty_after_setup(
+    *,
+    print_fn: Callable[[str], None],
+    prompt_fn: Callable[[str], str],
+    theme: Theme,
+) -> None:
+    """Install or restart Spotty Bunny to match this CLI after local setup."""
+    if sys.platform != "darwin":
+        return
+    from app.spotty_bunny_agent import is_agent_installed
+    from app.spotty_bunny_launch import spotty_bunny_is_running
+
+    if not is_agent_installed() and not spotty_bunny_is_running():
+        print_fn(
+            theme.dim(
+                "Spotty Bunny is not installed. Optional: bunnify spotty-bunny install"
+            )
+        )
+        return
+
+    def offer_restart(recorded: str | None, current: str) -> bool:
+        running = recorded or "unknown"
+        print_fn(
+            theme.warn(
+                f"Spotty Bunny is running commit {running}; this CLI is {current}."
+            )
+        )
+        return _confirm_explicit_yes(
+            prompt_fn,
+            "Restart Spotty Bunny with this CLI? [y/N]: ",
+        )
+
+    print_fn(theme.dim("Ensuring Spotty Bunny matches this install…"))
+    if ensure_local_spotty_aligned(
+        print_fn=print_fn,
+        restart=offer_restart,
+    ):
+        print_fn(theme.ok("✓ Spotty Bunny is running"))
+    else:
+        print_fn(
+            theme.warn(
+                "Spotty Bunny is not running. Install with: "
+                "bunnify spotty-bunny install"
+            )
+        )
 
 
-def build_query_from_args(args: tuple[str, ...]) -> str:
-    return " ".join(args).strip()
+def _report_post_upgrade_coherence(
+    *,
+    print_fn: Callable[[str], None],
+    theme: Theme,
+    refresh_launch_agents: bool | Literal["server"],
+) -> None:
+    """Verify local server and Spotty match the upgraded CLI."""
+    preferences = load_preferences()
+    if preferences is not None and preferences.mode == "remote":
+        if not preferences.base_url:
+            return
+        health = fetch_health(preferences.base_url)
+        if health.ok and not builds_match(health):
+            print_fn(
+                theme.warn(
+                    f"Remote server is {format_build_label(health)}; "
+                    f"this Mac is {build_version()}."
+                )
+            )
+            print_fn(
+                theme.dim(
+                    "Upgrade or redeploy the remote host to match, or continue "
+                    "with client/server version skew."
+                )
+            )
+        return
 
-
-def _builds_match(health: HealthStatus) -> bool:
-    """Return whether a healthy remote build matches this CLI install."""
-    if health.version is None or health.commit is None:
-        return False
-    local_version, local_commit = get_build_info()
-    return health.version == local_version and health.commit == local_commit
-
-
-def _cli_is_newer_than(health: HealthStatus) -> bool:
-    """Return whether this CLI's package version is newer than ``health``."""
-    if health.version is None:
-        return False
-    local_version, _local_commit = get_build_info()
-    try:
-        return Version(health.version) < Version(local_version)
-    except InvalidVersion:
-        return False
+    base_url = resolve_base_url(persist=False, allow_prompt=False)
+    report = assess_local_coherence(base_url=base_url)
+    server = report.server
+    if server is not None and server.ok and not builds_match(server):
+        print_fn(
+            theme.warn(
+                f"Local server is {format_build_label(server)}; "
+                f"this CLI is {build_version()}."
+            )
+        )
+        print_fn(theme.dim("Run: bunnify-server upgrade"))
+    if sys.platform != "darwin":
+        return
+    if refresh_launch_agents is not True:
+        return
+    if report.spotty_running and report.spotty_commit != report.local_commit:
+        print_fn(theme.dim("Restarting Spotty Bunny to match the upgraded CLI…"))
+        if not ensure_local_spotty_aligned(force_restart=True, print_fn=print_fn):
+            print_fn(
+                theme.warn(
+                    "Spotty Bunny did not restart. Run: bunnify spotty-bunny upgrade"
+                )
+            )
+        else:
+            print_fn(theme.ok("✓ Spotty Bunny restarted on the upgraded build"))
 
 
 def _command_banner(action: str) -> str:
@@ -669,7 +779,7 @@ def _ensure_local_server_for_setup(
     ask = prompt_fn or input
     health = fetch_health(base_url)
     if health.ok:
-        if _builds_match(health):
+        if builds_match(health):
             if is_agent_installed():
                 return base_url, chosen
         else:
@@ -722,15 +832,14 @@ def _find_usable_local_port(start: int) -> int:
     raise ClientError(f"No free local port found between {MIN_LOCAL_PORT} and 65535")
 
 
-def _format_running_build(health: HealthStatus) -> str:
-    """Human-readable version/commit from a health probe."""
-    if health.version and health.commit:
-        return f"{health.version} ({health.commit})"
-    if health.version:
-        return health.version
-    if health.commit:
-        return f"commit {health.commit}"
-    return "unknown build"
+def build_query_from_args(args: tuple[str, ...]) -> str:
+    return " ".join(args).strip()
+
+
+def matching_keys(keys: list[str], prefix: str) -> list[str]:
+    """Return keys that start with ``prefix`` (case-insensitive)."""
+    needle = prefix.lower()
+    return [key for key in keys if key.lower().startswith(needle)]
 
 
 def _managed_local_port(pid_dir: Path) -> int | None:
@@ -761,9 +870,9 @@ def _offer_restart_mismatched_server(
     """
     local_version, local_commit = get_build_info()
     local_label = f"{local_version} ({local_commit})"
-    running_label = _format_running_build(health)
+    running_label = format_build_label(health)
     print_fn(theme.ok(f"✓ Port {port} is already serving Bunnify {running_label}"))
-    if _builds_match(health):
+    if builds_match(health):
         return port, False
     if health.version is None or health.commit is None:
         print_fn(
@@ -772,7 +881,7 @@ def _offer_restart_mismatched_server(
             )
         )
         prompt = f"Stop it and start {local_label} on port {port}? [y/N]: "
-    elif _cli_is_newer_than(health):
+    elif cli_is_newer_than(health):
         print_fn(theme.warn(f"That server is older than this CLI ({local_label})."))
         prompt = f"Stop {running_label} and start {local_label} on port {port}? [y/N]: "
     else:
@@ -901,7 +1010,7 @@ def _prompt_local_port(
             log(
                 colors.ok(
                     f"✓ Found healthy Bunnify on port {found} "
-                    f"({_format_running_build(found_health)})"
+                    f"({format_build_label(found_health)})"
                 )
             )
         return found
@@ -999,7 +1108,7 @@ def _restart_local_server_if_build_mismatch(
     """Reuse a healthy local server, or restart it when the CLI commit differs."""
     colors = theme if theme is not None else Theme(enabled=False)
     health = fetch_health(base_url)
-    if not health.ok or _builds_match(health):
+    if not health.ok or builds_match(health):
         return base_url, port
     decided = _offer_restart_mismatched_server(
         prompt_fn,
