@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.9.2...bunnify-v0.10.0) (2026-08-26)
+
+
+### Features
+
+* LaunchAgent for local server; confirm unreachable remote ([#360](https://github.com/the-hcma/bunnify/issues/360)) ([a6f46da](https://github.com/the-hcma/bunnify/commit/a6f46daedacb5151588362e1f7def01d0cd45190))
+
+
+### Bug Fixes
+
+* ignore GITHUB_SHA in installed-wheel packaging smoke ([#364](https://github.com/the-hcma/bunnify/issues/364)) ([4a279d0](https://github.com/the-hcma/bunnify/commit/4a279d06de3bf70c23489ce90d721c46ebcc21f0))
+
+
+### Documentation
+
+* align README and quick reference with server LaunchAgent ([#363](https://github.com/the-hcma/bunnify/issues/363)) ([5dabcc0](https://github.com/the-hcma/bunnify/commit/5dabcc044554a98b0193f6a58910e4207ccf46cd))
+
 ## [0.9.2](https://github.com/the-hcma/bunnify/compare/bunnify-v0.9.1...bunnify-v0.9.2) (2026-08-25)
 
 
