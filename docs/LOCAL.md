@@ -95,7 +95,7 @@ Then install the macOS extra and start the local server before the overlay agent
 ```bash
 # pipx
 pipx install 'bunnify[macos]'
-bunnify setup                      # local server + /health (interactive)
+bunnify setup                      # local server LaunchAgent + /health (interactive)
 # or manual server (see Manual local workflow below)
 
 spotty-bunny                     # foreground overlay
@@ -239,34 +239,53 @@ starts `spotty-bunny` in the background when it is not already running.
 
 ## macOS LaunchAgent
 
-The **server** agent is separate from Spotty Bunny.
+The **server** agent (`com.thehcma.bunnify`) is separate from Spotty Bunny
+(`com.thehcma.bunnify.spotty-bunny`). On macOS, **local** `bunnify setup` and
+`bunnify onboard` install the server LaunchAgent (KeepAlive + RunAtLoad) so the
+API comes back after login without a manual `bunnify-server`. Prefer the
+commands below over copying the example plist by hand:
 
-Copy `etc/launchd/com.thehcma.bunnify.plist.example` to
-`~/Library/LaunchAgents/com.thehcma.bunnify.plist`. Replace
-`__BUNNIFY_SERVER__` with the absolute path from `command -v bunnify-server`
-and `__HOME__` with your absolute home directory, then load it:
+```bash
+bunnify setup                      # local → server LaunchAgent + /health
+bunnify-server install --port 8000 # refresh / install server agent only
+bunnify-server status
+bunnify-server upgrade             # rewrite plist for the current binary
+bunnify stop                       # boot out the agent and stop the listener
+bunnify-server uninstall           # remove the LaunchAgent plist
+```
+
+`install` writes `~/Library/LaunchAgents/com.thehcma.bunnify.plist` from
+[`etc/launchd/com.thehcma.bunnify.plist.example`](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.plist.example)
+with **ProgramArguments** pointing at `bunnify-server --foreground
+--noninteractive --port … --pid-dir …/run/launchd`, then bootstraps it and waits
+for `/health`.
+
+On macOS setup, a healthy server whose build matches this CLI is **reused** only
+when the LaunchAgent plist is already installed; otherwise setup installs the
+agent so the server survives logout/reboot (legacy managed subprocesses are
+stopped first).
+
+For a **remote** base URL, setup and onboard do **not** install the server
+agent. They probe `/health`; if the host is unreachable they warn and ask
+whether to continue saving prefs / installing Spotty Bunny anyway.
+
+Prefer `bunnify spotty-bunny install` for the overlay agent. After
+`bunnify upgrade`, both LaunchAgents are refreshed automatically when
+installed (`bunnify-server upgrade` / `bunnify spotty-bunny upgrade` still
+work for a manual bounce). Manual `launchctl`
+(only if you need it):
 
 ```bash
 launchctl bootstrap "gui/$(id -u)" \
   ~/Library/LaunchAgents/com.thehcma.bunnify.plist
-launchctl kickstart -k "gui/$(id -u)/com.thehcma.bunnify"
-
-# Unload before editing or removing it:
 launchctl bootout "gui/$(id -u)/com.thehcma.bunnify"
-```
-
-The template runs the server in the foreground with `KeepAlive` enabled. Ensure
-`~/.config/bunnify/bookmarks.json` exists before loading the agent. Confirm that
-port 8000 is free unless you override `--port`.
-
-Prefer `bunnify spotty-bunny install` for the overlay agent instead of copying
-its example plist by hand. Manual `launchctl` for Spotty Bunny:
-
-```bash
 launchctl bootstrap "gui/$(id -u)" \
   ~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist
 launchctl bootout "gui/$(id -u)/com.thehcma.bunnify.spotty-bunny"
 ```
+
+Ensure `~/.config/bunnify/bookmarks.json` exists before loading the server agent.
+Confirm that the chosen port is free unless you override `--port`.
 
 ## Troubleshooting
 
@@ -277,7 +296,8 @@ launchctl bootout "gui/$(id -u)/com.thehcma.bunnify.spotty-bunny"
   ephemeral port. Noninteractive mode never kills an unrelated process.
 - Stale managed process: run the manual `--stop --pid-dir` command above and
   rerun setup.
-- Remote unreachable: the CLI does not switch to local automatically. Fix the
-  network/server or run `bunnify setup` and choose **local** (laptop) or a
-  healthy remote URL. Update Chrome’s search engine to the same
-  `BUNNIFY_BASE_URL` (see [CHROME_SETUP](../CHROME_SETUP.md)).
+- Remote unreachable: setup/onboard warn and ask for confirmation before saving
+  a remote URL or installing Spotty Bunny. The CLI does not switch to local
+  automatically. Fix the network/server or run `bunnify setup` and choose
+  **local** (laptop) or a healthy remote URL. Update Chrome’s search engine to
+  the same `BUNNIFY_BASE_URL` (see [CHROME_SETUP](../CHROME_SETUP.md)).

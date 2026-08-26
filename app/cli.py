@@ -8,6 +8,7 @@ import sys
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import click
 from packaging.version import InvalidVersion, Version
@@ -323,10 +324,13 @@ def run_setup(
         )
         while True:
             try:
-                base_url, actual_port = ensure_local_server(
+                base_url, actual_port = _ensure_local_server_for_setup(
                     port=preferred_port,
                     pid_dir=pid_dir,
                     bookmarks=bookmarks,
+                    print_fn=log,
+                    prompt_fn=ask,
+                    theme=colors,
                 )
             except (OSError, RuntimeError, ValueError) as exc:
                 if _retry_requested(
@@ -387,26 +391,44 @@ def run_setup(
             cli_value=answer.strip() or suggestion,
             persist=False,
         )
-        if check_health(base_url):
-            preferences = ServerPreferences(
-                mode="remote",
-                base_url=base_url,
-                local_port=None,
-            )
-            save_preferences(preferences, env_path=path, environ=environ)
+        reachable = check_health(base_url)
+        if not reachable:
+            log(colors.warn(f"Health check failed for {base_url}."))
+            if not _confirm_explicit_yes(
+                ask,
+                colors.warn(
+                    "The remote server is not reachable. Continue with this URL "
+                    "anyway? [y/N]: "
+                ),
+            ):
+                if not _retry_requested(
+                    ask,
+                    colors.warn(f"Health check failed for {base_url}.\n")
+                    + "Try another URL? [Y/n]: ",
+                ):
+                    raise ClientError("Setup aborted; settings were not changed")
+                continue
+        preferences = ServerPreferences(
+            mode="remote",
+            base_url=base_url,
+            local_port=None,
+        )
+        save_preferences(preferences, env_path=path, environ=environ)
+        if reachable:
             log(colors.ok(f"✓ Health check passed for {base_url}"))
             log(colors.ok(f"✓ Configured remote Bunnify server at {base_url}"))
-            log("")
-            log(colors.header("Browser"))
-            for line in format_browser_setup_text(base_url).splitlines():
-                log(line)
-            return base_url
-        if not _retry_requested(
-            ask,
-            colors.warn(f"Health check failed for {base_url}.\n")
-            + "Try another URL? [Y/n]: ",
-        ):
-            raise ClientError("Setup aborted; settings were not changed")
+        else:
+            log(
+                colors.warn(
+                    f"⚠ Configured remote Bunnify server at {base_url} "
+                    "(unreachable; continuing by confirmation)"
+                )
+            )
+        log("")
+        log(colors.header("Browser"))
+        for line in format_browser_setup_text(base_url).splitlines():
+            log(line)
+        return base_url
 
 
 def run_stop(
@@ -431,6 +453,36 @@ def run_stop(
     port = _managed_local_port(pid_dir)
     if port is None and preferences is not None:
         port = preferences.local_port
+    if sys.platform == "darwin":
+        from app.server_agent import (
+            bootout_loaded_agent,
+            is_agent_installed,
+            launchd_pid_dir,
+        )
+
+        if is_agent_installed():
+            bootout_loaded_agent()
+            agent_pid_dir = launchd_pid_dir(environ=environ)
+            if port is None:
+                port = _managed_local_port(agent_pid_dir)
+            log(colors.header("Stopping local Bunnify LaunchAgent"))
+            if port is not None:
+                base_url = f"http://127.0.0.1:{port}"
+                log(f"URL: {base_url}")
+                health = fetch_health(base_url)
+                if health.ok:
+                    log(f"Running build: {_format_running_build(health)}")
+            try:
+                stop_local_server(agent_pid_dir, port=port)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ClientError(
+                    f"Failed to stop the LaunchAgent-managed server: {exc}"
+                ) from exc
+            if port is not None:
+                log(colors.ok(f"Stopped local Bunnify at http://127.0.0.1:{port}"))
+            else:
+                log(colors.ok("Stopped local Bunnify LaunchAgent"))
+            return
     if port is None:
         raise ClientError(
             "No local Bunnify server is recorded. Start one with `bunnify setup`."
@@ -457,10 +509,17 @@ def run_upgrade(
     *,
     print_fn: Callable[[str], None] | None = None,
     pipx_bin: str | None = None,
+    refresh_launch_agents: bool | Literal["server"] = True,
     run_fn: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     theme: Theme | None = None,
 ) -> None:
-    """Upgrade the pipx install and report from/to versions with commits."""
+    """Upgrade the pipx install and report from/to versions with commits.
+
+    When *refresh_launch_agents* is True (CLI default), rewrite and bounce both
+    macOS LaunchAgents after a successful pipx upgrade. Pass ``\"server\"`` from
+    the Spotty Bunny overlay so only the server agent is bounced (the overlay
+    refreshes its own plist and quits for relaunch).
+    """
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
     package, commit = get_build_info()
@@ -535,6 +594,12 @@ def run_upgrade(
             "This process is still the checkout. Use the pipx path above "
             "(after `pipx ensurepath`) for the upgraded app."
         )
+    if refresh_launch_agents and sys.platform == "darwin":
+        _refresh_macos_launch_agents(
+            include_spotty=refresh_launch_agents is True,
+            print_fn=log,
+            theme=colors,
+        )
 
 
 def matching_keys(keys: list[str], prefix: str) -> list[str]:
@@ -578,6 +643,71 @@ def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool
     except EOFError:
         return False
     return answer.strip().lower() in {"y", "yes"}
+
+
+def _ensure_local_server_for_setup(
+    *,
+    port: int | None,
+    pid_dir: Path,
+    bookmarks: Path | None,
+    print_fn: Callable[[str], None],
+    prompt_fn: Callable[[str], str] | None = None,
+    theme: Theme | None = None,
+) -> tuple[str, int]:
+    """Start a healthy local server; on macOS prefer the login LaunchAgent."""
+    if sys.platform != "darwin":
+        return ensure_local_server(port=port, pid_dir=pid_dir, bookmarks=bookmarks)
+
+    from app.server_agent import install_agent, is_agent_installed, launchd_pid_dir
+
+    if port is None or port == 0:
+        chosen = _find_usable_local_port(MIN_LOCAL_PORT)
+    else:
+        chosen = port
+    base_url = f"http://127.0.0.1:{chosen}"
+    colors = theme if theme is not None else Theme(enabled=False)
+    ask = prompt_fn or input
+    health = fetch_health(base_url)
+    if health.ok:
+        if _builds_match(health):
+            if is_agent_installed():
+                return base_url, chosen
+        else:
+            decided = _offer_restart_mismatched_server(
+                ask,
+                port=chosen,
+                health=health,
+                pid_dir=pid_dir,
+                print_fn=print_fn,
+                theme=colors,
+            )
+            if decided is None:
+                raise RuntimeError(
+                    f"Could not stop the mismatched server on port {chosen}"
+                )
+            chosen, restart = decided
+            base_url = f"http://127.0.0.1:{chosen}"
+            if not restart:
+                return base_url, chosen
+
+    agent_pid_dir = launchd_pid_dir()
+    messages: list[str] = []
+
+    def capture(message: str) -> None:
+        messages.append(message)
+        print_fn(message)
+
+    code = install_agent(
+        bookmarks=bookmarks,
+        pid_dir=agent_pid_dir,
+        port=chosen,
+        print_err=capture,
+        timeout_s=60,
+    )
+    if code != 0:
+        detail = messages[-1] if messages else "LaunchAgent install failed"
+        raise RuntimeError(detail)
+    return base_url, chosen
 
 
 def _find_usable_local_port(start: int) -> int:
@@ -665,6 +795,11 @@ def _offer_restart_mismatched_server(
     if not _confirm_explicit_yes(prompt_fn, prompt):
         print_fn(theme.dim(f"Reusing the running server ({running_label})."))
         return port, False
+    if sys.platform == "darwin":
+        from app.server_agent import bootout_loaded_agent, is_agent_installed
+
+        if is_agent_installed():
+            bootout_loaded_agent()
     try:
         stop_local_server(
             pid_dir,
@@ -789,6 +924,60 @@ def _read_executable_build(executable: Path) -> str | None:
     return _parse_version_line(completed.stdout or "")
 
 
+def _refresh_macos_launch_agents(
+    *,
+    include_spotty: bool,
+    print_fn: Callable[[str], None],
+    theme: Theme,
+) -> None:
+    """Rewrite and bounce installed LaunchAgents after a local pipx upgrade."""
+    from app.server_agent import (
+        is_agent_installed as server_agent_installed,
+    )
+    from app.server_agent import (
+        upgrade_agent as upgrade_server_agent,
+    )
+
+    if server_agent_installed():
+        print_fn(theme.dim("Refreshing Bunnify server LaunchAgent…"))
+        code = upgrade_server_agent(
+            print_err=print_fn,
+            timeout_s=60,
+        )
+        if code == 0:
+            print_fn(theme.ok("✓ Bunnify server LaunchAgent refreshed"))
+        else:
+            print_fn(
+                theme.warn(
+                    "Server LaunchAgent refresh failed; run: bunnify-server upgrade"
+                )
+            )
+    if not include_spotty:
+        return
+    from app.spotty_bunny_agent import (
+        is_agent_installed as spotty_agent_installed,
+    )
+    from app.spotty_bunny_agent import (
+        upgrade_agent as upgrade_spotty_agent,
+    )
+
+    if spotty_agent_installed():
+        print_fn(theme.dim("Refreshing Spotty Bunny LaunchAgent…"))
+        code = upgrade_spotty_agent(
+            print_err=print_fn,
+            skip_chord_confirm=True,
+        )
+        if code == 0:
+            print_fn(theme.ok("✓ Spotty Bunny LaunchAgent refreshed"))
+        else:
+            print_fn(
+                theme.warn(
+                    "Spotty Bunny LaunchAgent refresh failed; "
+                    "run: bunnify spotty-bunny upgrade"
+                )
+            )
+
+
 def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
     try:
         answer = prompt_fn(message)
@@ -827,6 +1016,35 @@ def _restart_local_server_if_build_mismatch(
     chosen, restart = decided
     if not restart:
         return base_url, port
+    # After an explicit restart confirmation, start this CLI's build without
+    # re-entering the mismatch prompt (health may still report the old build
+    # until the replacement process is up).
+    if sys.platform == "darwin":
+        from app.server_agent import (
+            install_agent,
+            is_agent_installed,
+            launchd_pid_dir,
+        )
+
+        if is_agent_installed():
+            agent_pid_dir = launchd_pid_dir()
+            messages: list[str] = []
+
+            def capture(message: str) -> None:
+                messages.append(message)
+                print_fn(message)
+
+            code = install_agent(
+                bookmarks=bookmarks,
+                pid_dir=agent_pid_dir,
+                port=chosen,
+                print_err=capture,
+                timeout_s=60,
+            )
+            if code != 0:
+                detail = messages[-1] if messages else "LaunchAgent install failed"
+                raise RuntimeError(detail)
+            return f"http://127.0.0.1:{chosen}", chosen
     started_url, started_port = ensure_local_server(
         port=chosen,
         pid_dir=pid_dir,

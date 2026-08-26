@@ -870,7 +870,13 @@ class SpottyBunnyController(NSObject):
     def _perform_upgrade(self) -> None:
         from app.cli import run_upgrade
 
-        run_upgrade(print_fn=lambda message: logger.info("%s", message))
+        # Bounce only the server agent here; bouncing Spotty from inside the
+        # overlay would kill this process mid-upgrade. Plist refresh + quit
+        # lets launchd relaunch Spotty with the new binary.
+        run_upgrade(
+            print_fn=lambda message: logger.info("%s", message),
+            refresh_launch_agents="server",
+        )
         if refresh_agent_plist() != 0:
             raise RuntimeError("LaunchAgent plist refresh failed")
 

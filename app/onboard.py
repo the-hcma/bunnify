@@ -34,6 +34,7 @@ class InstallState:
     pipx_version_label: str | None
     preferences_ready: bool
     pypi_latest: str | None
+    server_agent_installed: bool
     source_checkout: bool
     spotty_agent_installed: bool
     upgrade_available: bool
@@ -55,10 +56,13 @@ def detect_install_state(
     bookmarks = default_bookmarks_path()
     preferences = load_preferences()
     spotty_installed = False
+    server_installed = False
     if sys.platform == "darwin":
-        from app.spotty_bunny_agent import is_agent_installed
+        from app.server_agent import is_agent_installed as server_agent_installed
+        from app.spotty_bunny_agent import is_agent_installed as spotty_agent_installed
 
-        spotty_installed = is_agent_installed()
+        spotty_installed = spotty_agent_installed()
+        server_installed = server_agent_installed()
     return InstallState(
         bookmarks_ready=bookmarks.is_file(),
         command_path=command_path,
@@ -68,6 +72,7 @@ def detect_install_state(
         pipx_version_label=pipx_label,
         preferences_ready=preferences is not None,
         pypi_latest=pypi_latest,
+        server_agent_installed=server_installed,
         source_checkout=is_source_checkout(),
         spotty_agent_installed=spotty_installed,
         upgrade_available=upgrade_available,
@@ -209,30 +214,104 @@ def run_onboard(
                 log(colors.warn("pipx install --force 'bunnify[macos]' failed."))
 
     if interactive and state.macos_platform and state.macos_extra:
-        prompt = (
-            "Install or refresh Spotty Bunny (LaunchAgent + Control chord test)? "
-            "[y/N]: "
-        )
-        if not state.spotty_agent_installed or yes(ask, colors.brand(prompt)):
-            from app.spotty_bunny_agent import install_agent
+        preferences = load_preferences()
+        installed_local_port: int | None = None
+        if preferences is not None and preferences.mode == "local":
+            if not state.server_agent_installed or yes(
+                ask,
+                colors.brand(
+                    "Install or refresh the local Bunnify server LaunchAgent? [y/N]: "
+                ),
+            ):
+                from app.server_agent import install_agent as install_server_agent
 
-            code = install_agent(print_err=lambda message: log(message), prompt_fn=ask)
-            if code == 0:
-                log(
-                    colors.ok(
-                        "✓ Spotty Bunny is installed and the Control chord works."
-                    )
+                port = preferences.local_port or 8000
+                code = install_server_agent(
+                    port=port,
+                    print_err=lambda message: log(message),
                 )
-                state = detect_install_state(read_executable_build=reader)
-            else:
-                log(
-                    colors.warn(
-                        "Spotty Bunny install did not finish; see messages above."
+                if code == 0:
+                    installed_local_port = port
+                    log(colors.ok("✓ Local Bunnify server LaunchAgent is installed."))
+                    state = detect_install_state(read_executable_build=reader)
+                else:
+                    log(
+                        colors.warn(
+                            "Server LaunchAgent install did not finish; "
+                            "see messages above."
+                        )
                     )
+        reachability = preferences
+        if installed_local_port is not None:
+            from app.config import ServerPreferences
+
+            reachability = ServerPreferences(
+                mode="local",
+                base_url=f"http://127.0.0.1:{installed_local_port}",
+                local_port=installed_local_port,
+            )
+        if not _confirm_server_reachable_for_install(
+            reachability,
+            ask=ask,
+            log=log,
+            colors=colors,
+            yes=yes,
+        ):
+            log(colors.warn("Skipping Spotty Bunny install (server not confirmed)."))
+        else:
+            prompt = (
+                "Install or refresh Spotty Bunny (LaunchAgent + Control chord test)? "
+                "[y/N]: "
+            )
+            if not state.spotty_agent_installed or yes(ask, colors.brand(prompt)):
+                from app.spotty_bunny_agent import install_agent
+
+                code = install_agent(
+                    print_err=lambda message: log(message), prompt_fn=ask
                 )
+                if code == 0:
+                    log(
+                        colors.ok(
+                            "✓ Spotty Bunny is installed and the Control chord works."
+                        )
+                    )
+                    state = detect_install_state(read_executable_build=reader)
+                else:
+                    log(
+                        colors.warn(
+                            "Spotty Bunny install did not finish; see messages above."
+                        )
+                    )
 
     log("")
     log(format_onboarding_text(state))
+
+
+def _confirm_server_reachable_for_install(
+    preferences: object | None,
+    *,
+    ask: Callable[[str], str],
+    log: Callable[[str], None],
+    colors: Theme,
+    yes: Callable[[Callable[[str], str], str], bool],
+) -> bool:
+    """Return True when healthy, or when the user confirms continuing anyway."""
+    from app.client import check_health
+    from app.config import ServerPreferences
+
+    if preferences is None or not isinstance(preferences, ServerPreferences):
+        return True
+    base_url = preferences.base_url
+    if not base_url:
+        return True
+    if check_health(base_url):
+        return True
+    kind = "Remote" if preferences.mode == "remote" else "Local"
+    log(colors.warn(f"{kind} Bunnify at {base_url} is not reachable."))
+    return yes(
+        ask,
+        colors.warn("Continue installing Spotty Bunny anyway? [y/N]: "),
+    )
 
 
 def _format_install_summary(state: InstallState) -> list[str]:
@@ -257,6 +336,10 @@ def _format_install_summary(state: InstallState) -> list[str]:
     if state.macos_platform:
         extra = "installed" if state.macos_extra else "not installed"
         lines.append(f"macOS Spotty Bunny dependencies (PyObjC): {extra}")
+        if state.server_agent_installed:
+            lines.append("Bunnify server LaunchAgent: installed")
+        else:
+            lines.append("Bunnify server LaunchAgent: not installed")
         if state.spotty_agent_installed:
             lines.append("Spotty Bunny LaunchAgent: installed")
         else:
@@ -270,6 +353,7 @@ def _format_spotty_bunny_section(state: InstallState, step: int) -> list[str]:
             f"{step}. macOS Spotty Bunny (optional search box): installed",
             "     bunnify spotty-bunny status",
             "     bunnify upgrade && bunnify spotty-bunny upgrade",
+            "     # (`bunnify upgrade` also refreshes both LaunchAgents)",
             "     bunnify spotty-bunny uninstall",
             "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
             "",
