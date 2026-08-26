@@ -2293,6 +2293,7 @@ class ConfigUnitTests(TestCase):
             "",
         )
         with (
+            patch("app.cli.sys.platform", "darwin"),
             patch("app.cli.is_source_checkout", return_value=True),
             patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
             patch("app.cli.macos_extra_installed", return_value=False),
