@@ -434,7 +434,10 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             }
             with (
                 patch("app.spotty_bunny_about_info.fetch_health", return_value=health),
-                patch("app.spotty_bunny_about_info.builds_match", return_value=False),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
             ):
                 info = load_about_runtime_info(
                     environ=env,
@@ -442,6 +445,36 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                 )
             self.assertTrue(info.server_skewed)
             self.assertEqual(info.server_build_label, "0.9.0 (oldoldoldold)")
+
+    def test_load_about_runtime_info_no_skew_when_builds_match(self) -> None:
+        from unittest.mock import patch
+
+        from app.client import HealthStatus
+        from app.spotty_bunny_about_info import load_about_runtime_info
+
+        health = HealthStatus(ok=True, version="0.10.0", commit="newnewnewnew")
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            env = {
+                "BUNNIFY_BASE_URL": "http://127.0.0.1:8000",
+                "BUNNIFY_BOOKMARKS": str(bookmarks),
+                "BUNNIFY_MODE": "local",
+                "XDG_CONFIG_HOME": str(root / "cfg"),
+            }
+            with (
+                patch("app.spotty_bunny_about_info.fetch_health", return_value=health),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+            ):
+                info = load_about_runtime_info(
+                    environ=env,
+                    origin_url_for=lambda _workdir: None,
+                )
+            self.assertFalse(info.server_skewed)
 
     def test_load_about_runtime_info_remote_server_and_github(self) -> None:
         from app.spotty_bunny_about_info import load_about_runtime_info
