@@ -44,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="bunnify-server",
         description=(
             "Start the Bunnify Django server and reload bookmarks when their "
-            "JSON file changes."
+            "JSON file changes. Subcommands: install, uninstall, status, "
+            "upgrade (macOS login LaunchAgent)."
         ),
     )
     parser.add_argument(
@@ -131,7 +132,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the installed server command."""
-    options = _parse_options(argv)
+    args = list(argv) if argv is not None else sys.argv[1:]
+    if args:
+        from app.server_agent import AGENT_COMMANDS, run_agent_command
+
+        if args[0] in AGENT_COMMANDS:
+            return run_agent_command(args[0], args[1:])
+    options = _parse_options(args)
     options.pid_dir.mkdir(parents=True, exist_ok=True)
     if options.stop:
         return _stop_managed_server(

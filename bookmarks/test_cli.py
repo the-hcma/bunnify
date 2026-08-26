@@ -1518,7 +1518,7 @@ class ConfigUnitTests(TestCase):
                 local_port=None,
             )
             save_preferences(original, env_path=path)
-            responses = iter(["remote", "https://broken.example", "n"])
+            responses = iter(["remote", "https://broken.example", "n", "n"])
             with patch("app.cli.check_health", return_value=False):
                 with self.assertRaises(ClientError):
                     run_setup(
@@ -1528,6 +1528,30 @@ class ConfigUnitTests(TestCase):
                     )
 
             self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_remote_unreachable_continues_when_confirmed(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            responses = iter(["remote", "https://broken.example", "y"])
+            with patch("app.cli.check_health", return_value=False):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "https://broken.example")
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            self.assertEqual(preferences.base_url, "https://broken.example")
 
     def test_setup_local_persists_only_after_health(self) -> None:
         import tempfile
@@ -1545,7 +1569,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8123", 8123),
                 ) as ensure_server,
                 patch("app.cli.fetch_health", return_value=healthy),
@@ -1604,7 +1628,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     side_effect=[
                         RuntimeError("port unavailable"),
                         ("http://127.0.0.1:9123", 9123),
@@ -1645,7 +1669,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8765", 8765),
                 ) as ensure_server,
                 patch("app.cli.fetch_health", return_value=_healthy_status()),
@@ -1685,7 +1709,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8001", 8001),
                 ) as ensure_server,
                 patch(
@@ -1734,7 +1758,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8001", 8001),
                 ) as ensure_server,
                 patch(
@@ -1775,7 +1799,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8000", 8000),
                 ) as ensure_server,
                 patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
@@ -1826,7 +1850,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8000", 8000),
                 ) as ensure_server,
                 patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
@@ -1921,7 +1945,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8000", 8000),
                 ) as ensure_server,
                 patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
@@ -1965,7 +1989,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8000", 8000),
                 ) as ensure_server,
                 patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
@@ -2022,7 +2046,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8000", 8000),
                 ),
                 patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
@@ -2068,7 +2092,7 @@ class ConfigUnitTests(TestCase):
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
-                    "app.cli.ensure_local_server",
+                    "app.cli._ensure_local_server_for_setup",
                     return_value=("http://127.0.0.1:8000", 8000),
                 ) as ensure_server,
                 patch("app.cli.fetch_health", return_value=_healthy_status()),
@@ -2226,6 +2250,7 @@ class ConfigUnitTests(TestCase):
             pipx_version_label="0.8.3 (abc12345)",
             preferences_ready=False,
             pypi_latest="0.8.3",
+            server_agent_installed=False,
             source_checkout=False,
             spotty_agent_installed=False,
             upgrade_available=False,

@@ -323,10 +323,11 @@ def run_setup(
         )
         while True:
             try:
-                base_url, actual_port = ensure_local_server(
+                base_url, actual_port = _ensure_local_server_for_setup(
                     port=preferred_port,
                     pid_dir=pid_dir,
                     bookmarks=bookmarks,
+                    print_fn=log,
                 )
             except (OSError, RuntimeError, ValueError) as exc:
                 if _retry_requested(
@@ -387,26 +388,44 @@ def run_setup(
             cli_value=answer.strip() or suggestion,
             persist=False,
         )
-        if check_health(base_url):
-            preferences = ServerPreferences(
-                mode="remote",
-                base_url=base_url,
-                local_port=None,
-            )
-            save_preferences(preferences, env_path=path, environ=environ)
+        reachable = check_health(base_url)
+        if not reachable:
+            log(colors.warn(f"Health check failed for {base_url}."))
+            if not _confirm_explicit_yes(
+                ask,
+                colors.warn(
+                    "The remote server is not reachable. Continue with this URL "
+                    "anyway? [y/N]: "
+                ),
+            ):
+                if not _retry_requested(
+                    ask,
+                    colors.warn(f"Health check failed for {base_url}.\n")
+                    + "Try another URL? [Y/n]: ",
+                ):
+                    raise ClientError("Setup aborted; settings were not changed")
+                continue
+        preferences = ServerPreferences(
+            mode="remote",
+            base_url=base_url,
+            local_port=None,
+        )
+        save_preferences(preferences, env_path=path, environ=environ)
+        if reachable:
             log(colors.ok(f"✓ Health check passed for {base_url}"))
             log(colors.ok(f"✓ Configured remote Bunnify server at {base_url}"))
-            log("")
-            log(colors.header("Browser"))
-            for line in format_browser_setup_text(base_url).splitlines():
-                log(line)
-            return base_url
-        if not _retry_requested(
-            ask,
-            colors.warn(f"Health check failed for {base_url}.\n")
-            + "Try another URL? [Y/n]: ",
-        ):
-            raise ClientError("Setup aborted; settings were not changed")
+        else:
+            log(
+                colors.warn(
+                    f"⚠ Configured remote Bunnify server at {base_url} "
+                    "(unreachable; continuing by confirmation)"
+                )
+            )
+        log("")
+        log(colors.header("Browser"))
+        for line in format_browser_setup_text(base_url).splitlines():
+            log(line)
+        return base_url
 
 
 def run_stop(
@@ -431,6 +450,34 @@ def run_stop(
     port = _managed_local_port(pid_dir)
     if port is None and preferences is not None:
         port = preferences.local_port
+    if sys.platform == "darwin":
+        from app.server_agent import (
+            bootout_loaded_agent,
+            is_agent_installed,
+            launchd_pid_dir,
+        )
+
+        if is_agent_installed():
+            bootout_loaded_agent()
+            agent_pid_dir = launchd_pid_dir(environ=environ)
+            if port is None:
+                port = _managed_local_port(agent_pid_dir)
+            log(colors.header("Stopping local Bunnify LaunchAgent"))
+            if port is not None:
+                base_url = f"http://127.0.0.1:{port}"
+                log(f"URL: {base_url}")
+                health = fetch_health(base_url)
+                if health.ok:
+                    log(f"Running build: {_format_running_build(health)}")
+            try:
+                stop_local_server(agent_pid_dir, port=port)
+            except OSError, RuntimeError, ValueError:
+                pass
+            if port is not None:
+                log(colors.ok(f"Stopped local Bunnify at http://127.0.0.1:{port}"))
+            else:
+                log(colors.ok("Stopped local Bunnify LaunchAgent"))
+            return
     if port is None:
         raise ClientError(
             "No local Bunnify server is recorded. Start one with `bunnify setup`."
@@ -578,6 +625,43 @@ def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool
     except EOFError:
         return False
     return answer.strip().lower() in {"y", "yes"}
+
+
+def _ensure_local_server_for_setup(
+    *,
+    port: int | None,
+    pid_dir: Path,
+    bookmarks: Path | None,
+    print_fn: Callable[[str], None],
+) -> tuple[str, int]:
+    """Start a healthy local server; on macOS prefer the login LaunchAgent."""
+    if sys.platform != "darwin":
+        return ensure_local_server(port=port, pid_dir=pid_dir, bookmarks=bookmarks)
+
+    from app.server_agent import install_agent, launchd_pid_dir
+
+    if port is None or port == 0:
+        chosen = _find_usable_local_port(MIN_LOCAL_PORT)
+    else:
+        chosen = port
+    agent_pid_dir = launchd_pid_dir()
+    messages: list[str] = []
+
+    def capture(message: str) -> None:
+        messages.append(message)
+        print_fn(message)
+
+    code = install_agent(
+        bookmarks=bookmarks,
+        pid_dir=agent_pid_dir,
+        port=chosen,
+        print_err=capture,
+        timeout_s=60,
+    )
+    if code != 0:
+        detail = messages[-1] if messages else "LaunchAgent install failed"
+        raise RuntimeError(detail)
+    return f"http://127.0.0.1:{chosen}", chosen
 
 
 def _find_usable_local_port(start: int) -> int:
