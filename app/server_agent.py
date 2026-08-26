@@ -112,31 +112,27 @@ def install_agent(
     if bookmarks is not None:
         argv.extend(["--bookmarks", str(bookmarks.expanduser().resolve())])
     base_url = f"http://127.0.0.1:{port}"
+    if (
+        not port_is_free(port)
+        and check_health(base_url)
+        and not _port_served_by_pid_dir(port, agent_pid_dir)
+        and not _port_served_by_pid_dir(port, run_dir())
+    ):
+        err(
+            f"{COMMAND_NAME}: port {port} is held by another Bunnify server "
+            f"(not managed under {run_dir()} or {agent_pid_dir})."
+        )
+        return 1
     # Stop a non-launchd managed server that may still hold the port.
     try:
         stop_local_server(run_dir(), port=port, port_timeout_s=5)
     except OSError, RuntimeError, ValueError:
         pass
-    if not port_is_free(port):
+    if _port_served_by_pid_dir(port, agent_pid_dir):
         try:
-            stop_local_server(
-                agent_pid_dir,
-                port=port,
-                port_timeout_s=5,
-                replace_foreign_bunnify=True,
-            )
+            stop_local_server(agent_pid_dir, port=port, port_timeout_s=5)
         except OSError, RuntimeError, ValueError:
             pass
-    if (
-        not port_is_free(port)
-        and check_health(base_url)
-        and not _port_served_by_pid_dir(port, agent_pid_dir)
-    ):
-        err(
-            f"{COMMAND_NAME}: port {port} is held by another Bunnify server "
-            f"(not managed under {agent_pid_dir})."
-        )
-        return 1
     plist = agent_plist_path(home=root)
     _write_plist(plist, home=root, program_arguments=argv)
     if not _reload_agent(plist, launchctl=launchctl, pid_dir=agent_pid_dir):
@@ -350,8 +346,12 @@ def upgrade_agent(
         chosen_port = _port_from_argv(_plist_program_arguments(plist))
     if chosen_port is None:
         chosen_port = DEFAULT_PORT
+    plist_argv = _plist_program_arguments(plist)
+    chosen_bookmarks = bookmarks
+    if chosen_bookmarks is None:
+        chosen_bookmarks = _bookmarks_from_argv(plist_argv)
     return install_agent(
-        bookmarks=bookmarks,
+        bookmarks=chosen_bookmarks,
         home=root,
         launchctl=launchctl,
         pid_dir=pid_dir,
@@ -367,6 +367,15 @@ def upgrade_agent(
 class _InstallOptions:
     bookmarks: Path | None
     port: int
+
+
+def _bookmarks_from_argv(argv: Sequence[str] | None) -> Path | None:
+    if not argv:
+        return None
+    for index, part in enumerate(argv):
+        if part == "--bookmarks" and index + 1 < len(argv):
+            return Path(argv[index + 1])
+    return None
 
 
 def _bootstrap_agent(

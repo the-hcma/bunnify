@@ -205,6 +205,48 @@ class ServerAgentTests(SimpleTestCase):
             self.assertFalse(plist.exists())
             self.assertIn("another Bunnify server", stderr.getvalue())
 
+    def test_upgrade_agent_preserves_port_and_bookmarks(self) -> None:
+        from app.server_agent import AGENT_LABEL, format_agent_plist, upgrade_agent
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            bookmarks = home / "custom" / "bookmarks.json"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[
+                        str(program),
+                        "--foreground",
+                        "--noninteractive",
+                        "--port",
+                        "8123",
+                        "--pid-dir",
+                        str(pid_dir),
+                        "--bookmarks",
+                        str(bookmarks),
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            with patch("app.server_agent.install_agent", return_value=0) as install:
+                code = upgrade_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                )
+            self.assertEqual(code, 0)
+            install.assert_called_once()
+            self.assertEqual(install.call_args.kwargs["port"], 8123)
+            self.assertEqual(install.call_args.kwargs["bookmarks"], bookmarks)
+
     def test_server_cli_dispatches_install(self) -> None:
         from app.server_cli import main
 
