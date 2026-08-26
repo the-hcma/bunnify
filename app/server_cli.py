@@ -160,7 +160,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-_PYTHON_EXECUTABLE_RE = re.compile(r"^(?:python|pypy)[0-9.]*(?:\.exe)?$", re.IGNORECASE)
+# Trailing ``[dt]`` covers ABI-flagged builds (``python3.14t`` free-threaded,
+# ``python3.14d`` debug), which uv and python.org ship for the versions we target.
+_PYTHON_EXECUTABLE_RE = re.compile(
+    r"^(?:python|pypy)[0-9.]*[dt]*(?:\.exe)?$", re.IGNORECASE
+)
 
 _PYTHON_OPTIONS_WITH_VALUE = frozenset({"--check-hash-based-pycs", "-W", "-X"})
 

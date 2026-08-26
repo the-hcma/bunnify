@@ -593,6 +593,16 @@ LAUNCHAGENT_COMMAND = (
 
 
 class ServerProcessTests(SimpleTestCase):
+    def test_accepts_abi_flagged_interpreters(self) -> None:
+        for interpreter in ("python3.14t", "python3.14d", "python3.14td", "pypy3"):
+            with self.subTest(interpreter=interpreter):
+                self.assertTrue(
+                    _is_bunnify_command(
+                        f"/tmp/venv/bin/{interpreter} -E "
+                        "/tmp/venv/bin/bunnify-server --port 8000"
+                    )
+                )
+
     def test_accepts_bare_console_script(self) -> None:
         self.assertTrue(_is_bunnify_command("bunnify-server --port 8000"))
 
