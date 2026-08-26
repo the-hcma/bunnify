@@ -23,8 +23,8 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 bunnify                         # interactive REPL
 bunnify onboard                 # post-install / upgrade checklist
 bunnify setup                   # configure local or remote server
-bunnify stop                    # stop the managed local server
-bunnify upgrade                 # preferred: pipx upgrade; prints from/to versions
+bunnify stop                    # stop server (macOS: boot out server LaunchAgent)
+bunnify upgrade                 # pipx upgrade; macOS refreshes LaunchAgents
 bunnify --version               # package version, commit, and install path
 bunnify gh                      # open a shortcut (example key from bunnify.json.example)
 bunnify bun                     # Bunnify source on GitHub
@@ -36,7 +36,7 @@ bunnify spotty-bunny            # macOS search box (requires extra macos)
 bunnify spotty-bunny --verbose  # DEBUG logs on stderr and log file
 bunnify spotty-bunny install    # login LaunchAgent (TCC + KeepAlive)
 bunnify spotty-bunny status     # process, launchd, logs, TCC
-bunnify spotty-bunny upgrade    # refresh agent after `bunnify upgrade`
+bunnify spotty-bunny upgrade    # manual Spotty plist bounce (optional on macOS)
 bunnify spotty-bunny uninstall
 ```
 
@@ -47,7 +47,7 @@ Requires `pipx install 'bunnify[macos]'`. Hold one Control, tap the other.
 ```bash
 bunnify spotty-bunny install     # login LaunchAgent (TCC + KeepAlive)
 bunnify spotty-bunny status
-bunnify upgrade && bunnify spotty-bunny upgrade
+bunnify upgrade                  # refreshes both LaunchAgents on macOS
 bunnify spotty-bunny uninstall
 spotty-bunny                     # foreground (debug)
 ```
@@ -62,13 +62,21 @@ Details: [docs/LOCAL.md](docs/LOCAL.md)
 ## Server
 
 ```bash
-bunnify stop                    # stop the managed local server (local mode)
+bunnify stop                         # local mode; macOS boots out server agent
+bunnify-server install --port 8000   # macOS: server LaunchAgent only
+bunnify-server status
+bunnify-server upgrade
+bunnify-server uninstall
 bunnify-server --help
-bunnify-server --foreground --noninteractive --port 8000   # foreground (systemd/debug)
+bunnify-server --foreground --noninteractive --port 8000   # foreground (debug)
 bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run
 bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 curl -sf "$(grep '^BUNNIFY_BASE_URL=' ~/.config/bunnify/config.env | cut -d= -f2-)/health"
 ```
+
+On macOS, **local** `bunnify setup` installs the server LaunchAgent; Linux and
+manual installs use the managed `--pid-dir` path above. Details:
+[docs/LOCAL.md](docs/LOCAL.md).
 
 Development checkout: prefix with `./scripts/` (e.g. `./scripts/bunnify-server`).
 
@@ -96,7 +104,7 @@ Full guide: [CHROME_SETUP.md](CHROME_SETUP.md)
 |------|---------|
 | `~/.config/bunnify/bookmarks.json` | Shortcuts |
 | `~/.config/bunnify/config.env` | Mode, base URL, port |
-| `~/.local/share/bunnify/` | DB, logs, managed run state |
+| `~/.local/share/bunnify/` | DB, logs, managed run state (`run/`, `run/launchd/` on macOS LaunchAgent) |
 
 More: [docs/CONFIG.md](docs/CONFIG.md), [docs/LOCAL.md](docs/LOCAL.md)
 
