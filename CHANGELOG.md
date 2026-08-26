@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.10.0...bunnify-v0.11.0) (2026-08-26)
+
+
+### Features
+
+* unified version coherence for local and remote installs ([#366](https://github.com/the-hcma/bunnify/issues/366)) ([9063b3f](https://github.com/the-hcma/bunnify/commit/9063b3f6bebbccc29088649c27276f766f222c36))
+
 ## [0.10.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.9.2...bunnify-v0.10.0) (2026-08-26)
 
 
