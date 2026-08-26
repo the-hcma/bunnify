@@ -67,9 +67,12 @@ class ServerAgentTests(SimpleTestCase):
             stderr = StringIO()
             with (
                 patch("app.server_agent.stop_local_server"),
-                patch("app.server_agent.port_is_free", return_value=True),
+                patch("app.server_agent.port_is_free", return_value=False),
                 patch("app.server_agent.check_health", return_value=True),
-                patch("app.server_agent._port_served_by_pid_dir", return_value=True),
+                patch(
+                    "app.server_agent._port_served_by_pid_dir",
+                    side_effect=lambda port, pid_dir: pid_dir.name == "launchd",
+                ),
             ):
                 code = install_agent(
                     home=home,
@@ -246,6 +249,92 @@ class ServerAgentTests(SimpleTestCase):
             install.assert_called_once()
             self.assertEqual(install.call_args.kwargs["port"], 8123)
             self.assertEqual(install.call_args.kwargs["bookmarks"], bookmarks)
+
+    def test_upgrade_agent_unescapes_xml_entities_in_plist(self) -> None:
+        from app.server_agent import AGENT_LABEL, format_agent_plist, upgrade_agent
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "Smith&Co" / "run" / "launchd"
+            bookmarks = home / "Smith&Co" / "bookmarks.json"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[
+                        str(program),
+                        "--foreground",
+                        "--noninteractive",
+                        "--port",
+                        "8123",
+                        "--pid-dir",
+                        str(pid_dir),
+                        "--bookmarks",
+                        str(bookmarks),
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            with patch("app.server_agent.install_agent", return_value=0) as install:
+                code = upgrade_agent(
+                    home=home,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(install.call_args.kwargs["bookmarks"], bookmarks)
+            self.assertEqual(install.call_args.kwargs["pid_dir"], None)
+            self.assertEqual(
+                install.call_args.kwargs["port"],
+                8123,
+            )
+            self.assertEqual(
+                str(install.call_args.kwargs["bookmarks"]),
+                str(bookmarks),
+            )
+
+    def test_status_agent_reports_loaded_healthy(self) -> None:
+        from app.server_agent import AGENT_LABEL, format_agent_plist, status_agent
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bunnify-server"
+            _write_executable(program)
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[
+                        str(program),
+                        "--foreground",
+                        "--noninteractive",
+                        "--port",
+                        "8123",
+                        "--pid-dir",
+                        str(home / "run" / "launchd"),
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            stdout = StringIO()
+            with patch("app.server_agent.check_health", return_value=True):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_fn=stdout.write,
+                )
+            self.assertEqual(code, 0)
+            output = stdout.getvalue()
+            self.assertIn("healthy: yes", output)
+            self.assertIn("launchd: loaded", output)
+            self.assertIn("url: http://127.0.0.1:8123", output)
 
     def test_server_cli_dispatches_install(self) -> None:
         from app.server_cli import main

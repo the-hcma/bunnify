@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -489,7 +490,7 @@ def _plist_program_arguments(plist: Path) -> list[str] | None:
         close_tag = body.find("</string>", open_tag)
         if close_tag < 0:
             break
-        args.append(body[open_tag + len("<string>") : close_tag])
+        args.append(unescape(body[open_tag + len("<string>") : close_tag]))
         body = body[close_tag + len("</string>") :]
     return args or None
 
