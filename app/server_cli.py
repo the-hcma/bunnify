@@ -18,6 +18,12 @@ from pathlib import Path
 
 from app.client import check_health
 from app.config import data_dir, ensure_user_bookmarks, run_dir
+from app.process_marker import (
+    BUILD_MARKER_FLAG,
+    SERVER_COMPONENT,
+    build_marker_arguments,
+    marker_from_arguments,
+)
 from app.version import build_version
 
 LOG_LEVELS = ("CRITICAL", "DEBUG", "ERROR", "INFO", "WARNING")
@@ -54,6 +60,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--bookmarks",
         type=Path,
         help="Bookmarks JSON file (default: XDG config bookmarks.json).",
+    )
+    # Stamped by the launcher so `ps` identifies this process and its build.
+    # Carries no behaviour, so it stays out of --help.
+    parser.add_argument(
+        BUILD_MARKER_FLAG,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--console",
@@ -178,6 +191,7 @@ def _background_command(
         sys.executable,
         "-m",
         "app.server_cli",
+        *build_marker_arguments(SERVER_COMPONENT),
         "--bookmarks",
         str(bookmarks),
         "--foreground",
@@ -253,13 +267,21 @@ def _initialize_database(*, bookmarks: Path, noninteractive: bool) -> None:
 
 
 def _is_bunnify_command(command: str) -> bool:
-    """Return whether a ``ps`` command line belongs to a Bunnify server."""
+    """Return whether a ``ps`` command line belongs to a Bunnify server.
+
+    A build marker is authoritative when present. Processes started by builds
+    that predate the marker are still matched on their argv shape.
+    """
     try:
         arguments = shlex.split(command)
     except ValueError:
         return False
     if not arguments:
         return False
+
+    marker = marker_from_arguments(arguments)
+    if marker is not None:
+        return marker.component == SERVER_COMPONENT
 
     if Path(arguments[0]).name == "bunnify-server":
         return True

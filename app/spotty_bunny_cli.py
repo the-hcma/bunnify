@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from app.config import data_dir
+from app.process_marker import BUILD_MARKER_FLAG
 from app.spotty_bunny_launch import clear_spotty_bunny_pid, write_spotty_bunny_pid
 from app.version import build_version
 
@@ -58,6 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
             "press the other to show it. Subcommands: install, uninstall, "
             "status, upgrade (login LaunchAgent). Bare invocation is foreground."
         ),
+    )
+    # Stamped by the launcher so `ps` identifies this process and its build.
+    # Carries no behaviour, so it stays out of --help.
+    parser.add_argument(
+        BUILD_MARKER_FLAG,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--log-file",
