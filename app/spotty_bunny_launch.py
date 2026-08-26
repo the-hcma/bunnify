@@ -42,6 +42,8 @@ def clear_spotty_bunny_pid(
 
 def ensure_spotty_bunny_running(
     *,
+    cli_commit: str | None = None,
+    force_restart: bool = False,
     installed: bool | None = None,
     loaded: bool | None = None,
     pid_dir: Path | None = None,
@@ -57,7 +59,7 @@ def ensure_spotty_bunny_running(
     if sys.platform != "darwin":
         return False
     directory = pid_dir if pid_dir is not None else run_dir()
-    current = git_commit()
+    current = cli_commit if cli_commit is not None else git_commit()
     if loaded is None or installed is None:
         if pid_dir is None:
             from app.spotty_bunny_agent import is_agent_installed, is_agent_loaded
@@ -75,10 +77,19 @@ def ensure_spotty_bunny_running(
     pid_alive = runtime is not None and _spotty_bunny_process_alive(runtime[0])
     if pid_alive or loaded:
         running_commit = runtime[1] if runtime is not None else None
-        if running_commit is None or running_commit == current:
+        if running_commit == current and not force_restart:
             logger.debug("spotty-bunny already running (pid file %s)", directory)
             return True
-        if restart is None or not restart(running_commit, current):
+        if running_commit is None and not force_restart and restart is None:
+            logger.debug(
+                "spotty-bunny running without recorded commit (pid file %s)",
+                directory,
+            )
+            return True
+        should_restart = force_restart
+        if not should_restart and restart is not None:
+            should_restart = restart(running_commit, current)
+        if not should_restart:
             logger.debug(
                 "spotty-bunny already running with commit %s (cli %s)",
                 running_commit,

@@ -599,11 +599,25 @@ def _wait_for_managed_health(
 ) -> bool:
     """Wait until ``base_url`` is healthy and served from ``pid_dir``."""
     deadline = time.monotonic() + timeout_s
+    port_file = pid_dir / ".bunnify.port"
     while time.monotonic() < deadline:
         if check_health(base_url) and _port_served_by_pid_dir(port, pid_dir):
             return True
+        if check_health(base_url) and _managed_port_file_matches(port_file, port):
+            return True
         time.sleep(0.1)
-    return check_health(base_url) and _port_served_by_pid_dir(port, pid_dir)
+    return check_health(base_url) and (
+        _port_served_by_pid_dir(port, pid_dir)
+        or _managed_port_file_matches(port_file, port)
+    )
+
+
+def _managed_port_file_matches(port_file: Path, port: int) -> bool:
+    try:
+        recorded = int(port_file.read_text(encoding="utf-8").strip())
+    except OSError, ValueError:
+        return False
+    return recorded == port
 
 
 def _write_plist(plist: Path, *, home: Path, program_arguments: Sequence[str]) -> None:

@@ -744,6 +744,22 @@ class CliUnitTests(TestCase):
 
 
 class ConfigUnitTests(TestCase):
+    def setUp(self) -> None:
+        self._spotty_installed_patch = patch(
+            "app.spotty_bunny_agent.is_agent_installed",
+            return_value=False,
+        )
+        self._spotty_running_patch = patch(
+            "app.spotty_bunny_launch.spotty_bunny_is_running",
+            return_value=False,
+        )
+        self._spotty_installed_patch.start()
+        self._spotty_running_patch.start()
+
+    def tearDown(self) -> None:
+        self._spotty_running_patch.stop()
+        self._spotty_installed_patch.stop()
+
     def test_config_dir_respects_xdg_config_home(self) -> None:
         import tempfile
         from pathlib import Path
@@ -1086,6 +1102,46 @@ class ConfigUnitTests(TestCase):
                     )
 
             self.assertIn("unavailable.example", str(raised.exception))
+            ensure_server.assert_not_called()
+
+    def test_ensure_ready_base_url_remote_aborts_on_declined_mismatch(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import ensure_ready_base_url
+        from app.client import ClientError, HealthStatus
+        from app.config import ServerPreferences, save_preferences
+
+        remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://remote.example/",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+                patch("app.cli.stdout_color_enabled", return_value=False),
+                patch("app.cli.ensure_local_server") as ensure_server,
+            ):
+                with self.assertRaises(ClientError) as raised:
+                    ensure_ready_base_url(
+                        environ={"XDG_CONFIG_HOME": tmp},
+                        env_path=path,
+                        allow_prompt=True,
+                        print_fn=lambda _message: None,
+                        prompt_fn=lambda _message: "",
+                    )
+            self.assertIn("Remote server version mismatch", str(raised.exception))
             ensure_server.assert_not_called()
 
     def test_ensure_ready_base_url_remote_retry_then_abort(self) -> None:
@@ -2149,14 +2205,24 @@ class ConfigUnitTests(TestCase):
     def test_setup_remote_persists_verified_url(self) -> None:
         import tempfile
         from pathlib import Path
+        from unittest.mock import patch
 
         from app.cli import run_setup
+        from app.client import HealthStatus
         from app.config import load_preferences
 
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.env"
             responses = iter(["remote", "https://remote.example/"])
-            with patch("app.cli.check_health", return_value=True):
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+            ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
                     env_path=path,
@@ -2169,6 +2235,66 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.mode, "remote")
             self.assertEqual(preferences.base_url, "https://remote.example")
+
+    def test_setup_remote_aborts_when_mismatch_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import ClientError, HealthStatus
+
+        remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            responses = iter(["remote", "https://remote.example/", ""])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+            ):
+                with self.assertRaises(ClientError) as ctx:
+                    run_setup(
+                        prompt_fn=lambda _message: next(responses),
+                        env_path=path,
+                        print_fn=lambda _message: None,
+                    )
+            self.assertIn("Setup aborted", str(ctx.exception))
+            self.assertFalse(path.exists())
+
+    def test_setup_remote_allows_mismatch_bypass(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import load_preferences
+
+        remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            responses = iter(["remote", "https://remote.example/", "y"])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+            self.assertEqual(result, "https://remote.example")
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
 
     @patch("app.cli.resolve_shortcut")
     @patch("app.cli.fetch_key_entries")
@@ -2400,6 +2526,201 @@ class ConfigUnitTests(TestCase):
         spotty_installed.assert_not_called()
         spotty_upgrade.assert_not_called()
 
+    def test_report_post_upgrade_coherence_uses_upgraded_build_label(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.client import HealthStatus
+        from app.coherence import LocalCoherenceReport
+        from app.theme import Theme
+
+        server = HealthStatus(ok=True, version="0.10.0", commit="newnewnewnew")
+        report = LocalCoherenceReport(
+            local_commit="oldoldoldold",
+            local_version="0.9.0",
+            server=server,
+            spotty_commit="oldspotty1",
+            spotty_running=True,
+        )
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.load_preferences", return_value=None),
+            patch("app.cli.resolve_base_url", return_value="http://127.0.0.1:8000"),
+            patch("app.cli.assess_local_coherence", return_value=report),
+            patch("app.cli.get_build_info", return_value=("0.9.0", "oldoldoldold")),
+            patch("app.cli.ensure_local_spotty_aligned", return_value=True) as spotty,
+            patch(
+                "app.cli.running_spotty_commit",
+                return_value=(True, "newnewnewnew"),
+            ),
+        ):
+            _report_post_upgrade_coherence(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=True,
+                upgraded_build="0.10.0 (newnewnewnew)",
+            )
+        joined = "\n".join(messages)
+        self.assertNotIn("Local server is", joined)
+        spotty.assert_called_once_with(
+            cli_commit="newnewnewnew",
+            force_restart=True,
+            print_fn=messages.append,
+        )
+        self.assertIn("Spotty Bunny restarted", joined)
+
+    def test_report_post_upgrade_coherence_skips_when_build_unreadable(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with patch("app.cli.assess_local_coherence") as assess:
+            _report_post_upgrade_coherence(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=True,
+                upgraded_build=None,
+            )
+        assess.assert_not_called()
+        self.assertIn("skipping version coherence checks", "\n".join(messages))
+
+    def test_report_post_upgrade_coherence_uses_preferences_base_url(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.client import HealthStatus
+        from app.coherence import LocalCoherenceReport
+        from app.config import ServerPreferences
+        from app.theme import Theme
+
+        server = HealthStatus(ok=True, version="0.10.0", commit="newnewnewnew")
+        report = LocalCoherenceReport(
+            local_commit="oldoldoldold",
+            local_version="0.9.0",
+            server=server,
+            spotty_commit="newnewnewnew",
+            spotty_running=False,
+        )
+        preferences = ServerPreferences(
+            mode="local",
+            base_url="http://127.0.0.1:8765",
+            local_port=8765,
+        )
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.load_preferences", return_value=preferences),
+            patch("app.cli.resolve_base_url") as resolve,
+            patch("app.cli.assess_local_coherence", return_value=report) as assess,
+        ):
+            _report_post_upgrade_coherence(
+                print_fn=lambda _line: None,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=False,
+                upgraded_build="0.10.0 (newnewnewnew)",
+            )
+        resolve.assert_not_called()
+        assess.assert_called_once_with(base_url="http://127.0.0.1:8765")
+
+    def test_report_post_upgrade_coherence_remote_mismatch(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.client import HealthStatus
+        from app.config import ServerPreferences
+        from app.theme import Theme
+
+        remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
+        preferences = ServerPreferences(
+            mode="remote",
+            base_url="https://remote.example/",
+            local_port=None,
+        )
+        messages: list[str] = []
+        with (
+            patch("app.cli.load_preferences", return_value=preferences),
+            patch("app.cli.fetch_health", return_value=remote),
+            patch("app.cli.assess_local_coherence") as assess,
+        ):
+            _report_post_upgrade_coherence(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=True,
+                upgraded_build="0.10.0 (newnewnewnew)",
+            )
+        assess.assert_not_called()
+        joined = "\n".join(messages)
+        self.assertIn("Remote server is 0.9.0 (oldoldoldold)", joined)
+        self.assertIn("this Mac is 0.10.0 (newnewnewnew)", joined)
+
+    def test_report_post_upgrade_coherence_skips_malformed_build_label(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with patch("app.cli.assess_local_coherence") as assess:
+            _report_post_upgrade_coherence(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=True,
+                upgraded_build="0.10.0 without parens",
+            )
+        assess.assert_not_called()
+        self.assertIn("skipping version coherence checks", "\n".join(messages))
+
+    def test_ensure_local_spotty_after_setup_warns_when_still_mismatched(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
+            patch("app.cli.ensure_local_spotty_aligned"),
+            patch("app.cli.running_spotty_commit", return_value=(True, "oldspotty1")),
+            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
+        ):
+            _ensure_local_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "n",
+                theme=Theme(enabled=False),
+            )
+        joined = "\n".join(messages)
+        self.assertIn("still running an older build", joined)
+        self.assertNotIn("✓ Spotty Bunny is running", joined)
+
+    def test_ensure_local_spotty_after_setup_ok_when_aligned(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
+            patch("app.cli.ensure_local_spotty_aligned"),
+            patch(
+                "app.cli.running_spotty_commit",
+                return_value=(True, "newnewnewnew"),
+            ),
+            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
+        ):
+            _ensure_local_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "y",
+                theme=Theme(enabled=False),
+            )
+        self.assertIn("✓ Spotty Bunny is running", "\n".join(messages))
+
     def test_ensure_local_server_for_setup_reuses_matching_build(self) -> None:
         from pathlib import Path
         from unittest.mock import patch
@@ -2413,7 +2734,7 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.sys.platform", "darwin"),
             patch("app.cli.fetch_health", return_value=matching),
             patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
-            patch("app.cli._builds_match", return_value=True),
+            patch("app.cli.builds_match", return_value=True),
             patch("app.server_agent.is_agent_installed", return_value=True),
             patch("app.server_agent.install_agent") as install,
         ):
@@ -2440,7 +2761,7 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.sys.platform", "darwin"),
             patch("app.cli.fetch_health", return_value=matching),
             patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
-            patch("app.cli._builds_match", return_value=True),
+            patch("app.cli.builds_match", return_value=True),
             patch("app.server_agent.is_agent_installed", return_value=False),
             patch("app.server_agent.install_agent", return_value=0) as install,
             patch(
@@ -2507,8 +2828,8 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.sys.platform", "darwin"),
             patch("app.cli.fetch_health", return_value=old),
             patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
-            patch("app.cli._builds_match", return_value=False),
-            patch("app.cli._cli_is_newer_than", return_value=True),
+            patch("app.cli.builds_match", return_value=False),
+            patch("app.cli.cli_is_newer_than", return_value=True),
             patch("app.server_agent.is_agent_installed", return_value=True),
             patch("app.server_agent.bootout_loaded_agent") as bootout,
             patch("app.cli.stop_local_server") as stop,

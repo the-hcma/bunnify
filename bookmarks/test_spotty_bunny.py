@@ -415,6 +415,67 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             )
             self.assertEqual(info.server_url, "http://127.0.0.1:9000")
 
+    def test_load_about_runtime_info_marks_server_skew(self) -> None:
+        from unittest.mock import patch
+
+        from app.client import HealthStatus
+        from app.spotty_bunny_about_info import load_about_runtime_info
+
+        health = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            env = {
+                "BUNNIFY_BASE_URL": "http://127.0.0.1:8000",
+                "BUNNIFY_BOOKMARKS": str(bookmarks),
+                "BUNNIFY_MODE": "local",
+                "XDG_CONFIG_HOME": str(root / "cfg"),
+            }
+            with (
+                patch("app.spotty_bunny_about_info.fetch_health", return_value=health),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+            ):
+                info = load_about_runtime_info(
+                    environ=env,
+                    origin_url_for=lambda _workdir: None,
+                )
+            self.assertTrue(info.server_skewed)
+            self.assertEqual(info.server_build_label, "0.9.0 (oldoldoldold)")
+
+    def test_load_about_runtime_info_no_skew_when_builds_match(self) -> None:
+        from unittest.mock import patch
+
+        from app.client import HealthStatus
+        from app.spotty_bunny_about_info import load_about_runtime_info
+
+        health = HealthStatus(ok=True, version="0.10.0", commit="newnewnewnew")
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            env = {
+                "BUNNIFY_BASE_URL": "http://127.0.0.1:8000",
+                "BUNNIFY_BOOKMARKS": str(bookmarks),
+                "BUNNIFY_MODE": "local",
+                "XDG_CONFIG_HOME": str(root / "cfg"),
+            }
+            with (
+                patch("app.spotty_bunny_about_info.fetch_health", return_value=health),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+            ):
+                info = load_about_runtime_info(
+                    environ=env,
+                    origin_url_for=lambda _workdir: None,
+                )
+            self.assertFalse(info.server_skewed)
+
     def test_load_about_runtime_info_remote_server_and_github(self) -> None:
         from app.spotty_bunny_about_info import load_about_runtime_info
 
@@ -452,7 +513,9 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
             github_display="github.com/acme/repo",
             github_url="https://github.com/acme/repo",
+            server_build_label="0.10.0 (abc123456789)",
             server_display="Local server · http://127.0.0.1:8000",
+            server_skewed=False,
             server_url="http://127.0.0.1:8000",
         )
         text, links = about_details_text_and_links(runtime)
@@ -462,7 +525,8 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             "License: MIT License\n"
             "Bookmarks: ~/.config/bunnify/bookmarks.json\n"
             "GitHub: github.com/acme/repo\n"
-            "Local server · http://127.0.0.1:8000",
+            "Local server · http://127.0.0.1:8000\n"
+            "Server build: 0.10.0 (abc123456789)",
         )
         self.assertEqual(
             links,
@@ -481,6 +545,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                 ),
                 ("github.com/acme/repo", "https://github.com/acme/repo"),
                 ("http://127.0.0.1:8000", "http://127.0.0.1:8000"),
+                ("0.10.0 (abc123456789)", "http://127.0.0.1:8000"),
             ),
         )
 
@@ -2423,6 +2488,83 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             self.assertEqual(
                 (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
                 "4242\nabc1234\n",
+            )
+
+    def test_ensure_spotty_bunny_running_honors_cli_commit_override(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="stalecommit",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        cli_commit="newcommit9",
+                        pid_dir=pid_dir,
+                        spawn=lambda _cmd: 4242,
+                    )
+                )
+            self.assertEqual(
+                (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
+                "4242\nnewcommit9\n",
+            )
+
+    def test_ensure_spotty_bunny_running_force_restart_matching_commit(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        spawned: list[int] = []
+
+        def spawn(_cmd: object) -> int:
+            spawned.append(5151)
+            return 5151
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            (pid_dir / SPOTTY_BUNNY_PID_FILE).write_text(
+                "4242\nsamecommit\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="samecommit",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+                patch("app.spotty_bunny_launch.stop_spotty_bunny") as stop,
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        force_restart=True,
+                        pid_dir=pid_dir,
+                        spawn=spawn,
+                    )
+                )
+            stop.assert_called_once_with(pid_dir=pid_dir)
+            self.assertEqual(spawned, [5151])
+            self.assertEqual(
+                (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
+                "5151\nsamecommit\n",
             )
 
     def test_ensure_spotty_bunny_running_keeps_mismatch_when_declined(
