@@ -145,6 +145,34 @@ class ServerAgentTests(SimpleTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(install.call_args.kwargs["port"], 9001)
 
+    def test_install_rolls_back_plist_when_health_fails(self) -> None:
+        from app.server_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.check_health", return_value=False),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=lambda _m: None,
+                    program=program,
+                    timeout_s=0.2,
+                )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            self.assertEqual(code, 1)
+            self.assertFalse(plist.exists())
+            self.assertFalse(ctl.loaded)
+
     def test_server_cli_dispatches_install(self) -> None:
         from app.server_cli import main
 

@@ -2502,6 +2502,61 @@ class ConfigUnitTests(TestCase):
         stop_server.assert_called_once()
         self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
 
+    def test_stop_boots_out_launch_agent_on_darwin(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_stop
+        from app.client import ClientError
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            messages: list[str] = []
+            with (
+                patch("app.cli.sys.platform", "darwin"),
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=Path(tmp) / "run" / "launchd",
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.stop_local_server") as stop_server,
+            ):
+                run_stop(
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+            bootout.assert_called_once()
+            stop_server.assert_called_once()
+            self.assertTrue(any("LaunchAgent" in line for line in messages))
+
+            with (
+                patch("app.cli.sys.platform", "darwin"),
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch("app.server_agent.bootout_loaded_agent"),
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=Path(tmp) / "run" / "launchd",
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=RuntimeError("still busy"),
+                ),
+            ):
+                with self.assertRaises(ClientError):
+                    run_stop(env_path=path, print_fn=lambda _m: None)
+
     def test_stop_refuses_remote_mode(self) -> None:
         import tempfile
         from pathlib import Path

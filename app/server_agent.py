@@ -119,10 +119,16 @@ def install_agent(
     plist = agent_plist_path(home=root)
     _write_plist(plist, home=root, program_arguments=argv)
     if not _reload_agent(plist, launchctl=launchctl, pid_dir=agent_pid_dir):
+        _rollback_failed_install(
+            plist, launchctl=launchctl, pid_dir=agent_pid_dir, port=port
+        )
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
     base_url = f"http://127.0.0.1:{port}"
     if not _wait_for_health(base_url, timeout_s=timeout_s):
+        _rollback_failed_install(
+            plist, launchctl=launchctl, pid_dir=agent_pid_dir, port=port
+        )
         err(f"{COMMAND_NAME}: server at {base_url} did not become healthy.")
         return 1
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
@@ -521,6 +527,22 @@ def _resolve_program_arguments(
     if isinstance(program, (str, Path)):
         return [str(Path(program).expanduser().resolve())]
     return [str(part) for part in program]
+
+
+def _rollback_failed_install(
+    plist: Path,
+    *,
+    launchctl: LaunchctlFn | None,
+    pid_dir: Path,
+    port: int,
+) -> None:
+    """Boot out and remove a plist that never became healthy."""
+    _bootout_agent(launchctl=launchctl)
+    plist.unlink(missing_ok=True)
+    try:
+        stop_local_server(pid_dir, port=port, port_timeout_s=5)
+    except OSError, RuntimeError, ValueError:
+        pass
 
 
 def _wait_for_health(base_url: str, *, timeout_s: float) -> bool:

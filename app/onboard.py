@@ -215,6 +215,7 @@ def run_onboard(
 
     if interactive and state.macos_platform and state.macos_extra:
         preferences = load_preferences()
+        installed_local_port: int | None = None
         if preferences is not None and preferences.mode == "local":
             if not state.server_agent_installed or yes(
                 ask,
@@ -230,6 +231,7 @@ def run_onboard(
                     print_err=lambda message: log(message),
                 )
                 if code == 0:
+                    installed_local_port = port
                     log(colors.ok("✓ Local Bunnify server LaunchAgent is installed."))
                     state = detect_install_state(read_executable_build=reader)
                 else:
@@ -239,8 +241,17 @@ def run_onboard(
                             "see messages above."
                         )
                     )
+        reachability = preferences
+        if installed_local_port is not None:
+            from app.config import ServerPreferences
+
+            reachability = ServerPreferences(
+                mode="local",
+                base_url=f"http://127.0.0.1:{installed_local_port}",
+                local_port=installed_local_port,
+            )
         if not _confirm_server_reachable_for_install(
-            preferences,
+            reachability,
             ask=ask,
             log=log,
             colors=colors,

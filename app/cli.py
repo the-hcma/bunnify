@@ -471,8 +471,10 @@ def run_stop(
                     log(f"Running build: {_format_running_build(health)}")
             try:
                 stop_local_server(agent_pid_dir, port=port)
-            except OSError, RuntimeError, ValueError:
-                pass
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ClientError(
+                    f"Failed to stop the LaunchAgent-managed server: {exc}"
+                ) from exc
             if port is not None:
                 log(colors.ok(f"Stopped local Bunnify at http://127.0.0.1:{port}"))
             else:
@@ -644,6 +646,12 @@ def _ensure_local_server_for_setup(
         chosen = _find_usable_local_port(MIN_LOCAL_PORT)
     else:
         chosen = port
+    base_url = f"http://127.0.0.1:{chosen}"
+    if check_health(base_url):
+        # Healthy listener already on this port (LaunchAgent, manual, or other
+        # pid-dir); reuse it instead of bouncing launchd.
+        return base_url, chosen
+
     agent_pid_dir = launchd_pid_dir()
     messages: list[str] = []
 
@@ -661,7 +669,7 @@ def _ensure_local_server_for_setup(
     if code != 0:
         detail = messages[-1] if messages else "LaunchAgent install failed"
         raise RuntimeError(detail)
-    return f"http://127.0.0.1:{chosen}", chosen
+    return base_url, chosen
 
 
 def _find_usable_local_port(start: int) -> int:
