@@ -15,7 +15,7 @@ from xml.sax.saxutils import escape
 
 from app.client import check_health
 from app.config import run_dir
-from app.local_server import stop_local_server
+from app.local_server import port_is_free, stop_local_server
 from app.version import build_version
 
 AGENT_COMMANDS = frozenset({"install", "status", "uninstall", "upgrade"})
@@ -111,11 +111,32 @@ def install_agent(
     ]
     if bookmarks is not None:
         argv.extend(["--bookmarks", str(bookmarks.expanduser().resolve())])
+    base_url = f"http://127.0.0.1:{port}"
     # Stop a non-launchd managed server that may still hold the port.
     try:
         stop_local_server(run_dir(), port=port, port_timeout_s=5)
     except OSError, RuntimeError, ValueError:
         pass
+    if not port_is_free(port):
+        try:
+            stop_local_server(
+                agent_pid_dir,
+                port=port,
+                port_timeout_s=5,
+                replace_foreign_bunnify=True,
+            )
+        except OSError, RuntimeError, ValueError:
+            pass
+    if (
+        not port_is_free(port)
+        and check_health(base_url)
+        and not _port_served_by_pid_dir(port, agent_pid_dir)
+    ):
+        err(
+            f"{COMMAND_NAME}: port {port} is held by another Bunnify server "
+            f"(not managed under {agent_pid_dir})."
+        )
+        return 1
     plist = agent_plist_path(home=root)
     _write_plist(plist, home=root, program_arguments=argv)
     if not _reload_agent(plist, launchctl=launchctl, pid_dir=agent_pid_dir):
@@ -124,8 +145,12 @@ def install_agent(
         )
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
-    base_url = f"http://127.0.0.1:{port}"
-    if not _wait_for_health(base_url, timeout_s=timeout_s):
+    if not _wait_for_managed_health(
+        base_url,
+        pid_dir=agent_pid_dir,
+        port=port,
+        timeout_s=timeout_s,
+    ):
         _rollback_failed_install(
             plist, launchctl=launchctl, pid_dir=agent_pid_dir, port=port
         )
@@ -488,6 +513,16 @@ def _port_from_argv(argv: Sequence[str] | None) -> int | None:
     return None
 
 
+def _port_served_by_pid_dir(port: int, pid_dir: Path) -> bool:
+    """Return whether a Bunnify listener on ``port`` uses ``pid_dir``."""
+    from app.server_cli import _listener_pids, _process_managed_by_pid_dir
+
+    for pid in _listener_pids(port):
+        if _process_managed_by_pid_dir(pid, pid_dir):
+            return True
+    return False
+
+
 def _print_err(message: str) -> None:
     print(message, file=sys.stderr)
 
@@ -545,13 +580,20 @@ def _rollback_failed_install(
         pass
 
 
-def _wait_for_health(base_url: str, *, timeout_s: float) -> bool:
+def _wait_for_managed_health(
+    base_url: str,
+    *,
+    pid_dir: Path,
+    port: int,
+    timeout_s: float,
+) -> bool:
+    """Wait until ``base_url`` is healthy and served from ``pid_dir``."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if check_health(base_url):
+        if check_health(base_url) and _port_served_by_pid_dir(port, pid_dir):
             return True
         time.sleep(0.1)
-    return check_health(base_url)
+    return check_health(base_url) and _port_served_by_pid_dir(port, pid_dir)
 
 
 def _write_plist(plist: Path, *, home: Path, program_arguments: Sequence[str]) -> None:

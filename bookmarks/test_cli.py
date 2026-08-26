@@ -2414,6 +2414,7 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.fetch_health", return_value=matching),
             patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
             patch("app.cli._builds_match", return_value=True),
+            patch("app.server_agent.is_agent_installed", return_value=True),
             patch("app.server_agent.install_agent") as install,
         ):
             url, port = _ensure_local_server_for_setup(
@@ -2425,6 +2426,38 @@ class ConfigUnitTests(TestCase):
             )
         self.assertEqual((url, port), ("http://127.0.0.1:8123", 8123))
         install.assert_not_called()
+
+    def test_ensure_local_server_for_setup_installs_agent_when_server_up(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_server_for_setup
+        from app.client import HealthStatus
+        from app.theme import Theme
+
+        matching = HealthStatus(ok=True, version="0.3.0", commit="abc123456789")
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.fetch_health", return_value=matching),
+            patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+            patch("app.cli._builds_match", return_value=True),
+            patch("app.server_agent.is_agent_installed", return_value=False),
+            patch("app.server_agent.install_agent", return_value=0) as install,
+            patch(
+                "app.server_agent.launchd_pid_dir",
+                return_value=Path("/tmp/bunnify-run-launchd"),
+            ),
+        ):
+            url, port = _ensure_local_server_for_setup(
+                port=8123,
+                pid_dir=Path("/tmp/bunnify-run"),
+                bookmarks=None,
+                print_fn=lambda _m: None,
+                theme=Theme(enabled=False),
+            )
+        self.assertEqual((url, port), ("http://127.0.0.1:8123", 8123))
+        install.assert_called_once()
+        self.assertEqual(install.call_args.kwargs["port"], 8123)
 
     def test_ensure_local_server_for_setup_installs_when_port_free(self) -> None:
         from pathlib import Path

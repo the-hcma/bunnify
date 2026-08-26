@@ -658,7 +658,7 @@ def _ensure_local_server_for_setup(
     if sys.platform != "darwin":
         return ensure_local_server(port=port, pid_dir=pid_dir, bookmarks=bookmarks)
 
-    from app.server_agent import install_agent, launchd_pid_dir
+    from app.server_agent import install_agent, is_agent_installed, launchd_pid_dir
 
     if port is None or port == 0:
         chosen = _find_usable_local_port(MIN_LOCAL_PORT)
@@ -670,21 +670,25 @@ def _ensure_local_server_for_setup(
     health = fetch_health(base_url)
     if health.ok:
         if _builds_match(health):
-            return base_url, chosen
-        decided = _offer_restart_mismatched_server(
-            ask,
-            port=chosen,
-            health=health,
-            pid_dir=pid_dir,
-            print_fn=print_fn,
-            theme=colors,
-        )
-        if decided is None:
-            raise RuntimeError(f"Could not stop the mismatched server on port {chosen}")
-        chosen, restart = decided
-        base_url = f"http://127.0.0.1:{chosen}"
-        if not restart:
-            return base_url, chosen
+            if is_agent_installed():
+                return base_url, chosen
+        else:
+            decided = _offer_restart_mismatched_server(
+                ask,
+                port=chosen,
+                health=health,
+                pid_dir=pid_dir,
+                print_fn=print_fn,
+                theme=colors,
+            )
+            if decided is None:
+                raise RuntimeError(
+                    f"Could not stop the mismatched server on port {chosen}"
+                )
+            chosen, restart = decided
+            base_url = f"http://127.0.0.1:{chosen}"
+            if not restart:
+                return base_url, chosen
 
     agent_pid_dir = launchd_pid_dir()
     messages: list[str] = []
