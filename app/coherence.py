@@ -50,10 +50,36 @@ def assess_local_coherence(*, base_url: str) -> LocalCoherenceReport:
 
 def builds_match(health: HealthStatus) -> bool:
     """Return whether *health* matches this CLI install."""
+    local_version, local_commit = get_build_info()
+    return builds_match_values(
+        health,
+        local_commit=local_commit,
+        local_version=local_version,
+    )
+
+
+def builds_match_values(
+    health: HealthStatus,
+    *,
+    local_commit: str,
+    local_version: str,
+) -> bool:
+    """Return whether *health* matches explicit local version/commit."""
     if health.version is None or health.commit is None:
         return False
-    local_version, local_commit = get_build_info()
     return health.version == local_version and health.commit == local_commit
+
+
+def parse_build_label(label: str) -> tuple[str, str] | None:
+    """Return ``(version, commit)`` parsed from ``0.10.0 (abc1234)``."""
+    token = label.strip()
+    if not token or " (" not in token or not token.endswith(")"):
+        return None
+    version, _, rest = token.partition(" (")
+    commit = rest.removesuffix(")").strip()
+    if not version or not commit:
+        return None
+    return version, commit
 
 
 def cli_is_newer_than(health: HealthStatus) -> bool:
@@ -156,6 +182,11 @@ def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool
     except EOFError:
         return False
     return answer.strip().lower() in {"y", "yes"}
+
+
+def running_spotty_commit() -> tuple[bool, str | None]:
+    """Return ``(running, commit)`` for the Spotty Bunny overlay."""
+    return _spotty_runtime_commit()
 
 
 def _spotty_runtime_commit() -> tuple[bool, str | None]:

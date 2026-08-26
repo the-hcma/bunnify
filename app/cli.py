@@ -34,6 +34,7 @@ from app.coherence import (
     ensure_local_spotty_aligned,
     format_build_label,
     offer_remote_build_mismatch,
+    running_spotty_commit,
 )
 from app.config import (
     ENV_VAR,
@@ -637,6 +638,7 @@ def run_upgrade(
         print_fn=log,
         theme=colors,
         refresh_launch_agents=refresh_launch_agents,
+        upgraded_build=after_pipx,
     )
 
 
@@ -673,10 +675,20 @@ def _ensure_local_spotty_after_setup(
         )
 
     print_fn(theme.dim("Ensuring Spotty Bunny matches this install…"))
-    if ensure_local_spotty_aligned(
+    ensure_local_spotty_aligned(
         print_fn=print_fn,
         restart=offer_restart,
-    ):
+    )
+    running, spotty_commit = running_spotty_commit()
+    _local_version, local_commit = get_build_info()
+    if running and spotty_commit is not None and spotty_commit != local_commit:
+        print_fn(
+            theme.warn(
+                "Spotty Bunny is still running an older build. "
+                "Run: bunnify spotty-bunny upgrade"
+            )
+        )
+    elif running:
         print_fn(theme.ok("✓ Spotty Bunny is running"))
     else:
         print_fn(
@@ -692,18 +704,31 @@ def _report_post_upgrade_coherence(
     print_fn: Callable[[str], None],
     theme: Theme,
     refresh_launch_agents: bool | Literal["server"],
+    upgraded_build: str | None = None,
 ) -> None:
-    """Verify local server and Spotty match the upgraded CLI."""
+    """Verify local server and Spotty match the upgraded pipx build."""
+    from app.coherence import builds_match_values, parse_build_label
+
+    parsed = parse_build_label(upgraded_build) if upgraded_build else None
+    if parsed is None:
+        local_version, local_commit = get_build_info()
+    else:
+        local_version, local_commit = parsed
+    local_label = f"{local_version} ({local_commit})"
     preferences = load_preferences()
     if preferences is not None and preferences.mode == "remote":
         if not preferences.base_url:
             return
         health = fetch_health(preferences.base_url)
-        if health.ok and not builds_match(health):
+        if health.ok and not builds_match_values(
+            health,
+            local_commit=local_commit,
+            local_version=local_version,
+        ):
             print_fn(
                 theme.warn(
                     f"Remote server is {format_build_label(health)}; "
-                    f"this Mac is {build_version()}."
+                    f"this Mac is {local_label}."
                 )
             )
             print_fn(
@@ -717,11 +742,19 @@ def _report_post_upgrade_coherence(
     base_url = resolve_base_url(persist=False, allow_prompt=False)
     report = assess_local_coherence(base_url=base_url)
     server = report.server
-    if server is not None and server.ok and not builds_match(server):
+    if (
+        server is not None
+        and server.ok
+        and not builds_match_values(
+            server,
+            local_commit=local_commit,
+            local_version=local_version,
+        )
+    ):
         print_fn(
             theme.warn(
                 f"Local server is {format_build_label(server)}; "
-                f"this CLI is {build_version()}."
+                f"this CLI is {local_label}."
             )
         )
         print_fn(theme.dim("Run: bunnify-server upgrade"))
@@ -729,7 +762,8 @@ def _report_post_upgrade_coherence(
         return
     if refresh_launch_agents is not True:
         return
-    if report.spotty_running and report.spotty_commit != report.local_commit:
+    spotty_commit = report.spotty_commit
+    if report.spotty_running and spotty_commit != local_commit:
         print_fn(theme.dim("Restarting Spotty Bunny to match the upgraded CLI…"))
         if not ensure_local_spotty_aligned(force_restart=True, print_fn=print_fn):
             print_fn(

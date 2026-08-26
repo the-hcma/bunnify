@@ -413,6 +413,35 @@ class ServerAgentTests(SimpleTestCase):
         self.assertEqual(code, 0)
         run.assert_called_once_with("install", ["--port", "8000"])
 
+    def test_wait_for_managed_health_accepts_port_file_match(self) -> None:
+        from app.server_agent import _wait_for_managed_health
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            port_file = pid_dir / ".bunnify.port"
+            port_file.write_text("8123", encoding="utf-8")
+            with (
+                patch("app.server_agent.check_health", return_value=True),
+                patch("app.server_agent._port_served_by_pid_dir", return_value=False),
+                patch("app.server_agent.time.sleep"),
+            ):
+                healthy = _wait_for_managed_health(
+                    "http://127.0.0.1:8123",
+                    pid_dir=pid_dir,
+                    port=8123,
+                    timeout_s=1.0,
+                )
+        self.assertTrue(healthy)
+
+    def test_managed_port_file_matches_reads_recorded_port(self) -> None:
+        from app.server_agent import _managed_port_file_matches
+
+        with TemporaryDirectory() as tmp:
+            port_file = Path(tmp) / ".bunnify.port"
+            port_file.write_text("8123\n", encoding="utf-8")
+            self.assertTrue(_managed_port_file_matches(port_file, 8123))
+            self.assertFalse(_managed_port_file_matches(port_file, 9000))
+
 
 class _FakeLaunchctl:
     def __init__(self) -> None:

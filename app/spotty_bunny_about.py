@@ -138,6 +138,11 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         else f"Update available: {status.latest}"
     )
     details_text, details_links = about_details_text_and_links(runtime)
+    skew_text = (
+        "Server build differs from this Mac — align versions."
+        if runtime.server_skewed
+        else None
+    )
     inner_cap = ABOUT_PANEL_MAX_WIDTH - 2.0 * ABOUT_INSET
     needed_width = max(
         _measure_text("Spotty Bunny", title_font, max_width=inner_cap)[0],
@@ -147,6 +152,9 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         0.0
         if update_text is None
         else _measure_text(update_text, body_font, max_width=inner_cap)[0],
+        0.0
+        if skew_text is None
+        else _measure_text(skew_text, body_font, max_width=inner_cap)[0],
     )
     width = min(
         ABOUT_PANEL_MAX_WIDTH,
@@ -207,8 +215,7 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
                 ),
             )
         )
-    if runtime.server_skewed:
-        skew_text = "Server build differs from this Mac — align versions."
+    if runtime.server_skewed and skew_text is not None:
         rows.append(
             (
                 18.0,
@@ -218,10 +225,6 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
                     color=_srgb_color(ABOUT_WARN_RGB),
                 ),
             )
-        )
-        needed_width = max(
-            needed_width,
-            _measure_text(skew_text, body_font, max_width=inner_cap)[0],
         )
     rows.extend(
         [

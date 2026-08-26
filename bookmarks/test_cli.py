@@ -745,14 +745,20 @@ class CliUnitTests(TestCase):
 
 class ConfigUnitTests(TestCase):
     def setUp(self) -> None:
-        self._spotty_setup_patch = patch(
-            "app.cli._ensure_local_spotty_after_setup",
-            return_value=None,
+        self._spotty_installed_patch = patch(
+            "app.spotty_bunny_agent.is_agent_installed",
+            return_value=False,
         )
-        self._spotty_setup_patch.start()
+        self._spotty_running_patch = patch(
+            "app.spotty_bunny_launch.spotty_bunny_is_running",
+            return_value=False,
+        )
+        self._spotty_installed_patch.start()
+        self._spotty_running_patch.start()
 
     def tearDown(self) -> None:
-        self._spotty_setup_patch.stop()
+        self._spotty_running_patch.stop()
+        self._spotty_installed_patch.stop()
 
     def test_config_dir_respects_xdg_config_home(self) -> None:
         import tempfile
@@ -2409,6 +2415,91 @@ class ConfigUnitTests(TestCase):
         server_only.assert_called_once()
         spotty_installed.assert_not_called()
         spotty_upgrade.assert_not_called()
+
+    def test_report_post_upgrade_coherence_uses_upgraded_build_label(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.client import HealthStatus
+        from app.coherence import LocalCoherenceReport
+        from app.theme import Theme
+
+        server = HealthStatus(ok=True, version="0.10.0", commit="newnewnewnew")
+        report = LocalCoherenceReport(
+            local_commit="oldoldoldold",
+            local_version="0.9.0",
+            server=server,
+            spotty_commit="oldspotty1",
+            spotty_running=True,
+        )
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.load_preferences", return_value=None),
+            patch("app.cli.resolve_base_url", return_value="http://127.0.0.1:8000"),
+            patch("app.cli.assess_local_coherence", return_value=report),
+            patch("app.cli.get_build_info", return_value=("0.9.0", "oldoldoldold")),
+            patch("app.cli.ensure_local_spotty_aligned", return_value=True) as spotty,
+        ):
+            _report_post_upgrade_coherence(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=True,
+                upgraded_build="0.10.0 (newnewnewnew)",
+            )
+        joined = "\n".join(messages)
+        self.assertNotIn("Local server is", joined)
+        spotty.assert_called_once_with(force_restart=True, print_fn=messages.append)
+        self.assertIn("Spotty Bunny restarted", joined)
+
+    def test_ensure_local_spotty_after_setup_warns_when_still_mismatched(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
+            patch("app.cli.ensure_local_spotty_aligned"),
+            patch("app.cli.running_spotty_commit", return_value=(True, "oldspotty1")),
+            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
+        ):
+            _ensure_local_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "n",
+                theme=Theme(enabled=False),
+            )
+        joined = "\n".join(messages)
+        self.assertIn("still running an older build", joined)
+        self.assertNotIn("✓ Spotty Bunny is running", joined)
+
+    def test_ensure_local_spotty_after_setup_ok_when_aligned(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
+            patch("app.cli.ensure_local_spotty_aligned"),
+            patch(
+                "app.cli.running_spotty_commit",
+                return_value=(True, "newnewnewnew"),
+            ),
+            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
+        ):
+            _ensure_local_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "y",
+                theme=Theme(enabled=False),
+            )
+        self.assertIn("✓ Spotty Bunny is running", "\n".join(messages))
 
     def test_ensure_local_server_for_setup_reuses_matching_build(self) -> None:
         from pathlib import Path

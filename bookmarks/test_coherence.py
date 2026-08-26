@@ -11,12 +11,26 @@ from app.coherence import (
     assess_local_coherence,
     builds_match,
     offer_remote_build_mismatch,
+    parse_build_label,
 )
 from app.theme import Theme
 
 BUILD_INFO = ("1.0.0", "abc123456789")
 NEW_BUILD = ("0.10.0", "newnewnewnew")
 OLD_BUILD = ("0.9.0", "oldoldoldold")
+
+
+class ParseBuildLabelTests(unittest.TestCase):
+    def test_parse_build_label_extracts_version_and_commit(self) -> None:
+        self.assertEqual(
+            parse_build_label("0.10.0 (abc123456789)"),
+            ("0.10.0", "abc123456789"),
+        )
+
+    def test_parse_build_label_rejects_malformed(self) -> None:
+        self.assertIsNone(parse_build_label("0.10.0"))
+        self.assertIsNone(parse_build_label(""))
+        self.assertIsNone(parse_build_label("0.10.0 (missing paren"))
 
 
 class BuildsMatchTests(unittest.TestCase):
