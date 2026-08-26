@@ -177,18 +177,41 @@ class MarkerStampingTests(SimpleTestCase):
     def test_spotty_bunny_launch_arguments_are_stamped(self) -> None:
         from app.spotty_bunny_launch import spotty_bunny_launch_arguments
 
-        arguments = spotty_bunny_launch_arguments(commit="abc123")
+        with mock.patch(
+            "app.spotty_bunny_launch.spotty_bunny_command",
+            return_value=["/opt/bin/spotty-bunny"],
+        ):
+            arguments = spotty_bunny_launch_arguments(commit="abc123")
         marker = marker_from_arguments(arguments)
         assert marker is not None
         self.assertEqual(marker.commit, "abc123")
         self.assertEqual(marker.component, SPOTTY_BUNNY_COMPONENT)
 
     def test_spotty_bunny_launch_arguments_parse_back_into_the_cli(self) -> None:
+        """Pin the console-script form; the fallback prepends ``-m <module>``."""
         from app.spotty_bunny_cli import build_parser
         from app.spotty_bunny_launch import spotty_bunny_launch_arguments
 
-        arguments = spotty_bunny_launch_arguments(commit="abc123")
+        with mock.patch(
+            "app.spotty_bunny_launch.spotty_bunny_command",
+            return_value=["/opt/bin/spotty-bunny"],
+        ):
+            arguments = spotty_bunny_launch_arguments(commit="abc123")
         namespace = build_parser().parse_args(arguments[1:])
+        self.assertEqual(namespace.log_level, "INFO")
+
+    def test_spotty_bunny_module_fallback_arguments_parse_back_into_the_cli(
+        self,
+    ) -> None:
+        from app.spotty_bunny_cli import build_parser
+        from app.spotty_bunny_launch import spotty_bunny_launch_arguments
+
+        with mock.patch(
+            "app.spotty_bunny_launch.spotty_bunny_command",
+            return_value=["/usr/bin/python3", "-m", "app.spotty_bunny_cli"],
+        ):
+            arguments = spotty_bunny_launch_arguments(commit="abc123")
+        namespace = build_parser().parse_args(arguments[3:])
         self.assertEqual(namespace.log_level, "INFO")
 
     def test_spotty_bunny_plist_arguments_are_stamped(self) -> None:
