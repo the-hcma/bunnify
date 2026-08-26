@@ -176,7 +176,11 @@ class ServerAgentTests(SimpleTestCase):
             self.assertFalse(plist.exists())
             self.assertFalse(ctl.loaded)
             self.assertTrue(any(call[1] == "bootout" for call in ctl.calls))
-            stop.assert_called()
+            stop.assert_called_once_with(
+                home / "run" / "launchd",
+                port=8000,
+                port_timeout_s=5,
+            )
 
     def test_run_agent_command_install_parses_port(self) -> None:
         from app.server_agent import run_agent_command
