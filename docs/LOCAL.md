@@ -260,6 +260,11 @@ with **ProgramArguments** pointing at `bunnify-server --foreground
 --noninteractive --port … --pid-dir …/run/launchd`, then bootstraps it and waits
 for `/health`.
 
+On macOS setup, a healthy server whose build matches this CLI is **reused** only
+when the LaunchAgent plist is already installed; otherwise setup installs the
+agent so the server survives logout/reboot (legacy managed subprocesses are
+stopped first).
+
 For a **remote** base URL, setup and onboard do **not** install the server
 agent. They probe `/health`; if the host is unreachable they warn and ask
 whether to continue saving prefs / installing Spotty Bunny anyway.

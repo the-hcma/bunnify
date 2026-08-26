@@ -94,6 +94,42 @@ class ServerAgentTests(SimpleTestCase):
             self.assertTrue(any(call[1] == "bootstrap" for call in ctl.calls))
             self.assertIn("listening at http://127.0.0.1:8123", stderr.getvalue())
 
+    def test_install_writes_bookmarks_into_plist(self) -> None:
+        from app.server_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            bookmarks = home / "custom" / "bookmarks.json"
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=False),
+                patch("app.server_agent.check_health", return_value=True),
+                patch(
+                    "app.server_agent._port_served_by_pid_dir",
+                    side_effect=lambda port, pid_dir: pid_dir.name == "launchd",
+                ),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    bookmarks=bookmarks,
+                    print_err=lambda _m: None,
+                    program=program,
+                    timeout_s=1,
+                )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            self.assertEqual(code, 0)
+            text = plist.read_text(encoding="utf-8")
+            self.assertIn("--bookmarks", text)
+            self.assertIn(str(bookmarks.resolve()), text)
+
     def test_install_rejects_non_darwin(self) -> None:
         from app.server_agent import install_agent
 
@@ -149,6 +185,35 @@ class ServerAgentTests(SimpleTestCase):
             code = run_agent_command("install", ["--port", "9001"])
         self.assertEqual(code, 0)
         self.assertEqual(install.call_args.kwargs["port"], 9001)
+
+    def test_install_rolls_back_plist_when_bootstrap_fails(self) -> None:
+        from app.server_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch("app.server_agent._reload_agent", return_value=False),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            self.assertEqual(code, 1)
+            self.assertFalse(plist.exists())
+            self.assertIn("launchctl bootstrap failed", stderr.getvalue())
 
     def test_install_rolls_back_plist_when_health_fails(self) -> None:
         from app.server_agent import AGENT_LABEL, install_agent
