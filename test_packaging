@@ -118,20 +118,27 @@ dest = Path(os.environ["XDG_CONFIG_HOME"]) / "bunnify" / "bookmarks.json"
 seed_bookmarks_from_example(dest)
 PY
 
+installed_env() {
+    # Installed-wheel smoke runs inside GitHub Actions where GITHUB_SHA is the
+    # workflow trigger commit, not necessarily the checked-out HEAD. Production
+    # installs never set those variables — match that when validating /health.
+    env -u GITHUB_SHA -u BUNNIFY_GIT_SHA "$@"
+}
+
 "$bin_dir/bunnify" --help >/dev/null
-version_line="$("$bin_dir/bunnify" --version)"
+version_line="$(installed_env "$bin_dir/bunnify" --version)"
 printf '%s\n' "$version_line"
 if [[ "$version_line" == *"(unknown)"* ]]; then
     echo "Installed --version still reports unknown commit: $version_line" >&2
     exit 1
 fi
-"$bin_dir/bunnify-server" --help >/dev/null
-"$bin_dir/bunnify-server" --version
-"$bin_dir/spotty-bunny" --help >/dev/null
-"$bin_dir/spotty-bunny" --version
+installed_env "$bin_dir/bunnify-server" --help >/dev/null
+installed_env "$bin_dir/bunnify-server" --version
+installed_env "$bin_dir/spotty-bunny" --help >/dev/null
+installed_env "$bin_dir/spotty-bunny" --version
 
 echo "🐰 Starting installed server outside the repository..."
-"$bin_dir/bunnify-server" \
+installed_env "$bin_dir/bunnify-server" \
     --log-file "$log_file" \
     --noninteractive \
     --pid-dir "$pid_dir" \
@@ -147,7 +154,7 @@ port_file="$pid_dir/.bunnify.port"
 for _ in {1..100}; do
     if [[ -s "$port_file" ]]; then
         port="$(<"$port_file")"
-        if health="$(curl --fail --silent --max-time 2 "http://127.0.0.1:$port/health")" \
+        if health="$(installed_env curl --fail --silent --max-time 2 "http://127.0.0.1:$port/health")" \
             && [[ "$health" == "ok" ]]; then
             break
         fi
@@ -164,7 +171,7 @@ if [[ "${health:-}" != "ok" ]]; then
 fi
 
 health_json="$(
-    curl --fail --silent --max-time 2 \
+    installed_env curl --fail --silent --max-time 2 \
         --header "Accept: application/json" \
         "http://127.0.0.1:$port/health"
 )"
