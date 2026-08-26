@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shlex
 import signal
 import socket
@@ -159,6 +160,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+_PYTHON_EXECUTABLE_RE = re.compile(r"^(?:python|pypy)[0-9.]*(?:\.exe)?$", re.IGNORECASE)
+
+_PYTHON_OPTIONS_WITH_VALUE = frozenset({"--check-hash-based-pycs", "-W", "-X"})
+
+
 def _background_command(
     options: ServerOptions,
     bookmarks: Path,
@@ -243,6 +249,7 @@ def _initialize_database(*, bookmarks: Path, noninteractive: bool) -> None:
 
 
 def _is_bunnify_command(command: str) -> bool:
+    """Return whether a ``ps`` command line belongs to a Bunnify server."""
     try:
         arguments = shlex.split(command)
     except ValueError:
@@ -250,10 +257,12 @@ def _is_bunnify_command(command: str) -> bool:
     if not arguments:
         return False
 
-    if len(arguments) >= 3 and arguments[1:3] == ["-m", "app.server_cli"]:
+    if Path(arguments[0]).name == "bunnify-server":
         return True
-    executable_names = {Path(argument).name for argument in arguments[:2]}
-    return "bunnify-server" in executable_names
+    target = _python_invocation_target(arguments)
+    if target is None:
+        return False
+    return target == "app.server_cli" or Path(target).name == "bunnify-server"
 
 
 def _is_bunnify_process(pid: int) -> bool:
@@ -439,6 +448,30 @@ def _process_managed_by_pid_dir(pid: int, pid_dir: Path) -> bool:
         return recorded.resolve() == pid_dir.expanduser().resolve()
     except OSError:
         return recorded.expanduser() == pid_dir.expanduser()
+
+
+def _python_invocation_target(arguments: list[str]) -> str | None:
+    """Return the script path or ``-m`` module a Python command line runs.
+
+    macOS LaunchAgents start the console script through the interpreter
+    (``<python> -E /path/to/bunnify-server --foreground ...``), so interpreter
+    options have to be skipped before the target becomes visible. Returns
+    ``None`` when ``arguments`` is not a Python invocation, or when it runs code
+    from ``-c`` or stdin rather than a named script or module.
+    """
+    if not arguments or not _PYTHON_EXECUTABLE_RE.match(Path(arguments[0]).name):
+        return None
+    index = 1
+    while index < len(arguments):
+        argument = arguments[index]
+        if not argument.startswith("-"):
+            return argument
+        if argument in {"-", "-c"}:
+            return None
+        if argument == "-m":
+            return arguments[index + 1] if index + 1 < len(arguments) else None
+        index += 2 if argument in _PYTHON_OPTIONS_WITH_VALUE else 1
+    return None
 
 
 def _read_pid(path: Path) -> int | None:
