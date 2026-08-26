@@ -13,7 +13,8 @@ to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
 - `bookmarks.json` contains personal shortcuts (required before server start).
 - `config.env` contains persistent CLI server preferences:
   `BUNNIFY_MODE`, `BUNNIFY_BASE_URL`, and `BUNNIFY_LOCAL_PORT`.
-- `run/` contains PID and selected-port files for the CLI-managed local server.
+- `run/` contains PID and port files for CLI-managed servers. On macOS the
+  server LaunchAgent uses `run/launchd/` (see [LOCAL.md](LOCAL.md)).
 
 Writable data (logs, SQLite, Spotty Bunny’s daily PyPI check cache
 `pypi-latest.json`) lives under `$XDG_DATA_HOME/bunnify` or `BUNNIFY_DATA_DIR`.

@@ -58,6 +58,8 @@ bunnify upgrade
 
 That prints the version/commit you are running from and the pipx app you
 upgraded to. Bare `pipx upgrade bunnify` also works but does not compare builds.
+On macOS, `bunnify upgrade` refreshes installed server and Spotty Bunny
+LaunchAgents when their plists are present.
 
 For runtime configuration and server setup, see
 [Configuration](CONFIG.md) and [Local and remote setup](LOCAL.md).

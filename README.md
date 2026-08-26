@@ -72,6 +72,10 @@ That prints the version/commit you are running **from**, the PyPI target, then
 the pipx app version/commit **to** after `pipx upgrade`. Use this instead of
 bare `pipx upgrade bunnify` so you can see when PATH is still a git checkout.
 
+On **macOS**, `bunnify upgrade` also refreshes installed server and Spotty Bunny
+LaunchAgents when their plists are present (or run `bunnify-server upgrade` /
+`bunnify spotty-bunny upgrade` manually).
+
 `pipx upgrade` only updates `~/.local/bin/bunnify`. If `bunnify --version` still
 shows a checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv`.
 After `pipx ensurepath`, `command -v bunnify` should be `~/.local/bin/bunnify`.
@@ -108,15 +112,18 @@ for overrides (`BUNNIFY_BOOKMARKS`, `XDG_CONFIG_HOME`).
 bunnify setup
 ```
 
-**Laptop / daily machine:** choose **local** (default). Setup starts a managed
-server, verifies `/health`, records the port, and saves settings to
-`~/.config/bunnify/config.env`. Point Chrome or Edge at the same
-`BUNNIFY_BASE_URL`
+**Laptop / daily machine:** choose **local** (default). On **macOS**, setup
+installs the **server LaunchAgent** (`com.thehcma.bunnify`), verifies
+`/health`, records the port, and saves settings to `~/.config/bunnify/config.env`.
+Elsewhere it starts a managed background server the same way as before. Point
+Chrome or Edge at the same `BUNNIFY_BASE_URL`
 ([Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)).
 
 **Home server / always-on host:** choose **remote** on client devices and enter
-that host’s URL. Prefer a centralized remote install when several machines share
-one server — not as a laptop’s only dependency if you often go offline.
+that host’s URL. Setup probes `/health`; if the host is unreachable it warns
+and asks before saving. Prefer a centralized remote install when several
+machines share one server — not as a laptop’s only dependency if you often go
+offline.
 
 One-time override without saving: `bunnify --base-url https://… shortcut`.
 
@@ -141,6 +148,8 @@ Unknown keys exit non-zero in direct mode (no search-engine fallback).
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
 - **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`;
   login LaunchAgent via `install` / `upgrade` / `uninstall`)
+- **macOS server LaunchAgent** — local setup installs `bunnify-server` under
+  launchd (`bunnify-server install|status|upgrade|uninstall`)
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
 - **Chrome / Edge** — OpenSearch at `/opensearch.xml`
   ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
@@ -170,12 +179,13 @@ runs in the **foreground** for debugging.
 ### Upgrade
 
 ```bash
-bunnify upgrade                 # pipx package
-bunnify spotty-bunny upgrade    # refresh the LaunchAgent binary path
+bunnify upgrade                 # pipx package; on macOS refreshes LaunchAgents
+bunnify spotty-bunny upgrade    # manual plist bounce when needed
 ```
 
-Run `upgrade` after `bunnify upgrade` so launchd does not keep a stale
-`ProgramArguments` path.
+On macOS, `bunnify upgrade` rewrites both LaunchAgents when installed. Use
+`bunnify spotty-bunny upgrade` only when you need to refresh Spotty without
+upgrading the pipx package.
 
 ### Uninstall
 
@@ -204,18 +214,22 @@ Installed users manage the server with **`bunnify-server`**:
 
 ```bash
 bunnify-server --help
-# Foreground (systemd, LaunchAgent, debugging):
+bunnify-server install --port 8000   # macOS: server LaunchAgent only
+bunnify-server status
+bunnify-server upgrade               # rewrite plist for current binary
+# Foreground (systemd, debugging):
 bunnify-server --foreground --noninteractive --port 8000
-# Background managed daemon (returns after fork):
+# Background managed daemon (non-macOS or manual):
 bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run
 bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 curl --max-time 2 http://127.0.0.1:8000/health
 ```
 
-`bunnify setup` starts a managed local server for daily CLI use. Stop it with:
+**Local setup:** `bunnify setup` (macOS installs the server LaunchAgent; other
+platforms start a managed background server). Stop with:
 
 ```bash
-bunnify stop
+bunnify stop    # macOS: boot out server LaunchAgent; else stop managed server
 ```
 
 That prints the URL and runtime directory before stopping. Details:
@@ -226,8 +240,10 @@ That prints the URL and runtime directory before stopping. Details:
 via `setup-service` from
 [repository-helpers](https://github.com/the-hcma/repository-helpers).
 
-**macOS:**
-[LaunchAgent example](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.plist.example).
+**macOS:** prefer `bunnify setup` (local) or the commands above. Manual plist
+copy is optional — see
+[LaunchAgent example](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.plist.example)
+and [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ## Web usage
 
