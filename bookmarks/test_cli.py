@@ -2440,6 +2440,10 @@ class ConfigUnitTests(TestCase):
             patch("app.cli.assess_local_coherence", return_value=report),
             patch("app.cli.get_build_info", return_value=("0.9.0", "oldoldoldold")),
             patch("app.cli.ensure_local_spotty_aligned", return_value=True) as spotty,
+            patch(
+                "app.cli.running_spotty_commit",
+                return_value=(True, "newnewnewnew"),
+            ),
         ):
             _report_post_upgrade_coherence(
                 print_fn=messages.append,
@@ -2449,8 +2453,66 @@ class ConfigUnitTests(TestCase):
             )
         joined = "\n".join(messages)
         self.assertNotIn("Local server is", joined)
-        spotty.assert_called_once_with(force_restart=True, print_fn=messages.append)
+        spotty.assert_called_once_with(
+            cli_commit="newnewnewnew",
+            force_restart=True,
+            print_fn=messages.append,
+        )
         self.assertIn("Spotty Bunny restarted", joined)
+
+    def test_report_post_upgrade_coherence_skips_when_build_unreadable(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with patch("app.cli.assess_local_coherence") as assess:
+            _report_post_upgrade_coherence(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=True,
+                upgraded_build=None,
+            )
+        assess.assert_not_called()
+        self.assertIn("skipping version coherence checks", "\n".join(messages))
+
+    def test_report_post_upgrade_coherence_uses_preferences_base_url(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.client import HealthStatus
+        from app.coherence import LocalCoherenceReport
+        from app.config import ServerPreferences
+        from app.theme import Theme
+
+        server = HealthStatus(ok=True, version="0.10.0", commit="newnewnewnew")
+        report = LocalCoherenceReport(
+            local_commit="oldoldoldold",
+            local_version="0.9.0",
+            server=server,
+            spotty_commit="newnewnewnew",
+            spotty_running=False,
+        )
+        preferences = ServerPreferences(
+            mode="local",
+            base_url="http://127.0.0.1:8765",
+            local_port=8765,
+        )
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.load_preferences", return_value=preferences),
+            patch("app.cli.resolve_base_url") as resolve,
+            patch("app.cli.assess_local_coherence", return_value=report) as assess,
+        ):
+            _report_post_upgrade_coherence(
+                print_fn=lambda _line: None,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=False,
+                upgraded_build="0.10.0 (newnewnewnew)",
+            )
+        resolve.assert_not_called()
+        assess.assert_called_once_with(base_url="http://127.0.0.1:8765")
 
     def test_ensure_local_spotty_after_setup_warns_when_still_mismatched(self) -> None:
         from unittest.mock import patch

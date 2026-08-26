@@ -2457,6 +2457,37 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 "4242\nabc1234\n",
             )
 
+    def test_ensure_spotty_bunny_running_honors_cli_commit_override(self) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="stalecommit",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        cli_commit="newcommit9",
+                        pid_dir=pid_dir,
+                        spawn=lambda _cmd: 4242,
+                    )
+                )
+            self.assertEqual(
+                (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
+                "4242\nnewcommit9\n",
+            )
+
     def test_ensure_spotty_bunny_running_keeps_mismatch_when_declined(
         self,
     ) -> None:

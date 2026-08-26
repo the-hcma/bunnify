@@ -42,6 +42,7 @@ def clear_spotty_bunny_pid(
 
 def ensure_spotty_bunny_running(
     *,
+    cli_commit: str | None = None,
     force_restart: bool = False,
     installed: bool | None = None,
     loaded: bool | None = None,
@@ -58,7 +59,7 @@ def ensure_spotty_bunny_running(
     if sys.platform != "darwin":
         return False
     directory = pid_dir if pid_dir is not None else run_dir()
-    current = git_commit()
+    current = cli_commit if cli_commit is not None else git_commit()
     if loaded is None or installed is None:
         if pid_dir is None:
             from app.spotty_bunny_agent import is_agent_installed, is_agent_loaded

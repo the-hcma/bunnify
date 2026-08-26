@@ -95,6 +95,7 @@ def cli_is_newer_than(health: HealthStatus) -> bool:
 
 def ensure_local_spotty_aligned(
     *,
+    cli_commit: str | None = None,
     force_restart: bool = False,
     print_fn: Callable[[str], None] | None = None,
     restart: RestartFn | None = None,
@@ -119,6 +120,7 @@ def ensure_local_spotty_aligned(
         )
 
     return ensure_spotty_bunny_running(
+        cli_commit=cli_commit,
         force_restart=force_restart,
         restart=offer_restart,
     )

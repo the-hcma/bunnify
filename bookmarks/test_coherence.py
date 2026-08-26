@@ -73,7 +73,7 @@ class OfferRemoteBuildMismatchTests(unittest.TestCase):
 
 class AssessLocalCoherenceTests(unittest.TestCase):
     def test_report_marks_spotty_skew(self) -> None:
-        health = HealthStatus(ok=True, version="0.10.0", commit="servercommit1")
+        health = HealthStatus(ok=True, version="0.10.0", commit="localcommit1")
         with (
             patch("app.coherence.fetch_health", return_value=health),
             patch(
@@ -88,3 +88,4 @@ class AssessLocalCoherenceTests(unittest.TestCase):
             report = assess_local_coherence(base_url="http://127.0.0.1:8000")
         self.assertIsInstance(report, LocalCoherenceReport)
         self.assertFalse(report.coherent)
+        self.assertEqual(report.spotty_commit, "oldspotty1")

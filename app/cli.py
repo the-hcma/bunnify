@@ -711,9 +711,16 @@ def _report_post_upgrade_coherence(
 
     parsed = parse_build_label(upgraded_build) if upgraded_build else None
     if parsed is None:
-        local_version, local_commit = get_build_info()
-    else:
-        local_version, local_commit = parsed
+        if upgraded_build is None:
+            print_fn(
+                theme.dim(
+                    "Could not read the upgraded pipx build; skipping version "
+                    "coherence checks. Run ~/.local/bin/bunnify --version to "
+                    "confirm."
+                )
+            )
+        return
+    local_version, local_commit = parsed
     local_label = f"{local_version} ({local_commit})"
     preferences = load_preferences()
     if preferences is not None and preferences.mode == "remote":
@@ -739,7 +746,10 @@ def _report_post_upgrade_coherence(
             )
         return
 
-    base_url = resolve_base_url(persist=False, allow_prompt=False)
+    if preferences is not None and preferences.base_url:
+        base_url = preferences.base_url
+    else:
+        base_url = resolve_base_url(persist=False, allow_prompt=False)
     report = assess_local_coherence(base_url=base_url)
     server = report.server
     if (
@@ -765,14 +775,26 @@ def _report_post_upgrade_coherence(
     spotty_commit = report.spotty_commit
     if report.spotty_running and spotty_commit != local_commit:
         print_fn(theme.dim("Restarting Spotty Bunny to match the upgraded CLI…"))
-        if not ensure_local_spotty_aligned(force_restart=True, print_fn=print_fn):
+        if not ensure_local_spotty_aligned(
+            cli_commit=local_commit,
+            force_restart=True,
+            print_fn=print_fn,
+        ):
             print_fn(
                 theme.warn(
                     "Spotty Bunny did not restart. Run: bunnify spotty-bunny upgrade"
                 )
             )
-        else:
+            return
+        running, aligned_commit = running_spotty_commit()
+        if running and aligned_commit == local_commit:
             print_fn(theme.ok("✓ Spotty Bunny restarted on the upgraded build"))
+        else:
+            print_fn(
+                theme.warn(
+                    "Spotty Bunny did not restart. Run: bunnify spotty-bunny upgrade"
+                )
+            )
 
 
 def _command_banner(action: str) -> str:
