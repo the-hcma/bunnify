@@ -2488,6 +2488,52 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 "4242\nnewcommit9\n",
             )
 
+    def test_ensure_spotty_bunny_running_force_restart_matching_commit(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_PID_FILE,
+            ensure_spotty_bunny_running,
+        )
+
+        spawned: list[int] = []
+
+        def spawn(_cmd: object) -> int:
+            spawned.append(5151)
+            return 5151
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp)
+            (pid_dir / SPOTTY_BUNNY_PID_FILE).write_text(
+                "4242\nsamecommit\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("app.spotty_bunny_launch.sys.platform", "darwin"),
+                patch(
+                    "app.spotty_bunny_launch.git_commit",
+                    return_value="samecommit",
+                ),
+                patch(
+                    "app.spotty_bunny_launch._spotty_bunny_process_alive",
+                    return_value=True,
+                ),
+                patch("app.spotty_bunny_launch.stop_spotty_bunny") as stop,
+            ):
+                self.assertTrue(
+                    ensure_spotty_bunny_running(
+                        force_restart=True,
+                        pid_dir=pid_dir,
+                        spawn=spawn,
+                    )
+                )
+            stop.assert_called_once_with(pid_dir=pid_dir)
+            self.assertEqual(spawned, [5151])
+            self.assertEqual(
+                (pid_dir / SPOTTY_BUNNY_PID_FILE).read_text(encoding="utf-8"),
+                "5151\nsamecommit\n",
+            )
+
     def test_ensure_spotty_bunny_running_keeps_mismatch_when_declined(
         self,
     ) -> None:

@@ -148,30 +148,44 @@ def offer_remote_build_mismatch(
     """Warn when *health* differs from this CLI; return True to continue anyway."""
     if not health.ok or builds_match(health):
         return True
-    if health.version is None or health.commit is None:
-        return True
     local_version, local_commit = get_build_info()
     local_label = f"{local_version} ({local_commit})"
-    remote_label = format_build_label(health)
-    print_fn(
-        theme.warn(
-            f"Remote server at {base_url} is {remote_label}; this Mac is {local_label}."
+    if health.version is None or health.commit is None:
+        remote_label = "unknown build"
+        print_fn(
+            theme.warn(
+                f"Remote server at {base_url} reports {remote_label}; "
+                f"this Mac is {local_label}."
+            )
         )
-    )
-    if cli_is_newer_than(health):
         print_fn(
             theme.dim(
-                "Upgrade the remote host (merge latest release, redeploy, or "
-                "run `bunnify upgrade` there) so both sides match."
+                "The remote server may be an older release without build "
+                "reporting in /health."
             )
         )
     else:
+        remote_label = format_build_label(health)
         print_fn(
-            theme.dim(
-                "Upgrade this Mac with `bunnify upgrade` or align the remote "
-                "host to the same release."
+            theme.warn(
+                f"Remote server at {base_url} is {remote_label}; "
+                f"this Mac is {local_label}."
             )
         )
+        if cli_is_newer_than(health):
+            print_fn(
+                theme.dim(
+                    "Upgrade the remote host (merge latest release, redeploy, or "
+                    "run `bunnify upgrade` there) so both sides match."
+                )
+            )
+        else:
+            print_fn(
+                theme.dim(
+                    "Upgrade this Mac with `bunnify upgrade` or align the remote "
+                    "host to the same release."
+                )
+            )
     return _confirm_explicit_yes(
         prompt_fn,
         "Continue with this client/server version skew? [y/N]: ",

@@ -70,6 +70,22 @@ class OfferRemoteBuildMismatchTests(unittest.TestCase):
             )
         self.assertFalse(allowed)
 
+    def test_prompts_for_versionless_remote(self) -> None:
+        health = HealthStatus(ok=True, version=None, commit=None)
+        messages: list[str] = []
+        with patch("app.coherence.get_build_info", return_value=NEW_BUILD):
+            allowed = offer_remote_build_mismatch(
+                lambda _message: "y",
+                base_url="https://remote.example/",
+                health=health,
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+            )
+        self.assertTrue(allowed)
+        joined = "\n".join(messages)
+        self.assertIn("unknown build", joined)
+        self.assertIn("older release without build reporting", joined)
+
 
 class AssessLocalCoherenceTests(unittest.TestCase):
     def test_report_marks_spotty_skew(self) -> None:

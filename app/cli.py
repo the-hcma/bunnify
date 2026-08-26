@@ -711,14 +711,13 @@ def _report_post_upgrade_coherence(
 
     parsed = parse_build_label(upgraded_build) if upgraded_build else None
     if parsed is None:
-        if upgraded_build is None:
-            print_fn(
-                theme.dim(
-                    "Could not read the upgraded pipx build; skipping version "
-                    "coherence checks. Run ~/.local/bin/bunnify --version to "
-                    "confirm."
-                )
+        print_fn(
+            theme.dim(
+                "Could not read the upgraded pipx build; skipping version "
+                "coherence checks. Run ~/.local/bin/bunnify --version to "
+                "confirm."
             )
+        )
         return
     local_version, local_commit = parsed
     local_label = f"{local_version} ({local_commit})"
