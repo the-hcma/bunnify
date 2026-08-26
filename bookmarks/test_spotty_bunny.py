@@ -2968,6 +2968,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("upgradeSpottyBunny:", menu_source)
         self.assertIn("setMenu_(menu)", source)
         self.assertIn("rightMouseDown_", source)
+        self.assertIn('refresh_launch_agents="server"', source)
         self.assertIn("refresh_agent_plist", source)
         self.assertIn("if refresh_agent_plist() != 0", source)
         self.assertIn("bootout_loaded_agent", source)

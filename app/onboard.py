@@ -353,6 +353,7 @@ def _format_spotty_bunny_section(state: InstallState, step: int) -> list[str]:
             f"{step}. macOS Spotty Bunny (optional search box): installed",
             "     bunnify spotty-bunny status",
             "     bunnify upgrade && bunnify spotty-bunny upgrade",
+            "     # (`bunnify upgrade` also refreshes both LaunchAgents)",
             "     bunnify spotty-bunny uninstall",
             "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
             "",

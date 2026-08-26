@@ -264,7 +264,10 @@ For a **remote** base URL, setup and onboard do **not** install the server
 agent. They probe `/health`; if the host is unreachable they warn and ask
 whether to continue saving prefs / installing Spotty Bunny anyway.
 
-Prefer `bunnify spotty-bunny install` for the overlay agent. Manual `launchctl`
+Prefer `bunnify spotty-bunny install` for the overlay agent. After
+`bunnify upgrade`, both LaunchAgents are refreshed automatically when
+installed (`bunnify-server upgrade` / `bunnify spotty-bunny upgrade` still
+work for a manual bounce). Manual `launchctl`
 (only if you need it):
 
 ```bash

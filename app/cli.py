@@ -8,6 +8,7 @@ import sys
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import click
 from packaging.version import InvalidVersion, Version
@@ -328,6 +329,8 @@ def run_setup(
                     pid_dir=pid_dir,
                     bookmarks=bookmarks,
                     print_fn=log,
+                    prompt_fn=ask,
+                    theme=colors,
                 )
             except (OSError, RuntimeError, ValueError) as exc:
                 if _retry_requested(
@@ -506,10 +509,17 @@ def run_upgrade(
     *,
     print_fn: Callable[[str], None] | None = None,
     pipx_bin: str | None = None,
+    refresh_launch_agents: bool | Literal["server"] = True,
     run_fn: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     theme: Theme | None = None,
 ) -> None:
-    """Upgrade the pipx install and report from/to versions with commits."""
+    """Upgrade the pipx install and report from/to versions with commits.
+
+    When *refresh_launch_agents* is True (CLI default), rewrite and bounce both
+    macOS LaunchAgents after a successful pipx upgrade. Pass ``\"server\"`` from
+    the Spotty Bunny overlay so only the server agent is bounced (the overlay
+    refreshes its own plist and quits for relaunch).
+    """
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
     package, commit = get_build_info()
@@ -584,6 +594,12 @@ def run_upgrade(
             "This process is still the checkout. Use the pipx path above "
             "(after `pipx ensurepath`) for the upgraded app."
         )
+    if refresh_launch_agents and sys.platform == "darwin":
+        _refresh_macos_launch_agents(
+            include_spotty=refresh_launch_agents is True,
+            print_fn=log,
+            theme=colors,
+        )
 
 
 def matching_keys(keys: list[str], prefix: str) -> list[str]:
@@ -635,6 +651,8 @@ def _ensure_local_server_for_setup(
     pid_dir: Path,
     bookmarks: Path | None,
     print_fn: Callable[[str], None],
+    prompt_fn: Callable[[str], str] | None = None,
+    theme: Theme | None = None,
 ) -> tuple[str, int]:
     """Start a healthy local server; on macOS prefer the login LaunchAgent."""
     if sys.platform != "darwin":
@@ -647,10 +665,26 @@ def _ensure_local_server_for_setup(
     else:
         chosen = port
     base_url = f"http://127.0.0.1:{chosen}"
-    if check_health(base_url):
-        # Healthy listener already on this port (LaunchAgent, manual, or other
-        # pid-dir); reuse it instead of bouncing launchd.
-        return base_url, chosen
+    colors = theme if theme is not None else Theme(enabled=False)
+    ask = prompt_fn or input
+    health = fetch_health(base_url)
+    if health.ok:
+        if _builds_match(health):
+            return base_url, chosen
+        decided = _offer_restart_mismatched_server(
+            ask,
+            port=chosen,
+            health=health,
+            pid_dir=pid_dir,
+            print_fn=print_fn,
+            theme=colors,
+        )
+        if decided is None:
+            raise RuntimeError(f"Could not stop the mismatched server on port {chosen}")
+        chosen, restart = decided
+        base_url = f"http://127.0.0.1:{chosen}"
+        if not restart:
+            return base_url, chosen
 
     agent_pid_dir = launchd_pid_dir()
     messages: list[str] = []
@@ -757,6 +791,11 @@ def _offer_restart_mismatched_server(
     if not _confirm_explicit_yes(prompt_fn, prompt):
         print_fn(theme.dim(f"Reusing the running server ({running_label})."))
         return port, False
+    if sys.platform == "darwin":
+        from app.server_agent import bootout_loaded_agent, is_agent_installed
+
+        if is_agent_installed():
+            bootout_loaded_agent()
     try:
         stop_local_server(
             pid_dir,
@@ -881,6 +920,60 @@ def _read_executable_build(executable: Path) -> str | None:
     return _parse_version_line(completed.stdout or "")
 
 
+def _refresh_macos_launch_agents(
+    *,
+    include_spotty: bool,
+    print_fn: Callable[[str], None],
+    theme: Theme,
+) -> None:
+    """Rewrite and bounce installed LaunchAgents after a local pipx upgrade."""
+    from app.server_agent import (
+        is_agent_installed as server_agent_installed,
+    )
+    from app.server_agent import (
+        upgrade_agent as upgrade_server_agent,
+    )
+
+    if server_agent_installed():
+        print_fn(theme.dim("Refreshing Bunnify server LaunchAgent…"))
+        code = upgrade_server_agent(
+            print_err=print_fn,
+            timeout_s=60,
+        )
+        if code == 0:
+            print_fn(theme.ok("✓ Bunnify server LaunchAgent refreshed"))
+        else:
+            print_fn(
+                theme.warn(
+                    "Server LaunchAgent refresh failed; run: bunnify-server upgrade"
+                )
+            )
+    if not include_spotty:
+        return
+    from app.spotty_bunny_agent import (
+        is_agent_installed as spotty_agent_installed,
+    )
+    from app.spotty_bunny_agent import (
+        upgrade_agent as upgrade_spotty_agent,
+    )
+
+    if spotty_agent_installed():
+        print_fn(theme.dim("Refreshing Spotty Bunny LaunchAgent…"))
+        code = upgrade_spotty_agent(
+            print_err=print_fn,
+            skip_chord_confirm=True,
+        )
+        if code == 0:
+            print_fn(theme.ok("✓ Spotty Bunny LaunchAgent refreshed"))
+        else:
+            print_fn(
+                theme.warn(
+                    "Spotty Bunny LaunchAgent refresh failed; "
+                    "run: bunnify spotty-bunny upgrade"
+                )
+            )
+
+
 def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
     try:
         answer = prompt_fn(message)
@@ -919,6 +1012,35 @@ def _restart_local_server_if_build_mismatch(
     chosen, restart = decided
     if not restart:
         return base_url, port
+    # After an explicit restart confirmation, start this CLI's build without
+    # re-entering the mismatch prompt (health may still report the old build
+    # until the replacement process is up).
+    if sys.platform == "darwin":
+        from app.server_agent import (
+            install_agent,
+            is_agent_installed,
+            launchd_pid_dir,
+        )
+
+        if is_agent_installed():
+            agent_pid_dir = launchd_pid_dir()
+            messages: list[str] = []
+
+            def capture(message: str) -> None:
+                messages.append(message)
+                print_fn(message)
+
+            code = install_agent(
+                bookmarks=bookmarks,
+                pid_dir=agent_pid_dir,
+                port=chosen,
+                print_err=capture,
+                timeout_s=60,
+            )
+            if code != 0:
+                detail = messages[-1] if messages else "LaunchAgent install failed"
+                raise RuntimeError(detail)
+            return f"http://127.0.0.1:{chosen}", chosen
     started_url, started_port = ensure_local_server(
         port=chosen,
         pid_dir=pid_dir,

@@ -890,6 +890,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.fetch_health", return_value=remote),
                 patch("app.cli.check_health", side_effect=check_health),
                 patch("app.cli.stop_local_server", side_effect=stop_server),
+                patch("app.server_agent.is_agent_installed", return_value=False),
             ):
                 result = ensure_ready_base_url(
                     environ={"XDG_CONFIG_HOME": tmp},
@@ -944,6 +945,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.fetch_health", return_value=remote),
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.stop_local_server"),
+                patch("app.server_agent.is_agent_installed", return_value=False),
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
@@ -1040,6 +1042,7 @@ class ConfigUnitTests(TestCase):
                     "app.cli.stop_local_server",
                     side_effect=RuntimeError("Port 8123 is still busy after stop"),
                 ),
+                patch("app.server_agent.is_agent_installed", return_value=False),
             ):
                 result = ensure_ready_base_url(
                     environ={"XDG_CONFIG_HOME": tmp},
@@ -2303,6 +2306,7 @@ class ConfigUnitTests(TestCase):
                 side_effect=["0.4.0 (oldoldoldold)", "0.5.0 (newnewnewnew)"],
             ),
             patch("app.cli.subprocess.run", return_value=completed) as run,
+            patch("app.cli._refresh_macos_launch_agents") as refresh_agents,
         ):
             result = CliRunner().invoke(main, ["upgrade"])
 
@@ -2315,6 +2319,8 @@ class ConfigUnitTests(TestCase):
         self.assertIn("git checkout", result.output)
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], ["/usr/bin/pipx", "upgrade", "bunnify"])
+        refresh_agents.assert_called_once()
+        self.assertTrue(refresh_agents.call_args.kwargs["include_spotty"])
 
     def test_upgrade_restores_macos_extra_after_pipx_upgrade(self) -> None:
         import subprocess
@@ -2344,12 +2350,154 @@ class ConfigUnitTests(TestCase):
                 side_effect=["0.4.0 (oldoldoldold)", "0.5.0 (newnewnewnew)"],
             ),
             patch("app.cli.subprocess.run", return_value=completed),
+            patch("app.cli._refresh_macos_launch_agents"),
         ):
             result = CliRunner().invoke(main, ["upgrade"])
 
         self.assertEqual(result.exit_code, 0, result.output)
         restore.assert_called_once()
         self.assertEqual(restore.call_args.args[0], "/usr/bin/pipx")
+
+    def test_upgrade_refreshes_installed_launch_agents(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _refresh_macos_launch_agents
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.server_agent.is_agent_installed", return_value=True),
+            patch("app.server_agent.upgrade_agent", return_value=0) as server,
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_agent.upgrade_agent", return_value=0) as spotty,
+        ):
+            _refresh_macos_launch_agents(
+                include_spotty=True,
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+            )
+        server.assert_called_once()
+        spotty.assert_called_once()
+        self.assertTrue(spotty.call_args.kwargs.get("skip_chord_confirm"))
+        joined = "\n".join(messages)
+        self.assertIn("server LaunchAgent refreshed", joined)
+        self.assertIn("Spotty Bunny LaunchAgent refreshed", joined)
+
+        messages.clear()
+        with (
+            patch("app.server_agent.is_agent_installed", return_value=True),
+            patch("app.server_agent.upgrade_agent", return_value=0) as server_only,
+            patch("app.spotty_bunny_agent.is_agent_installed") as spotty_installed,
+            patch("app.spotty_bunny_agent.upgrade_agent") as spotty_upgrade,
+        ):
+            _refresh_macos_launch_agents(
+                include_spotty=False,
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+            )
+        server_only.assert_called_once()
+        spotty_installed.assert_not_called()
+        spotty_upgrade.assert_not_called()
+
+    def test_ensure_local_server_for_setup_reuses_matching_build(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_server_for_setup
+        from app.client import HealthStatus
+        from app.theme import Theme
+
+        matching = HealthStatus(ok=True, version="0.3.0", commit="abc123456789")
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.fetch_health", return_value=matching),
+            patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+            patch("app.cli._builds_match", return_value=True),
+            patch("app.server_agent.install_agent") as install,
+        ):
+            url, port = _ensure_local_server_for_setup(
+                port=8123,
+                pid_dir=Path("/tmp/bunnify-run"),
+                bookmarks=None,
+                print_fn=lambda _m: None,
+                theme=Theme(enabled=False),
+            )
+        self.assertEqual((url, port), ("http://127.0.0.1:8123", 8123))
+        install.assert_not_called()
+
+    def test_ensure_local_server_for_setup_installs_when_port_free(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_server_for_setup
+        from app.client import HealthStatus
+        from app.theme import Theme
+
+        unhealthy = HealthStatus(ok=False, version=None, commit=None)
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.fetch_health", return_value=unhealthy),
+            patch("app.server_agent.install_agent", return_value=0) as install,
+            patch(
+                "app.server_agent.launchd_pid_dir",
+                return_value=Path("/tmp/bunnify-run-launchd"),
+            ),
+        ):
+            url, port = _ensure_local_server_for_setup(
+                port=8123,
+                pid_dir=Path("/tmp/bunnify-run"),
+                bookmarks=Path("/tmp/bookmarks.json"),
+                print_fn=lambda _m: None,
+                theme=Theme(enabled=False),
+            )
+        self.assertEqual((url, port), ("http://127.0.0.1:8123", 8123))
+        install.assert_called_once()
+        self.assertEqual(install.call_args.kwargs["port"], 8123)
+        self.assertEqual(
+            install.call_args.kwargs["pid_dir"],
+            Path("/tmp/bunnify-run-launchd"),
+        )
+        self.assertEqual(install.call_args.kwargs["timeout_s"], 60)
+
+    def test_ensure_local_server_for_setup_offers_restart_on_mismatch(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _ensure_local_server_for_setup
+        from app.client import HealthStatus
+        from app.theme import Theme
+
+        old = HealthStatus(ok=True, version="0.2.0", commit="oldoldoldold")
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.fetch_health", return_value=old),
+            patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
+            patch("app.cli._builds_match", return_value=False),
+            patch("app.cli._cli_is_newer_than", return_value=True),
+            patch("app.server_agent.is_agent_installed", return_value=True),
+            patch("app.server_agent.bootout_loaded_agent") as bootout,
+            patch("app.cli.stop_local_server") as stop,
+            patch("app.server_agent.install_agent", return_value=0) as install,
+            patch(
+                "app.server_agent.launchd_pid_dir",
+                return_value=Path("/tmp/bunnify-run-launchd"),
+            ),
+        ):
+            url, port = _ensure_local_server_for_setup(
+                port=8123,
+                pid_dir=Path("/tmp/bunnify-run"),
+                bookmarks=None,
+                print_fn=messages.append,
+                prompt_fn=lambda _m: "y",
+                theme=Theme(enabled=False),
+            )
+        self.assertEqual((url, port), ("http://127.0.0.1:8123", 8123))
+        bootout.assert_called_once()
+        stop.assert_called_once()
+        install.assert_called_once()
+        self.assertEqual(install.call_args.kwargs["port"], 8123)
+        self.assertTrue(any("older than this CLI" in line for line in messages))
 
     def test_upgrade_errors_when_pipx_missing(self) -> None:
         from unittest.mock import patch
