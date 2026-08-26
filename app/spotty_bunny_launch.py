@@ -227,11 +227,11 @@ def write_spotty_bunny_pid(
 
 
 def _is_spotty_bunny_command(command: str) -> bool:
-    """A build marker is authoritative; unmarked (older) builds match by name."""
+    """Match the overlay by name, then let a build marker rule out a sibling."""
+    if "spotty-bunny" not in command and "spotty_bunny_cli" not in command:
+        return False
     marker = marker_from_command(command)
-    if marker is not None:
-        return marker.component == SPOTTY_BUNNY_COMPONENT
-    return "spotty-bunny" in command or "spotty_bunny_cli" in command
+    return marker is None or marker.component == SPOTTY_BUNNY_COMPONENT
 
 
 def _process_command(pid: int) -> str | None:

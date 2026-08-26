@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -269,20 +270,27 @@ def _initialize_database(*, bookmarks: Path, noninteractive: bool) -> None:
 def _is_bunnify_command(command: str) -> bool:
     """Return whether a ``ps`` command line belongs to a Bunnify server.
 
-    A build marker is authoritative when present. Processes started by builds
-    that predate the marker are still matched on their argv shape.
+    The executable has to look like ours before anything else is considered:
+    a mismatch here is how unrelated command lines that merely mention our
+    names or flags are rejected, and callers act on a match by signalling the
+    process. A build marker then refines that decision, ruling out a sibling
+    component. Processes started by builds that predate the marker are
+    accepted on their argv shape alone.
     """
     try:
         arguments = shlex.split(command)
     except ValueError:
         return False
+    if not _is_bunnify_executable(arguments):
+        return False
+    marker = marker_from_arguments(arguments)
+    return marker is None or marker.component == SERVER_COMPONENT
+
+
+def _is_bunnify_executable(arguments: Sequence[str]) -> bool:
+    """Return whether *arguments* launch the Bunnify server program."""
     if not arguments:
         return False
-
-    marker = marker_from_arguments(arguments)
-    if marker is not None:
-        return marker.component == SERVER_COMPONENT
-
     if Path(arguments[0]).name == "bunnify-server":
         return True
     target = _python_invocation_target(arguments)
@@ -476,7 +484,7 @@ def _process_managed_by_pid_dir(pid: int, pid_dir: Path) -> bool:
         return recorded.expanduser() == pid_dir.expanduser()
 
 
-def _python_invocation_target(arguments: list[str]) -> str | None:
+def _python_invocation_target(arguments: Sequence[str]) -> str | None:
     """Return the script path or ``-m`` module a Python command line runs.
 
     macOS LaunchAgents start the console script through the interpreter

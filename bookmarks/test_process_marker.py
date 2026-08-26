@@ -78,15 +78,18 @@ class MarkerParsingTests(SimpleTestCase):
 
 
 class MarkerDetectionTests(SimpleTestCase):
-    def test_marked_server_is_detected_behind_an_opaque_launcher(self) -> None:
+    def test_marker_alone_cannot_promote_an_unrelated_command(self) -> None:
+        """A match authorizes signalling the process, so the executable gates it."""
         from app.server_cli import _is_bunnify_command
 
-        self.assertTrue(
-            _is_bunnify_command(
-                "/opt/some-wrapper --exec "
-                f"{BUILD_MARKER_FLAG} bunnify-server:1.2.3+abc123"
-            )
+        cases = (
+            f"grep -r {BUILD_MARKER_FLAG} bunnify-server:1.0+abc123 .",
+            f"/opt/some-wrapper --exec {BUILD_MARKER_FLAG} bunnify-server:1.0+abc123",
+            f"sh -c 'echo {BUILD_MARKER_FLAG} bunnify-server:1.0+abc123'",
         )
+        for command in cases:
+            with self.subTest(command=command):
+                self.assertFalse(_is_bunnify_command(command))
 
     def test_marker_distinguishes_components(self) -> None:
         from app.server_cli import _is_bunnify_command
@@ -99,6 +102,16 @@ class MarkerDetectionTests(SimpleTestCase):
         self.assertFalse(_is_bunnify_command(spotty))
         self.assertTrue(_is_spotty_bunny_command(spotty))
         self.assertFalse(_is_spotty_bunny_command(server))
+
+    def test_marker_rules_out_a_sibling_component_on_a_matching_shape(self) -> None:
+        from app.server_cli import _is_bunnify_command
+
+        self.assertFalse(
+            _is_bunnify_command(
+                "/usr/bin/python3 -E /opt/bin/bunnify-server "
+                f"{BUILD_MARKER_FLAG} spotty-bunny:1.0+abc123"
+            )
+        )
 
     def test_unmarked_legacy_processes_still_match_by_shape(self) -> None:
         from app.server_cli import _is_bunnify_command
