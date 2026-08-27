@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.0...bunnify-v0.11.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* reliably identify Bunnify's own processes (LaunchAgent detection + build marker) ([#369](https://github.com/the-hcma/bunnify/issues/369)) ([85ae6a2](https://github.com/the-hcma/bunnify/commit/85ae6a2a437cad5e45c1a822a544e94927291d8d))
+
 ## [0.11.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.10.0...bunnify-v0.11.0) (2026-08-26)
 
 
