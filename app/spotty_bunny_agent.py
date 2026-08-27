@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from app.process_marker import SPOTTY_BUNNY_COMPONENT, build_marker_arguments
 from app.spotty_bunny_cli import (
     COMMAND_NAME,
     MACOS_EXTRA_HINT,
@@ -331,6 +332,7 @@ def spotty_bunny_program_arguments() -> list[str] | None:
             resolved.append(found if found else str(path.resolve()))
             continue
         resolved.append(part)
+    resolved.extend(build_marker_arguments(SPOTTY_BUNNY_COMPONENT))
     return resolved
 
 

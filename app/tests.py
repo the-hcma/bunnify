@@ -584,7 +584,28 @@ class ServerStopTests(SimpleTestCase):
             wait_for_port.assert_called_once_with(8123, timeout_s=15)
 
 
+LAUNCHAGENT_COMMAND = (
+    "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/"
+    "3.14/Resources/Python.app/Contents/MacOS/Python -E "
+    "/Users/tester/.local/bin/bunnify-server --foreground --noninteractive "
+    "--port 8000 --pid-dir /Users/tester/.local/share/bunnify/run/launchd"
+)
+
+
 class ServerProcessTests(SimpleTestCase):
+    def test_accepts_abi_flagged_interpreters(self) -> None:
+        for interpreter in ("python3.14t", "python3.14d", "python3.14td", "pypy3"):
+            with self.subTest(interpreter=interpreter):
+                self.assertTrue(
+                    _is_bunnify_command(
+                        f"/tmp/venv/bin/{interpreter} -E "
+                        "/tmp/venv/bin/bunnify-server --port 8000"
+                    )
+                )
+
+    def test_accepts_bare_console_script(self) -> None:
+        self.assertTrue(_is_bunnify_command("bunnify-server --port 8000"))
+
     def test_accepts_bunnify_console_script(self) -> None:
         self.assertTrue(
             _is_bunnify_command(
@@ -597,8 +618,42 @@ class ServerProcessTests(SimpleTestCase):
             _is_bunnify_command("/tmp/venv/bin/python -m app.server_cli --port 8000")
         )
 
+    def test_accepts_interpreter_option_taking_a_value(self) -> None:
+        self.assertTrue(
+            _is_bunnify_command(
+                "/usr/bin/python3 -X importtime -W ignore "
+                "/tmp/venv/bin/bunnify-server --port 8000"
+            )
+        )
+
+    def test_accepts_launchagent_interpreter_invocation(self) -> None:
+        self.assertTrue(_is_bunnify_command(LAUNCHAGENT_COMMAND))
+
+    def test_launchagent_process_is_managed_by_its_pid_dir(self) -> None:
+        from app.server_cli import _process_managed_by_pid_dir
+
+        launchd_dir = Path("/Users/tester/.local/share/bunnify/run/launchd")
+        with mock.patch(
+            "app.server_cli._process_command",
+            return_value=LAUNCHAGENT_COMMAND,
+        ):
+            self.assertTrue(_process_managed_by_pid_dir(1, launchd_dir))
+            self.assertFalse(
+                _process_managed_by_pid_dir(1, Path("/Users/tester/other-run"))
+            )
+
     def test_rejects_command_containing_bunnify_name(self) -> None:
         self.assertFalse(_is_bunnify_command("grep -r bunnify-server ."))
+
+    def test_rejects_interpreter_inline_code(self) -> None:
+        self.assertFalse(
+            _is_bunnify_command("/usr/bin/python3 -c 'print(\"bunnify-server\")'")
+        )
+
+    def test_rejects_unrelated_python_script(self) -> None:
+        self.assertFalse(
+            _is_bunnify_command("/usr/bin/python3 -E /tmp/venv/bin/other-script")
+        )
 
 
 class SettingsDataDirTests(SimpleTestCase):

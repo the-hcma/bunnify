@@ -13,6 +13,11 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from app.config import run_dir
+from app.process_marker import (
+    SPOTTY_BUNNY_COMPONENT,
+    build_marker_arguments,
+    marker_from_command,
+)
 from app.version import git_commit
 
 logger = logging.getLogger(__name__)
@@ -121,7 +126,7 @@ def ensure_spotty_bunny_running(
             )
             return False
         logger.warning("LaunchAgent install failed; falling back to spawn")
-    command = spotty_bunny_command()
+    command = spotty_bunny_launch_arguments(commit=current)
     spawn_fn = spawn or _spawn_detached
     try:
         pid = spawn_fn(command)
@@ -178,6 +183,14 @@ def spotty_bunny_is_running(*, pid_dir: Path | None = None) -> bool:
     return True
 
 
+def spotty_bunny_launch_arguments(*, commit: str | None = None) -> list[str]:
+    """Return the argv used to spawn Spotty Bunny, stamped with its build."""
+    return [
+        *spotty_bunny_command(),
+        *build_marker_arguments(SPOTTY_BUNNY_COMPONENT, commit=commit),
+    ]
+
+
 def spotty_bunny_pid_path(*, pid_dir: Path | None = None) -> Path:
     """Path to the Spotty Bunny PID file under the runtime directory."""
     directory = pid_dir if pid_dir is not None else run_dir()
@@ -214,7 +227,11 @@ def write_spotty_bunny_pid(
 
 
 def _is_spotty_bunny_command(command: str) -> bool:
-    return "spotty-bunny" in command or "spotty_bunny_cli" in command
+    """Match the overlay by name, then let a build marker rule out a sibling."""
+    if "spotty-bunny" not in command and "spotty_bunny_cli" not in command:
+        return False
+    marker = marker_from_command(command)
+    return marker is None or marker.component == SPOTTY_BUNNY_COMPONENT
 
 
 def _process_command(pid: int) -> str | None:

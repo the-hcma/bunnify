@@ -17,6 +17,7 @@ from xml.sax.saxutils import escape
 from app.client import check_health
 from app.config import run_dir
 from app.local_server import port_is_free, stop_local_server
+from app.process_marker import SERVER_COMPONENT, build_marker_arguments
 from app.version import build_version
 
 AGENT_COMMANDS = frozenset({"install", "status", "uninstall", "upgrade"})
@@ -103,6 +104,7 @@ def install_agent(
     agent_pid_dir.mkdir(parents=True, exist_ok=True)
     argv = [
         *program_argv,
+        *build_marker_arguments(SERVER_COMPONENT),
         "--foreground",
         "--noninteractive",
         "--port",

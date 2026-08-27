@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shlex
 import signal
 import socket
@@ -12,11 +13,18 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.client import check_health
 from app.config import data_dir, ensure_user_bookmarks, run_dir
+from app.process_marker import (
+    BUILD_MARKER_FLAG,
+    SERVER_COMPONENT,
+    build_marker_arguments,
+    marker_from_arguments,
+)
 from app.version import build_version
 
 LOG_LEVELS = ("CRITICAL", "DEBUG", "ERROR", "INFO", "WARNING")
@@ -53,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--bookmarks",
         type=Path,
         help="Bookmarks JSON file (default: XDG config bookmarks.json).",
+    )
+    # Stamped by the launcher so `ps` identifies this process and its build.
+    # Carries no behaviour, so it stays out of --help.
+    parser.add_argument(
+        BUILD_MARKER_FLAG,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--console",
@@ -159,6 +174,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+# Trailing ``[dt]`` covers ABI-flagged builds (``python3.14t`` free-threaded,
+# ``python3.14d`` debug), which uv and python.org ship for the versions we target.
+_PYTHON_EXECUTABLE_RE = re.compile(
+    r"^(?:python|pypy)[0-9.]*[dt]*(?:\.exe)?$", re.IGNORECASE
+)
+
+_PYTHON_OPTIONS_WITH_VALUE = frozenset({"--check-hash-based-pycs", "-W", "-X"})
+
+
 def _background_command(
     options: ServerOptions,
     bookmarks: Path,
@@ -168,6 +192,7 @@ def _background_command(
         sys.executable,
         "-m",
         "app.server_cli",
+        *build_marker_arguments(SERVER_COMPONENT),
         "--bookmarks",
         str(bookmarks),
         "--foreground",
@@ -243,17 +268,35 @@ def _initialize_database(*, bookmarks: Path, noninteractive: bool) -> None:
 
 
 def _is_bunnify_command(command: str) -> bool:
+    """Return whether a ``ps`` command line belongs to a Bunnify server.
+
+    The executable has to look like ours before anything else is considered:
+    a mismatch here is how unrelated command lines that merely mention our
+    names or flags are rejected, and callers act on a match by signalling the
+    process. A build marker then refines that decision, ruling out a sibling
+    component. Processes started by builds that predate the marker are
+    accepted on their argv shape alone.
+    """
     try:
         arguments = shlex.split(command)
     except ValueError:
         return False
+    if not _is_bunnify_executable(arguments):
+        return False
+    marker = marker_from_arguments(arguments)
+    return marker is None or marker.component == SERVER_COMPONENT
+
+
+def _is_bunnify_executable(arguments: Sequence[str]) -> bool:
+    """Return whether *arguments* launch the Bunnify server program."""
     if not arguments:
         return False
-
-    if len(arguments) >= 3 and arguments[1:3] == ["-m", "app.server_cli"]:
+    if Path(arguments[0]).name == "bunnify-server":
         return True
-    executable_names = {Path(argument).name for argument in arguments[:2]}
-    return "bunnify-server" in executable_names
+    target = _python_invocation_target(arguments)
+    if target is None:
+        return False
+    return target == "app.server_cli" or Path(target).name == "bunnify-server"
 
 
 def _is_bunnify_process(pid: int) -> bool:
@@ -439,6 +482,30 @@ def _process_managed_by_pid_dir(pid: int, pid_dir: Path) -> bool:
         return recorded.resolve() == pid_dir.expanduser().resolve()
     except OSError:
         return recorded.expanduser() == pid_dir.expanduser()
+
+
+def _python_invocation_target(arguments: Sequence[str]) -> str | None:
+    """Return the script path or ``-m`` module a Python command line runs.
+
+    macOS LaunchAgents start the console script through the interpreter
+    (``<python> -E /path/to/bunnify-server --foreground ...``), so interpreter
+    options have to be skipped before the target becomes visible. Returns
+    ``None`` when ``arguments`` is not a Python invocation, or when it runs code
+    from ``-c`` or stdin rather than a named script or module.
+    """
+    if not arguments or not _PYTHON_EXECUTABLE_RE.match(Path(arguments[0]).name):
+        return None
+    index = 1
+    while index < len(arguments):
+        argument = arguments[index]
+        if not argument.startswith("-"):
+            return argument
+        if argument in {"-", "-c"}:
+            return None
+        if argument == "-m":
+            return arguments[index + 1] if index + 1 < len(arguments) else None
+        index += 2 if argument in _PYTHON_OPTIONS_WITH_VALUE else 1
+    return None
 
 
 def _read_pid(path: Path) -> int | None:

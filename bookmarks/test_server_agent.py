@@ -130,6 +130,49 @@ class ServerAgentTests(SimpleTestCase):
             self.assertIn("--bookmarks", text)
             self.assertIn(str(bookmarks.resolve()), text)
 
+    def test_install_stamps_build_marker_into_plist(self) -> None:
+        from app.process_marker import BUILD_MARKER_FLAG, marker_from_arguments
+        from app.server_agent import (
+            AGENT_LABEL,
+            _plist_program_arguments,
+            install_agent,
+        )
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=False),
+                patch("app.server_agent.check_health", return_value=True),
+                patch(
+                    "app.server_agent._port_served_by_pid_dir",
+                    side_effect=lambda port, pid_dir: pid_dir.name == "launchd",
+                ),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=lambda _m: None,
+                    program=program,
+                    timeout_s=1,
+                )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            self.assertEqual(code, 0)
+            self.assertIn(BUILD_MARKER_FLAG, plist.read_text(encoding="utf-8"))
+
+            argv = _plist_program_arguments(plist)
+            assert argv is not None
+            marker = marker_from_arguments(argv)
+            assert marker is not None
+            self.assertEqual(marker.component, "bunnify-server")
+
     def test_install_rejects_non_darwin(self) -> None:
         from app.server_agent import install_agent
 
