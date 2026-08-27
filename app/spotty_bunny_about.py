@@ -43,6 +43,7 @@ from app.spotty_bunny_about_info import (
     about_version_text_and_links,
     handle_about_link_click,
     load_about_runtime_info,
+    server_skew_message,
 )
 from app.spotty_bunny_hotkey import ESCAPE_KEYCODE
 from app.spotty_bunny_update import UpdateStatus, read_cached_update_status
@@ -138,11 +139,7 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
         else f"Update available: {status.latest}"
     )
     details_text, details_links = about_details_text_and_links(runtime)
-    skew_text = (
-        "Server build differs from this Mac — align versions."
-        if runtime.server_skewed
-        else None
-    )
+    skew_text = server_skew_message(runtime)
     inner_cap = ABOUT_PANEL_MAX_WIDTH - 2.0 * ABOUT_INSET
     needed_width = max(
         _measure_text("Spotty Bunny", title_font, max_width=inner_cap)[0],
@@ -215,14 +212,20 @@ def build_about_panel(*, update: UpdateStatus | None = None) -> NSPanel:
                 ),
             )
         )
-    if runtime.server_skewed and skew_text is not None:
+    if skew_text is not None:
+        warning = skew_text
         rows.append(
             (
-                18.0,
+                max(
+                    18.0,
+                    _measure_text(warning, body_font, max_width=inner)[1]
+                    + ABOUT_CELL_PAD,
+                ),
                 lambda y, h: _label(
                     NSMakeRect(ABOUT_INSET, y, inner, h),
-                    skew_text,
+                    warning,
                     color=_srgb_color(ABOUT_WARN_RGB),
+                    wrap=True,
                 ),
             )
         )

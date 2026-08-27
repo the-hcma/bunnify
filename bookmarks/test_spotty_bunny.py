@@ -6,11 +6,13 @@ import subprocess
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Literal
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 from django.test import SimpleTestCase
 
+from app.spotty_bunny_about_info import AboutRuntimeInfo
 from app.spotty_bunny_agent import TccStatus
 from app.spotty_bunny_cli import (
     LOG_ENV_VAR,
@@ -435,6 +437,14 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             with (
                 patch("app.spotty_bunny_about_info.fetch_health", return_value=health),
                 patch(
+                    "app.spotty_bunny_about_info._server_agent_installed",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_about_info.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+                patch(
                     "app.coherence.get_build_info",
                     return_value=("0.10.0", "newnewnewnew"),
                 ),
@@ -444,6 +454,9 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     origin_url_for=lambda _workdir: None,
                 )
             self.assertTrue(info.server_skewed)
+            self.assertEqual(info.local_build_label, "0.10.0 (newnewnewnew)")
+            self.assertEqual(info.server_mode, "local")
+            self.assertTrue(info.server_agent_installed)
             self.assertEqual(info.server_build_label, "0.9.0 (oldoldoldold)")
 
     def test_load_about_runtime_info_no_skew_when_builds_match(self) -> None:
@@ -500,6 +513,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                 info.server_display,
                 "Remote server · https://bun.example.com",
             )
+            self.assertEqual(info.server_mode, "remote")
             self.assertEqual(info.server_url, "https://bun.example.com")
 
     def test_about_details_text_and_links(self) -> None:
@@ -513,8 +527,11 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
             github_display="github.com/acme/repo",
             github_url="https://github.com/acme/repo",
+            local_build_label="0.10.0 (abc123456789)",
+            server_agent_installed=False,
             server_build_label="0.10.0 (abc123456789)",
             server_display="Local server · http://127.0.0.1:8000",
+            server_mode="local",
             server_skewed=False,
             server_url="http://127.0.0.1:8000",
         )
@@ -592,6 +609,53 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             Path("/tmp/bookmarks.json"),
         )
         self.assertIsNone(path_from_file_uri("https://example.com/x"))
+
+    def test_server_skew_message_local_names_restart_without_agent(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        message = server_skew_message(
+            _about_runtime(server_mode="local", server_skewed=True)
+        )
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertIn("Server build 0.9.0 (oldoldoldold) (local)", message)
+        self.assertIn("this Mac's 0.10.0 (newnewnewnew)", message)
+        self.assertIn("bunnify-server --stop", message)
+
+    def test_server_skew_message_local_names_upgrade_with_agent(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        message = server_skew_message(
+            _about_runtime(
+                server_agent_installed=True,
+                server_mode="local",
+                server_skewed=True,
+            )
+        )
+        self.assertEqual(
+            message,
+            "Server build 0.9.0 (oldoldoldold) (local) differs from this Mac's "
+            "0.10.0 (newnewnewnew). Run: bunnify-server upgrade",
+        )
+
+    def test_server_skew_message_none_when_aligned(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        self.assertIsNone(server_skew_message(_about_runtime(server_mode="local")))
+        self.assertIsNone(server_skew_message(_about_runtime(server_mode="remote")))
+
+    def test_server_skew_message_remote_is_advisory(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        message = server_skew_message(
+            _about_runtime(server_mode="remote", server_skewed=True)
+        )
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertIn("Server build 0.9.0 (oldoldoldold) (remote)", message)
+        self.assertIn("this Mac's 0.10.0 (newnewnewnew)", message)
+        self.assertIn("redeploy", message)
+        self.assertNotIn("bunnify-server", message)
 
 
 class SpottyBunnyAgentTests(SimpleTestCase):
@@ -3608,3 +3672,24 @@ class _FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.t += seconds
+
+
+def _about_runtime(
+    *,
+    server_agent_installed: bool = False,
+    server_mode: Literal["local", "remote"],
+    server_skewed: bool = False,
+) -> AboutRuntimeInfo:
+    return AboutRuntimeInfo(
+        bookmarks_display="~/.config/bunnify/bookmarks.json",
+        bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
+        github_display=None,
+        github_url=None,
+        local_build_label="0.10.0 (newnewnewnew)",
+        server_agent_installed=server_agent_installed,
+        server_build_label="0.9.0 (oldoldoldold)",
+        server_display="Local server · http://127.0.0.1:8000",
+        server_mode=server_mode,
+        server_skewed=server_skewed,
+        server_url="http://127.0.0.1:8000",
+    )
