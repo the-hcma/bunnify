@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,8 +34,10 @@ class AboutRuntimeInfo:
     bookmarks_uri: str
     github_display: str | None
     github_url: str | None
+    server_agent_installed: bool
     server_build_label: str | None
     server_display: str
+    server_mode: Literal["local", "remote"]
     server_skewed: bool
     server_url: str
 
@@ -210,8 +213,10 @@ def load_about_runtime_info(
         bookmarks_uri=bookmarks_uri,
         github_display=github_display,
         github_url=github_url,
+        server_agent_installed=_server_agent_installed(),
         server_build_label=server_build_label,
         server_display=f"{label} · {base_url}",
+        server_mode=mode,
         server_skewed=server_skewed,
         server_url=base_url,
     )
@@ -245,6 +250,28 @@ def path_from_file_uri(uri: str) -> Path | None:
     return Path(unquote(parsed.path))
 
 
+def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
+    """Return the About-panel build-skew warning, or None when aligned.
+
+    A remote server is deployed independently of this Mac, so skew there is
+    advisory. A local server is expected to track this install, so name the
+    command that realigns it.
+    """
+    if not runtime.server_skewed:
+        return None
+    if runtime.server_mode == "remote":
+        return (
+            "Remote server build differs from this Mac. Upgrading here cannot "
+            "change it; redeploy the server if features look out of date."
+        )
+    if runtime.server_agent_installed:
+        return "Local server build differs from this Mac. Run: bunnify-server upgrade"
+    return (
+        "Local server build differs from this Mac. Run: bunnify-server --stop "
+        "(the next bunnify command starts this build)."
+    )
+
+
 _GIT_REMOTE_TIMEOUT_S = 2
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -268,6 +295,14 @@ def _git_origin_url(workdir: Path) -> str | None:
 def _is_loopback_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host in _LOOPBACK_HOSTS
+
+
+def _server_agent_installed() -> bool:
+    if sys.platform != "darwin":
+        return False
+    from app.server_agent import is_agent_installed
+
+    return is_agent_installed()
 
 
 def _workdir_containing_git(path: Path) -> Path | None:
