@@ -18,6 +18,7 @@ from app.config import (
     load_preferences,
     resolve_base_url,
 )
+from app.version import get_build_info
 
 ABOUT_LICENSE = "MIT License"
 ABOUT_LICENSE_URL = "https://github.com/the-hcma/bunnify/blob/main/LICENSE"
@@ -34,6 +35,7 @@ class AboutRuntimeInfo:
     bookmarks_uri: str
     github_display: str | None
     github_url: str | None
+    local_build_label: str
     server_agent_installed: bool
     server_build_label: str | None
     server_display: str
@@ -213,6 +215,7 @@ def load_about_runtime_info(
         bookmarks_uri=bookmarks_uri,
         github_display=github_display,
         github_url=github_url,
+        local_build_label=_local_build_label(),
         server_agent_installed=_server_agent_installed(),
         server_build_label=server_build_label,
         server_display=f"{label} · {base_url}",
@@ -259,16 +262,21 @@ def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
     """
     if not runtime.server_skewed:
         return None
+    server_build = f"Server build {runtime.server_build_label or 'unknown build'}"
+    local_build = f"this Mac's {runtime.local_build_label}"
     if runtime.server_mode == "remote":
         return (
-            "Remote server build differs from this Mac. Upgrading here cannot "
-            "change it; redeploy the server if features look out of date."
+            f"{server_build} (remote) differs from {local_build}. Upgrading here "
+            "cannot change it; redeploy the server if features look out of date."
         )
     if runtime.server_agent_installed:
-        return "Local server build differs from this Mac. Run: bunnify-server upgrade"
+        return (
+            f"{server_build} (local) differs from {local_build}. "
+            "Run: bunnify-server upgrade"
+        )
     return (
-        "Local server build differs from this Mac. Run: bunnify-server --stop "
-        "(the next bunnify command starts this build)."
+        f"{server_build} (local) differs from {local_build}. "
+        "Run: bunnify-server --stop (the next bunnify command starts this build)."
     )
 
 
@@ -295,6 +303,11 @@ def _git_origin_url(workdir: Path) -> str | None:
 def _is_loopback_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host in _LOOPBACK_HOSTS
+
+
+def _local_build_label() -> str:
+    version, commit = get_build_info()
+    return f"{version} ({commit})"
 
 
 def _server_agent_installed() -> bool:

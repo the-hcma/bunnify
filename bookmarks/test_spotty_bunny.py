@@ -441,6 +441,10 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     return_value=True,
                 ),
                 patch(
+                    "app.spotty_bunny_about_info.get_build_info",
+                    return_value=("0.10.0", "newnewnewnew"),
+                ),
+                patch(
                     "app.coherence.get_build_info",
                     return_value=("0.10.0", "newnewnewnew"),
                 ),
@@ -450,6 +454,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     origin_url_for=lambda _workdir: None,
                 )
             self.assertTrue(info.server_skewed)
+            self.assertEqual(info.local_build_label, "0.10.0 (newnewnewnew)")
             self.assertEqual(info.server_mode, "local")
             self.assertTrue(info.server_agent_installed)
             self.assertEqual(info.server_build_label, "0.9.0 (oldoldoldold)")
@@ -522,6 +527,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
             github_display="github.com/acme/repo",
             github_url="https://github.com/acme/repo",
+            local_build_label="0.10.0 (abc123456789)",
             server_agent_installed=False,
             server_build_label="0.10.0 (abc123456789)",
             server_display="Local server · http://127.0.0.1:8000",
@@ -612,7 +618,8 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         )
         self.assertIsNotNone(message)
         assert message is not None
-        self.assertIn("Local server", message)
+        self.assertIn("Server build 0.9.0 (oldoldoldold) (local)", message)
+        self.assertIn("this Mac's 0.10.0 (newnewnewnew)", message)
         self.assertIn("bunnify-server --stop", message)
 
     def test_server_skew_message_local_names_upgrade_with_agent(self) -> None:
@@ -627,7 +634,8 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         )
         self.assertEqual(
             message,
-            "Local server build differs from this Mac. Run: bunnify-server upgrade",
+            "Server build 0.9.0 (oldoldoldold) (local) differs from this Mac's "
+            "0.10.0 (newnewnewnew). Run: bunnify-server upgrade",
         )
 
     def test_server_skew_message_none_when_aligned(self) -> None:
@@ -644,7 +652,8 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         )
         self.assertIsNotNone(message)
         assert message is not None
-        self.assertIn("Remote server", message)
+        self.assertIn("Server build 0.9.0 (oldoldoldold) (remote)", message)
+        self.assertIn("this Mac's 0.10.0 (newnewnewnew)", message)
         self.assertIn("redeploy", message)
         self.assertNotIn("bunnify-server", message)
 
@@ -3676,6 +3685,7 @@ def _about_runtime(
         bookmarks_uri="file:///Users/me/.config/bunnify/bookmarks.json",
         github_display=None,
         github_url=None,
+        local_build_label="0.10.0 (newnewnewnew)",
         server_agent_installed=server_agent_installed,
         server_build_label="0.9.0 (oldoldoldold)",
         server_display="Local server · http://127.0.0.1:8000",
