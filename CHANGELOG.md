@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.1...bunnify-v0.11.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* qualify the About panel server build-skew warning by mode ([#378](https://github.com/the-hcma/bunnify/issues/378)) ([cf3e3ad](https://github.com/the-hcma/bunnify/commit/cf3e3adb3e292d85fa14d8ccdf3b25718b1eeb89))
+
 ## [0.11.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.0...bunnify-v0.11.1) (2026-08-27)
 
 
