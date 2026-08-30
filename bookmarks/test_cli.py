@@ -745,6 +745,39 @@ class CliUnitTests(TestCase):
 
 class ConfigUnitTests(TestCase):
     def setUp(self) -> None:
+        import os
+        import tempfile
+
+        import app.config as config_mod
+
+        # Isolate config/data dirs for the whole class so environ=None or partial
+        # environ dicts cannot resolve persist_local_port to the real home.
+        self._xdg_tmpdir = tempfile.TemporaryDirectory()
+        root = self._xdg_tmpdir.name
+        self._xdg_defaults = {
+            "XDG_CONFIG_HOME": root,
+            "XDG_DATA_HOME": root,
+        }
+        self._environ_patch = patch.dict(os.environ, self._xdg_defaults, clear=False)
+        self._environ_patch.start()
+        real_persist = config_mod.persist_local_port
+
+        def _persist_local_port_isolated(
+            port: int, *, environ: dict[str, str] | None = None
+        ) -> None:
+            merged = dict(self._xdg_defaults)
+            if environ is not None:
+                merged.update(environ)
+            if not (merged.get("XDG_CONFIG_HOME") or "").strip():
+                merged["XDG_CONFIG_HOME"] = self._xdg_defaults["XDG_CONFIG_HOME"]
+            if not (merged.get("XDG_DATA_HOME") or "").strip():
+                merged["XDG_DATA_HOME"] = self._xdg_defaults["XDG_DATA_HOME"]
+            real_persist(port, environ=merged)
+
+        self._persist_patch = patch.object(
+            config_mod, "persist_local_port", _persist_local_port_isolated
+        )
+        self._persist_patch.start()
         self._spotty_installed_patch = patch(
             "app.spotty_bunny_agent.is_agent_installed",
             return_value=False,
@@ -759,6 +792,9 @@ class ConfigUnitTests(TestCase):
     def tearDown(self) -> None:
         self._spotty_running_patch.stop()
         self._spotty_installed_patch.stop()
+        self._persist_patch.stop()
+        self._environ_patch.stop()
+        self._xdg_tmpdir.cleanup()
 
     def test_config_dir_respects_xdg_config_home(self) -> None:
         import tempfile
