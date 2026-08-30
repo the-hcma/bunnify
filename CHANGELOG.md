@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.3](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.2...bunnify-v0.11.3) (2026-08-30)
+
+
+### Bug Fixes
+
+* confirm configured server mode before setup/upgrade changes ([#384](https://github.com/the-hcma/bunnify/issues/384)) ([506b30d](https://github.com/the-hcma/bunnify/commit/506b30d75743ac94992df78290a759c928fe36a7))
+
 ## [0.11.2](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.1...bunnify-v0.11.2) (2026-08-27)
 
 
