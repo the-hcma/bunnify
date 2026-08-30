@@ -1629,6 +1629,39 @@ class ConfigUnitTests(TestCase):
             self.assertIn("Kept remote Bunnify server", joined)
             self.assertEqual(load_preferences(environ={}, env_path=path), original)
 
+    def test_setup_keeps_remote_aborts_when_mismatch_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import ClientError, HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        mismatched = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://working.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            responses = iter([""])  # Keep this configuration?
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=mismatched),
+                patch("app.cli.offer_remote_build_mismatch", return_value=False),
+            ):
+                with self.assertRaises(ClientError) as ctx:
+                    run_setup(
+                        prompt_fn=lambda _message: next(responses),
+                        env_path=path,
+                        print_fn=lambda _message: None,
+                    )
+            self.assertIn("Setup aborted", str(ctx.exception))
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
     def test_setup_defaults_mode_to_existing_when_reconfiguring(self) -> None:
         import tempfile
         from pathlib import Path
