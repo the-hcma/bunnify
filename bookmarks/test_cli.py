@@ -803,14 +803,14 @@ class ConfigUnitTests(TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            environ = {"XDG_CONFIG_HOME": tmp}
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             path = env_file_path(environ=environ)
             expected = ServerPreferences(
                 mode="local",
                 base_url="http://127.0.0.1:8765",
                 local_port=8765,
             )
-            save_preferences(expected, env_path=path)
+            save_preferences(expected, env_path=path, environ=environ)
 
             self.assertEqual(
                 load_preferences(environ=environ, env_path=path),
