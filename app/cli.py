@@ -291,9 +291,15 @@ def run_setup(
     environ: dict[str, str] | None = None,
     env_path: Path | None = None,
     print_fn: Callable[[str], None] | None = None,
+    skip_keep_confirmation: bool = False,
     theme: Theme | None = None,
 ) -> str:
-    """Interactively configure a verified local or remote Bunnify server."""
+    """Interactively configure a verified local or remote Bunnify server.
+
+    When *skip_keep_confirmation* is True (upgrade/onboard after the operator
+    already declined Keep), skip the keep prompt and reconfigure with the
+    previous mode as the bracket default.
+    """
     ask = prompt_fn or input
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
@@ -309,7 +315,7 @@ def run_setup(
         log(colors.header("Current configuration"))
         for line in format_server_preferences_summary(existing):
             log(line)
-        if _retry_requested(
+        if not skip_keep_confirmation and _retry_requested(
             ask,
             colors.brand("Keep this configuration?") + colors.dim(" [Y/n]") + ": ",
         ):
@@ -680,7 +686,12 @@ def run_upgrade(
     )
     if reconfigure_after_upgrade:
         log(colors.dim("Opening setup to reconfigure…"))
-        run_setup(prompt_fn=ask, print_fn=log, theme=colors)
+        run_setup(
+            prompt_fn=ask,
+            print_fn=log,
+            skip_keep_confirmation=True,
+            theme=colors,
+        )
 
 
 def _ensure_local_spotty_after_setup(
@@ -863,6 +874,22 @@ def _complete_setup_keeping_preferences(
         )
         pid_dir = run_dir(environ=environ)
         preferred_port = existing.local_port
+        if preferred_port is not None and not (
+            MIN_LOCAL_PORT <= preferred_port <= 65535
+        ):
+            log(
+                colors.warn(
+                    f"Saved local port {preferred_port} is outside "
+                    f"{MIN_LOCAL_PORT}-65535; prompting for a new port."
+                )
+            )
+            preferred_port = _prompt_local_port(
+                ask,
+                existing_port=None,
+                pid_dir=pid_dir,
+                print_fn=log,
+                theme=colors,
+            )
         while True:
             try:
                 base_url, actual_port = _ensure_local_server_for_setup(

@@ -200,7 +200,12 @@ def run_onboard(
 
                 log(colors.dim("Opening setup to reconfigure…"))
                 try:
-                    run_setup(prompt_fn=ask, print_fn=log, theme=colors)
+                    run_setup(
+                        prompt_fn=ask,
+                        print_fn=log,
+                        skip_keep_confirmation=True,
+                        theme=colors,
+                    )
                 except ClientError as exc:
                     log(colors.err(f"error: {exc}"))
                 else:

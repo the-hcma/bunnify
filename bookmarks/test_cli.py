@@ -1672,6 +1672,134 @@ class ConfigUnitTests(TestCase):
             self.assertEqual(preferences.mode, "remote")
             self.assertEqual(preferences.base_url, "https://new.example")
 
+    def test_setup_keeps_existing_local_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8123", 8123),
+                ) as ensure_server,
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: "",
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8123")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8123)
+
+    def test_setup_keep_local_renormalizes_privileged_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:700",
+                    local_port=700,
+                ),
+                env_path=path,
+            )
+            responses = iter(["", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ) as ensure_server,
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8000)
+
+    def test_setup_skip_keep_confirmation_reconfigures_directly(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://old.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            messages: list[str] = []
+            responses = iter(["", "https://new.example/"])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=messages.append,
+                    skip_keep_confirmation=True,
+                )
+
+            self.assertEqual(result, "https://new.example")
+            joined = "\n".join(messages)
+            self.assertIn("Reconfigure from here", joined)
+            self.assertNotIn("Kept remote", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.base_url, "https://new.example")
+
     def test_setup_remote_unreachable_continues_when_confirmed(self) -> None:
         import tempfile
         from pathlib import Path
