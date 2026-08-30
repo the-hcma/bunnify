@@ -27,7 +27,15 @@ In a development checkout, `./scripts/bunnify` and
 `./scripts/bunnify-server` prefer `uv run` when `uv` is on ``PATH``, otherwise
 they fall back to the checkout ``.venv`` (same entry points systemd uses).
 
-Setup defaults to **local** mode. When `bookmarks.json` is missing, it offers
+Setup defaults to **local** mode when no preferences are saved yet. When
+`config.env` already has a mode/URL, setup **shows that configuration** and
+asks `Keep this configuration? [Y/n]` first—Enter keeps it. Declining
+re-enters the prompts with the **previously configured mode** as the bracket
+default (not an unconditional `local`). `bunnify upgrade` and interactive
+`bunnify onboard` show the same summary and confirmation before changing
+server settings.
+
+When `bookmarks.json` is missing, setup offers
 to install the example shortcuts (see [Configuration](CONFIG.md)). It then
 prompts for a free non-privileged listening port
 (default `8000`, or `0` for an OS-assigned port). If that port already serves

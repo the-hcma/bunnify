@@ -745,6 +745,39 @@ class CliUnitTests(TestCase):
 
 class ConfigUnitTests(TestCase):
     def setUp(self) -> None:
+        import os
+        import tempfile
+
+        import app.config as config_mod
+
+        # Isolate config/data dirs for the whole class so environ=None or partial
+        # environ dicts cannot resolve persist_local_port to the real home.
+        self._xdg_tmpdir = tempfile.TemporaryDirectory()
+        root = self._xdg_tmpdir.name
+        self._xdg_defaults = {
+            "XDG_CONFIG_HOME": root,
+            "XDG_DATA_HOME": root,
+        }
+        self._environ_patch = patch.dict(os.environ, self._xdg_defaults, clear=False)
+        self._environ_patch.start()
+        real_persist = config_mod.persist_local_port
+
+        def _persist_local_port_isolated(
+            port: int, *, environ: dict[str, str] | None = None
+        ) -> None:
+            merged = dict(self._xdg_defaults)
+            if environ is not None:
+                merged.update(environ)
+            if not (merged.get("XDG_CONFIG_HOME") or "").strip():
+                merged["XDG_CONFIG_HOME"] = self._xdg_defaults["XDG_CONFIG_HOME"]
+            if not (merged.get("XDG_DATA_HOME") or "").strip():
+                merged["XDG_DATA_HOME"] = self._xdg_defaults["XDG_DATA_HOME"]
+            real_persist(port, environ=merged)
+
+        self._persist_patch = patch.object(
+            config_mod, "persist_local_port", _persist_local_port_isolated
+        )
+        self._persist_patch.start()
         self._spotty_installed_patch = patch(
             "app.spotty_bunny_agent.is_agent_installed",
             return_value=False,
@@ -759,6 +792,9 @@ class ConfigUnitTests(TestCase):
     def tearDown(self) -> None:
         self._spotty_running_patch.stop()
         self._spotty_installed_patch.stop()
+        self._persist_patch.stop()
+        self._environ_patch.stop()
+        self._xdg_tmpdir.cleanup()
 
     def test_config_dir_respects_xdg_config_home(self) -> None:
         import tempfile
@@ -768,7 +804,7 @@ class ConfigUnitTests(TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(
-                config_dir(environ={"XDG_CONFIG_HOME": tmp}),
+                config_dir(environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}),
                 Path(tmp) / "bunnify",
             )
 
@@ -803,14 +839,14 @@ class ConfigUnitTests(TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            environ = {"XDG_CONFIG_HOME": tmp}
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             path = env_file_path(environ=environ)
             expected = ServerPreferences(
                 mode="local",
                 base_url="http://127.0.0.1:8765",
                 local_port=8765,
             )
-            save_preferences(expected, env_path=path)
+            save_preferences(expected, env_path=path, environ=environ)
 
             self.assertEqual(
                 load_preferences(environ=environ, env_path=path),
@@ -838,6 +874,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -851,7 +888,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.check_health", return_value=True),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=False,
                     print_fn=lambda _message: None,
@@ -859,7 +896,7 @@ class ConfigUnitTests(TestCase):
 
             self.assertEqual(result, "http://127.0.0.1:8123")
             ensure_bookmarks.assert_called_once_with(
-                environ={"XDG_CONFIG_HOME": tmp},
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                 prompt_fn=input,
                 allow_prompt=False,
                 print_fn=ANY,
@@ -892,6 +929,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -909,7 +947,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.server_agent.is_agent_installed", return_value=False),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=True,
                     prompt_fn=lambda _message: "y",
@@ -950,6 +988,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -965,7 +1004,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         allow_prompt=True,
                         prompt_fn=lambda _message: next(responses),
@@ -993,6 +1032,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -1009,7 +1049,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.stop_local_server") as stop_server,
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=True,
                     prompt_fn=lambda _message: "",
@@ -1041,6 +1081,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -1061,7 +1102,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.server_agent.is_agent_installed", return_value=False),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=True,
                     prompt_fn=lambda _message: "y",
@@ -1095,7 +1136,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         allow_prompt=False,
                         print_fn=lambda _message: None,
@@ -1135,7 +1176,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         allow_prompt=True,
                         print_fn=lambda _message: None,
@@ -1169,7 +1210,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         prompt_fn=lambda _message: next(responses),
                         allow_prompt=True,
@@ -1200,6 +1241,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
@@ -1215,7 +1257,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     prompt_fn=lambda _message: "",
                     allow_prompt=True,
@@ -1249,7 +1291,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.check_health", return_value=True),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     allow_prompt=False,
                 )
 
@@ -1577,7 +1619,7 @@ class ConfigUnitTests(TestCase):
                 local_port=None,
             )
             save_preferences(original, env_path=path)
-            responses = iter(["remote", "https://broken.example", "n", "n"])
+            responses = iter(["n", "remote", "https://broken.example", "n", "n"])
             with patch("app.cli.check_health", return_value=False):
                 with self.assertRaises(ClientError):
                     run_setup(
@@ -1587,6 +1629,512 @@ class ConfigUnitTests(TestCase):
                     )
 
             self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_keeps_existing_remote_when_confirmed(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://working.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            messages: list[str] = []
+            responses = iter([""])  # Keep this configuration? [Y/n]
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://working.example")
+            joined = "\n".join(messages)
+            self.assertIn("Configured mode: remote", joined)
+            self.assertIn("Current configuration", joined)
+            self.assertIn("Kept remote Bunnify server", joined)
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_keeps_remote_aborts_when_mismatch_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import ClientError, HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        mismatched = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://working.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            responses = iter([""])  # Keep this configuration?
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=mismatched),
+                patch("app.cli.offer_remote_build_mismatch", return_value=False),
+            ):
+                with self.assertRaises(ClientError) as ctx:
+                    run_setup(
+                        prompt_fn=lambda _message: next(responses),
+                        env_path=path,
+                        print_fn=lambda _message: None,
+                    )
+            self.assertIn("Setup aborted", str(ctx.exception))
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_defaults_mode_to_existing_when_reconfiguring(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://old.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            # Decline keep; accept default mode [remote]; new URL
+            responses = iter(["n", "", "https://new.example/"])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "https://new.example")
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            self.assertEqual(preferences.base_url, "https://new.example")
+
+    def test_setup_keeps_existing_local_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            messages: list[str] = []
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8123", 8123),
+                ) as ensure_server,
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: "",
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8123")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8123)
+            joined = "\n".join(messages)
+            self.assertIn("Current configuration", joined)
+            self.assertIn("Kept local Bunnify server", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8123)
+
+    def test_setup_keeps_existing_local_port_retries_ephemeral(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            # Keep configuration; then retry after local server failure
+            responses = iter(["", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    side_effect=[
+                        RuntimeError("port unavailable"),
+                        ("http://127.0.0.1:9123", 9123),
+                    ],
+                ) as ensure_server,
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:9123")
+            self.assertEqual(
+                [call.kwargs["port"] for call in ensure_server.call_args_list],
+                [8123, None],
+            )
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 9123)
+
+    def test_setup_keeps_unreachable_remote_when_confirmed(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://broken.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            messages: list[str] = []
+            # Keep configuration; then yes to keep unreachable URL
+            responses = iter(["", "y"])
+            with patch("app.cli.check_health", return_value=False):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://broken.example")
+            joined = "\n".join(messages)
+            self.assertIn("Kept remote Bunnify server", joined)
+            self.assertIn("unreachable", joined)
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_aborts_unreachable_remote_keep_when_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import ClientError
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://broken.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            responses = iter(["", "n"])
+            with patch("app.cli.check_health", return_value=False):
+                with self.assertRaises(ClientError):
+                    run_setup(
+                        prompt_fn=lambda _message: next(responses),
+                        env_path=path,
+                        print_fn=lambda _message: None,
+                    )
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_run_upgrade_keep_and_reconfigure_paths(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from app.cli import run_upgrade
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://working.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            environ = {"XDG_CONFIG_HOME": tmp}
+            messages: list[str] = []
+            parent = MagicMock()
+            runner = parent.runner
+            runner.return_value = MagicMock(returncode=0)
+            setup = parent.setup
+            setup.return_value = "https://new.example"
+            pipx_upgrade = ["/usr/bin/pipx", "upgrade", "bunnify"]
+
+            with (
+                patch("app.cli.load_preferences") as load_prefs,
+                patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+                patch("app.cli._pypi_latest_version", return_value="0.11.2"),
+                patch("app.cli._pipx_bunnify_path", return_value=None),
+                patch("app.cli.macos_extra_installed", return_value=False),
+                patch("app.cli._refresh_macos_launch_agents"),
+                patch("app.cli._report_post_upgrade_coherence"),
+                patch("app.cli.run_setup", setup),
+                patch("app.cli.sys.stdin") as stdin,
+                patch("app.cli.sys.stdout") as stdout,
+            ):
+                load_prefs.return_value = ServerPreferences(
+                    mode="remote",
+                    base_url="https://working.example",
+                    local_port=None,
+                )
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                # Keep configuration
+                run_upgrade(
+                    print_fn=messages.append,
+                    prompt_fn=lambda _m: "",
+                    run_fn=runner,
+                    refresh_launch_agents=False,
+                )
+                setup.assert_not_called()
+                runner.assert_called_once()
+                self.assertEqual(runner.call_args.args[0], pipx_upgrade)
+                joined = "\n".join(messages)
+                self.assertIn("Current configuration", joined)
+                self.assertIn("Configured mode: remote", joined)
+
+                parent.reset_mock()
+                runner.return_value = MagicMock(returncode=0)
+                setup.return_value = "https://new.example"
+                messages.clear()
+                # Decline keep → reconfigure after pipx upgrade
+                run_upgrade(
+                    print_fn=messages.append,
+                    prompt_fn=lambda _m: "n",
+                    run_fn=runner,
+                    refresh_launch_agents=False,
+                )
+                self.assertEqual(
+                    [c[0] for c in parent.mock_calls if c[0] in {"runner", "setup"}],
+                    ["runner", "setup"],
+                )
+                self.assertEqual(runner.call_args.args[0], pipx_upgrade)
+                self.assertTrue(setup.call_args.kwargs.get("skip_keep_confirmation"))
+
+                parent.reset_mock()
+                runner.return_value = MagicMock(returncode=0)
+                # Non-interactive: no prompt_fn, stdin not a tty → no keep prompt
+                stdin.isatty.return_value = False
+                stdout.isatty.return_value = False
+                run_upgrade(
+                    print_fn=messages.append,
+                    run_fn=runner,
+                    refresh_launch_agents=False,
+                )
+                setup.assert_not_called()
+                runner.assert_called_once()
+                self.assertEqual(runner.call_args.args[0], pipx_upgrade)
+
+            _ = environ  # prefs path isolation via load_preferences patch
+
+    def test_run_upgrade_setup_abort_does_not_fail_upgrade(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from app.cli import run_upgrade
+        from app.config import ServerPreferences
+
+        messages: list[str] = []
+        runner = MagicMock(return_value=MagicMock(returncode=0))
+        setup = MagicMock(side_effect=ClientError("Setup aborted"))
+
+        with (
+            patch("app.cli.load_preferences") as load_prefs,
+            patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli._pypi_latest_version", return_value="0.11.2"),
+            patch("app.cli._pipx_bunnify_path", return_value=None),
+            patch("app.cli.macos_extra_installed", return_value=False),
+            patch("app.cli._refresh_macos_launch_agents"),
+            patch("app.cli._report_post_upgrade_coherence"),
+            patch("app.cli.run_setup", setup),
+            patch("app.cli.sys.stdin") as stdin,
+            patch("app.cli.sys.stdout") as stdout,
+        ):
+            load_prefs.return_value = ServerPreferences(
+                mode="remote",
+                base_url="https://working.example",
+                local_port=None,
+            )
+            stdin.isatty.return_value = True
+            stdout.isatty.return_value = True
+            run_upgrade(
+                print_fn=messages.append,
+                prompt_fn=lambda _m: "n",
+                run_fn=runner,
+                refresh_launch_agents=False,
+            )
+            runner.assert_called_once()
+            self.assertEqual(
+                runner.call_args.args[0],
+                ["/usr/bin/pipx", "upgrade", "bunnify"],
+            )
+            setup.assert_called_once()
+            joined = "\n".join(messages)
+            self.assertIn("Setup after upgrade did not finish", joined)
+            self.assertIn("bunnify setup", joined)
+
+    def test_setup_keep_local_renormalizes_privileged_port(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:700",
+                    local_port=700,
+                ),
+                env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            responses = iter(["", ""])
+            messages: list[str] = []
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ) as ensure_server,
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            joined = "\n".join(messages)
+            self.assertIn("Kept local Bunnify server", joined)
+            self.assertIn("outside 1024-65535", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 8000)
+
+    def test_setup_skip_keep_confirmation_reconfigures_directly(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://old.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            messages: list[str] = []
+            responses = iter(["", "https://new.example/"])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=messages.append,
+                    skip_keep_confirmation=True,
+                )
+
+            self.assertEqual(result, "https://new.example")
+            joined = "\n".join(messages)
+            self.assertIn("Reconfigure from here", joined)
+            self.assertNotIn("Kept remote", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.base_url, "https://new.example")
 
     def test_setup_remote_unreachable_continues_when_confirmed(self) -> None:
         import tempfile
@@ -1637,7 +2185,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -1682,8 +2230,9 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
-            responses = iter(["local", "", ""])
+            responses = iter(["n", "local", "", ""])
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -1699,7 +2248,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
                 )
@@ -1737,7 +2286,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
                 )
@@ -1784,7 +2333,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -1833,7 +2382,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -1869,7 +2418,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -2147,7 +2696,9 @@ class ConfigUnitTests(TestCase):
                     local_port=700,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
+            responses = iter(["n", "", ""])  # decline keep; local mode; port default
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -2159,8 +2710,8 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.port_is_free", return_value=True),
             ):
                 result = run_setup(
-                    prompt_fn=lambda _message: "",
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
                 )
@@ -3022,6 +3573,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             messages: list[str] = []
             with (

@@ -241,9 +241,85 @@ class OnboardTests(SimpleTestCase):
         ):
             stdin.isatty.return_value = True
             stdout_tty.isatty.return_value = True
-            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "n")
+            # Keep configured remote (first prompt); unreachable continue uses
+            # patched _confirm_explicit_yes → False (skip Spotty).
+            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "y")
         spotty.assert_not_called()
         self.assertIn("Skipping Spotty Bunny install", stdout.getvalue())
+        self.assertIn("Configured mode: remote", stdout.getvalue())
+
+    def test_run_onboard_declined_keep_calls_setup(self) -> None:
+        from app.client import ClientError
+        from app.config import ServerPreferences
+
+        stdout = StringIO()
+        before = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=True,
+            macos_platform=False,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.3 (abc12345)",
+            preferences_ready=True,
+            pypi_latest="0.8.3",
+            server_agent_installed=False,
+            source_checkout=False,
+            spotty_agent_installed=False,
+            upgrade_available=False,
+            version_label="0.8.3 (abc12345)",
+        )
+        after = InstallState(
+            bookmarks_ready=True,
+            command_path="/Users/me/.local/bin/bunnify",
+            macos_extra=True,
+            macos_platform=False,
+            pipx_app_path="/Users/me/.local/bin/bunnify",
+            pipx_version_label="0.8.3 (abc12345)",
+            preferences_ready=True,
+            pypi_latest="0.8.3",
+            server_agent_installed=False,
+            source_checkout=False,
+            spotty_agent_installed=False,
+            upgrade_available=False,
+            version_label="0.8.3 (abc12345)",
+        )
+        prefs = ServerPreferences(
+            mode="remote",
+            base_url="https://old.example",
+            local_port=None,
+        )
+        setup = MagicMock(return_value="https://new.example")
+        with (
+            patch(
+                "app.onboard.detect_install_state",
+                side_effect=[before, after],
+            ) as detect,
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.onboard.load_preferences", return_value=prefs),
+            patch("app.cli.run_setup", setup),
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "n")
+        setup.assert_called_once()
+        self.assertTrue(setup.call_args.kwargs.get("skip_keep_confirmation"))
+        self.assertEqual(detect.call_count, 2)
+        self.assertIn("Opening setup to reconfigure", stdout.getvalue())
+
+        setup_err = MagicMock(side_effect=ClientError("setup failed"))
+        stdout_err = StringIO()
+        with (
+            patch("app.onboard.detect_install_state", return_value=before),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.onboard.load_preferences", return_value=prefs),
+            patch("app.cli.run_setup", setup_err),
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(print_fn=stdout_err.write, prompt_fn=lambda _m: "n")
+        self.assertIn("error: setup failed", stdout_err.getvalue())
 
     def test_run_onboard_warns_when_macos_extra_install_fails(self) -> None:
         stdout = StringIO()
@@ -364,6 +440,7 @@ class OnboardTests(SimpleTestCase):
             )
         upgrade.assert_called_once()
         self.assertIn("print_fn", upgrade.call_args.kwargs)
+        self.assertIn("prompt_fn", upgrade.call_args.kwargs)
         self.assertIn("theme", upgrade.call_args.kwargs)
 
     def test_run_onboard_reports_upgrade_client_error(self) -> None:

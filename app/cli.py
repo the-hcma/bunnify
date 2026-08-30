@@ -43,6 +43,7 @@ from app.config import (
     ServerPreferences,
     ensure_user_bookmarks,
     env_file_path,
+    format_server_preferences_summary,
     legacy_env_file_path,
     load_preferences,
     read_base_url_from_env_file,
@@ -290,9 +291,15 @@ def run_setup(
     environ: dict[str, str] | None = None,
     env_path: Path | None = None,
     print_fn: Callable[[str], None] | None = None,
+    skip_keep_confirmation: bool = False,
     theme: Theme | None = None,
 ) -> str:
-    """Interactively configure a verified local or remote Bunnify server."""
+    """Interactively configure a verified local or remote Bunnify server.
+
+    When *skip_keep_confirmation* is True (upgrade/onboard after the operator
+    already declined Keep), skip the keep prompt and reconfigure with the
+    previous mode as the bracket default.
+    """
     ask = prompt_fn or input
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
@@ -303,17 +310,37 @@ def run_setup(
     log(colors.dim(f"running from {running_command_path()}"))
     log(colors.dim("Press Enter to accept the value in [brackets]."))
 
+    if existing is not None and existing.base_url:
+        log("")
+        log(colors.header("Current configuration"))
+        for line in format_server_preferences_summary(existing):
+            log(line)
+        if not skip_keep_confirmation and _retry_requested(
+            ask,
+            colors.brand("Keep this configuration?") + colors.dim(" [Y/n]") + ": ",
+        ):
+            return _complete_setup_keeping_preferences(
+                existing,
+                ask=ask,
+                environ=environ,
+                env_path=path,
+                print_fn=log,
+                theme=colors,
+            )
+        log(colors.dim("Reconfigure from here…"))
+
+    default_mode = existing.mode if existing is not None else "local"
     while True:
         try:
             answer = ask(
                 colors.brand("Server mode")
-                + colors.dim(" [local]")
+                + colors.dim(f" [{default_mode}]")
                 + colors.dim(" (Enter accepts)")
                 + ": "
             )
         except EOFError as exc:
             raise ClientError("Setup aborted") from exc
-        mode = answer.strip().lower() or "local"
+        mode = answer.strip().lower() or default_mode
         if mode in {"l", "local"}:
             mode = "local"
             break
@@ -543,6 +570,7 @@ def run_upgrade(
     *,
     print_fn: Callable[[str], None] | None = None,
     pipx_bin: str | None = None,
+    prompt_fn: Callable[[str], str] | None = None,
     refresh_launch_agents: bool | Literal["server"] = True,
     run_fn: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     theme: Theme | None = None,
@@ -556,12 +584,28 @@ def run_upgrade(
     """
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
+    ask = prompt_fn or input
     package, commit = get_build_info()
     from_label = f"{package} ({commit})"
     command_path = running_command_path()
     log(colors.header(_command_banner("upgrade")))
     log(f"From: {from_label}")
     log(f"      {command_path}")
+    reconfigure_after_upgrade = False
+    preferences = load_preferences()
+    if preferences is not None and preferences.base_url:
+        log("")
+        log(colors.header("Current configuration"))
+        for line in format_server_preferences_summary(preferences):
+            log(line)
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+        if interactive or prompt_fn is not None:
+            if not _retry_requested(
+                ask,
+                colors.brand("Keep this configuration?") + colors.dim(" [Y/n]") + ": ",
+            ):
+                reconfigure_after_upgrade = True
+                log(colors.dim("Will open setup after the package upgrade…"))
     if is_source_checkout():
         log(
             "This process is a git checkout, not the pipx app. "
@@ -640,6 +684,19 @@ def run_upgrade(
         refresh_launch_agents=refresh_launch_agents,
         upgraded_build=after_pipx,
     )
+    if reconfigure_after_upgrade:
+        log(colors.dim("Opening setup to reconfigure…"))
+        try:
+            run_setup(
+                prompt_fn=ask,
+                print_fn=log,
+                skip_keep_confirmation=True,
+                theme=colors,
+            )
+        except ClientError as exc:
+            # Package upgrade already succeeded; do not fail the CLI on setup abort.
+            log(colors.warn(f"Setup after upgrade did not finish: {exc}"))
+            log(colors.dim("Run `bunnify setup` when ready to reconfigure."))
 
 
 def _ensure_local_spotty_after_setup(
@@ -799,6 +856,126 @@ def _report_post_upgrade_coherence(
 def _command_banner(action: str) -> str:
     """Return ``Bunnify version X.Y.Z (commit) - action`` for CLI headers."""
     return f"Bunnify version {build_version()} - {action}"
+
+
+def _complete_setup_keeping_preferences(
+    existing: ServerPreferences,
+    *,
+    ask: Callable[[str], str],
+    environ: dict[str, str] | None,
+    env_path: Path,
+    print_fn: Callable[[str], None],
+    theme: Theme,
+) -> str:
+    """Finish setup by retaining *existing* preferences after confirmation."""
+    log = print_fn
+    colors = theme
+    if existing.mode == "local":
+        bookmarks = ensure_user_bookmarks(
+            environ=environ,
+            prompt_fn=ask,
+            allow_prompt=True,
+            print_fn=log,
+        )
+        pid_dir = run_dir(environ=environ)
+        preferred_port = existing.local_port
+        if preferred_port is not None and not (
+            MIN_LOCAL_PORT <= preferred_port <= 65535
+        ):
+            log(
+                colors.warn(
+                    f"Saved local port {preferred_port} is outside "
+                    f"{MIN_LOCAL_PORT}-65535; prompting for a new port."
+                )
+            )
+            preferred_port = _prompt_local_port(
+                ask,
+                existing_port=None,
+                pid_dir=pid_dir,
+                print_fn=log,
+                theme=colors,
+            )
+        while True:
+            try:
+                base_url, actual_port = _ensure_local_server_for_setup(
+                    port=preferred_port,
+                    pid_dir=pid_dir,
+                    bookmarks=bookmarks,
+                    print_fn=log,
+                    prompt_fn=ask,
+                    theme=colors,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                if _retry_requested(
+                    ask,
+                    colors.warn(f"Local server failed: {exc}\n") + "Retry? [Y/n]: ",
+                ):
+                    preferred_port = None
+                    continue
+                raise ClientError("Setup aborted; settings were not changed") from exc
+            health = fetch_health(base_url)
+            if health.ok:
+                preferences = ServerPreferences(
+                    mode="local",
+                    base_url=base_url,
+                    local_port=actual_port,
+                )
+                save_preferences(preferences, env_path=env_path, environ=environ)
+                log(colors.ok(f"✓ Kept local Bunnify server at {base_url}"))
+                log("")
+                log(colors.header("Browser"))
+                for line in format_browser_setup_text(base_url).splitlines():
+                    log(line)
+                _ensure_local_spotty_after_setup(
+                    print_fn=log,
+                    prompt_fn=ask,
+                    theme=colors,
+                )
+                return base_url
+            if not _retry_requested(
+                ask,
+                colors.warn(f"Health check failed for {base_url}.\n")
+                + "Retry? [Y/n]: ",
+            ):
+                raise ClientError("Setup aborted; settings were not changed")
+
+    base_url = existing.base_url
+    reachable = check_health(base_url)
+    if not reachable:
+        log(colors.warn(f"Health check failed for {base_url}."))
+        if not _confirm_explicit_yes(
+            ask,
+            colors.warn(
+                "The remote server is not reachable. Keep this URL anyway? [y/N]: "
+            ),
+        ):
+            raise ClientError("Setup aborted; settings were not changed")
+    else:
+        health = fetch_health(base_url)
+        log(colors.ok(f"✓ Health check passed for {base_url}"))
+        if not offer_remote_build_mismatch(
+            ask,
+            base_url=base_url,
+            health=health,
+            print_fn=log,
+            theme=colors,
+        ):
+            raise ClientError("Setup aborted; settings were not changed")
+    save_preferences(existing, env_path=env_path, environ=environ)
+    if reachable:
+        log(colors.ok(f"✓ Kept remote Bunnify server at {base_url}"))
+    else:
+        log(
+            colors.warn(
+                f"⚠ Kept remote Bunnify server at {base_url} "
+                "(unreachable; continuing by confirmation)"
+            )
+        )
+    log("")
+    log(colors.header("Browser"))
+    for line in format_browser_setup_text(base_url).splitlines():
+        log(line)
+    return base_url
 
 
 def _confirm_explicit_yes(prompt_fn: Callable[[str], str], message: str) -> bool:

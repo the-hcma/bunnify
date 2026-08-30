@@ -35,6 +35,17 @@ class ServerPreferences:
     local_port: int | None
 
 
+def format_server_preferences_summary(preferences: ServerPreferences) -> list[str]:
+    """Return human-readable lines describing saved server preferences."""
+    lines = [
+        f"Configured mode: {preferences.mode}",
+        f"Base URL: {preferences.base_url or '(none)'}",
+    ]
+    if preferences.mode == "local" and preferences.local_port is not None:
+        lines.append(f"Local port: {preferences.local_port}")
+    return lines
+
+
 def repo_root() -> Path:
     """Return the repository root (parent of the ``app`` package) when developing."""
     return Path(__file__).resolve().parent.parent
