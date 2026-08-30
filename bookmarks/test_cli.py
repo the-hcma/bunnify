@@ -1886,6 +1886,46 @@ class ConfigUnitTests(TestCase):
 
             _ = environ  # prefs path isolation via load_preferences patch
 
+    def test_run_upgrade_setup_abort_does_not_fail_upgrade(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from app.cli import run_upgrade
+        from app.config import ServerPreferences
+
+        messages: list[str] = []
+        runner = MagicMock(return_value=MagicMock(returncode=0))
+        setup = MagicMock(side_effect=ClientError("Setup aborted"))
+
+        with (
+            patch("app.cli.load_preferences") as load_prefs,
+            patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli._pypi_latest_version", return_value="0.11.2"),
+            patch("app.cli._pipx_bunnify_path", return_value=None),
+            patch("app.cli.macos_extra_installed", return_value=False),
+            patch("app.cli._refresh_macos_launch_agents"),
+            patch("app.cli._report_post_upgrade_coherence"),
+            patch("app.cli.run_setup", setup),
+            patch("app.cli.sys.stdin") as stdin,
+            patch("app.cli.sys.stdout") as stdout,
+        ):
+            load_prefs.return_value = ServerPreferences(
+                mode="remote",
+                base_url="https://working.example",
+                local_port=None,
+            )
+            stdin.isatty.return_value = True
+            stdout.isatty.return_value = True
+            run_upgrade(
+                print_fn=messages.append,
+                prompt_fn=lambda _m: "n",
+                run_fn=runner,
+                refresh_launch_agents=False,
+            )
+            setup.assert_called_once()
+            joined = "\n".join(messages)
+            self.assertIn("Setup after upgrade did not finish", joined)
+            self.assertIn("bunnify setup", joined)
+
     def test_setup_keep_local_renormalizes_privileged_port(self) -> None:
         import tempfile
         from pathlib import Path
