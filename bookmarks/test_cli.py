@@ -768,7 +768,7 @@ class ConfigUnitTests(TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(
-                config_dir(environ={"XDG_CONFIG_HOME": tmp}),
+                config_dir(environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}),
                 Path(tmp) / "bunnify",
             )
 
@@ -851,7 +851,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.check_health", return_value=True),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=False,
                     print_fn=lambda _message: None,
@@ -859,7 +859,7 @@ class ConfigUnitTests(TestCase):
 
             self.assertEqual(result, "http://127.0.0.1:8123")
             ensure_bookmarks.assert_called_once_with(
-                environ={"XDG_CONFIG_HOME": tmp},
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                 prompt_fn=input,
                 allow_prompt=False,
                 print_fn=ANY,
@@ -909,7 +909,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.server_agent.is_agent_installed", return_value=False),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=True,
                     prompt_fn=lambda _message: "y",
@@ -965,7 +965,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         allow_prompt=True,
                         prompt_fn=lambda _message: next(responses),
@@ -1009,7 +1009,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.stop_local_server") as stop_server,
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=True,
                     prompt_fn=lambda _message: "",
@@ -1061,7 +1061,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.server_agent.is_agent_installed", return_value=False),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     allow_prompt=True,
                     prompt_fn=lambda _message: "y",
@@ -1095,7 +1095,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         allow_prompt=False,
                         print_fn=lambda _message: None,
@@ -1135,7 +1135,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         allow_prompt=True,
                         print_fn=lambda _message: None,
@@ -1169,7 +1169,7 @@ class ConfigUnitTests(TestCase):
             ):
                 with self.assertRaises(ClientError) as raised:
                     ensure_ready_base_url(
-                        environ={"XDG_CONFIG_HOME": tmp},
+                        environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                         env_path=path,
                         prompt_fn=lambda _message: next(responses),
                         allow_prompt=True,
@@ -1215,7 +1215,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.get_build_info", return_value=("0.3.0", "abc123456789")),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     prompt_fn=lambda _message: "",
                     allow_prompt=True,
@@ -1249,7 +1249,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.check_health", return_value=True),
             ):
                 result = ensure_ready_base_url(
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     allow_prompt=False,
                 )
 
@@ -2140,7 +2140,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -2202,7 +2202,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
                 )
@@ -2240,7 +2240,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
                 )
@@ -2287,7 +2287,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -2336,7 +2336,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -2372,7 +2372,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -2664,7 +2664,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
                 )
