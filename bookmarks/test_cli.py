@@ -1724,6 +1724,7 @@ class ConfigUnitTests(TestCase):
                 ),
                 env_path=path,
             )
+            messages: list[str] = []
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -1736,11 +1737,14 @@ class ConfigUnitTests(TestCase):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
                     env_path=path,
-                    print_fn=lambda _message: None,
+                    print_fn=messages.append,
                 )
 
             self.assertEqual(result, "http://127.0.0.1:8123")
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8123)
+            joined = "\n".join(messages)
+            self.assertIn("Current configuration", joined)
+            self.assertIn("Kept local Bunnify server", joined)
             preferences = load_preferences(environ={}, env_path=path)
             assert preferences is not None
             self.assertEqual(preferences.local_port, 8123)
@@ -1902,6 +1906,7 @@ class ConfigUnitTests(TestCase):
                 env_path=path,
             )
             responses = iter(["", ""])
+            messages: list[str] = []
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -1916,11 +1921,14 @@ class ConfigUnitTests(TestCase):
                     prompt_fn=lambda _message: next(responses),
                     environ={"XDG_CONFIG_HOME": tmp},
                     env_path=path,
-                    print_fn=lambda _message: None,
+                    print_fn=messages.append,
                 )
 
             self.assertEqual(result, "http://127.0.0.1:8000")
             self.assertEqual(ensure_server.call_args.kwargs["port"], 8000)
+            joined = "\n".join(messages)
+            self.assertIn("Kept local Bunnify server", joined)
+            self.assertIn("outside 1024-65535", joined)
             preferences = load_preferences(environ={}, env_path=path)
             assert preferences is not None
             self.assertEqual(preferences.local_port, 8000)
