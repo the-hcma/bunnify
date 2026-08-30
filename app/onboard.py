@@ -222,7 +222,7 @@ def run_onboard(
                 from app.cli import run_upgrade as upgrade  # noqa: PLC0415
 
             try:
-                upgrade(print_fn=log, theme=colors)
+                upgrade(print_fn=log, prompt_fn=ask, theme=colors)
             except ClientError as exc:
                 log(colors.err(f"error: {exc}"))
             else:

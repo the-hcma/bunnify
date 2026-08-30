@@ -1712,6 +1712,143 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.local_port, 8123)
 
+    def test_setup_keeps_unreachable_remote_when_confirmed(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://broken.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            messages: list[str] = []
+            # Keep configuration; then yes to keep unreachable URL
+            responses = iter(["", "y"])
+            with patch("app.cli.check_health", return_value=False):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://broken.example")
+            joined = "\n".join(messages)
+            self.assertIn("Kept remote Bunnify server", joined)
+            self.assertIn("unreachable", joined)
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_aborts_unreachable_remote_keep_when_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import ClientError
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://broken.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            responses = iter(["", "n"])
+            with patch("app.cli.check_health", return_value=False):
+                with self.assertRaises(ClientError):
+                    run_setup(
+                        prompt_fn=lambda _message: next(responses),
+                        env_path=path,
+                        print_fn=lambda _message: None,
+                    )
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_run_upgrade_keep_and_reconfigure_paths(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from app.cli import run_upgrade
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://working.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            environ = {"XDG_CONFIG_HOME": tmp}
+            messages: list[str] = []
+            runner = MagicMock(
+                return_value=MagicMock(returncode=0),
+            )
+            setup = MagicMock(return_value="https://new.example")
+
+            with (
+                patch("app.cli.load_preferences") as load_prefs,
+                patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+                patch("app.cli._pypi_latest_version", return_value="0.11.2"),
+                patch("app.cli._pipx_bunnify_path", return_value=None),
+                patch("app.cli.macos_extra_installed", return_value=False),
+                patch("app.cli._refresh_macos_launch_agents"),
+                patch("app.cli._report_post_upgrade_coherence"),
+                patch("app.cli.run_setup", setup),
+                patch("app.cli.sys.stdin") as stdin,
+                patch("app.cli.sys.stdout") as stdout,
+            ):
+                load_prefs.return_value = ServerPreferences(
+                    mode="remote",
+                    base_url="https://working.example",
+                    local_port=None,
+                )
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                # Keep configuration
+                run_upgrade(
+                    print_fn=messages.append,
+                    prompt_fn=lambda _m: "",
+                    run_fn=runner,
+                    refresh_launch_agents=False,
+                )
+                setup.assert_not_called()
+
+                setup.reset_mock()
+                messages.clear()
+                # Decline keep → reconfigure
+                run_upgrade(
+                    print_fn=messages.append,
+                    prompt_fn=lambda _m: "n",
+                    run_fn=runner,
+                    refresh_launch_agents=False,
+                )
+                setup.assert_called_once()
+                self.assertTrue(setup.call_args.kwargs.get("skip_keep_confirmation"))
+
+                setup.reset_mock()
+                # Non-interactive: no prompt_fn, stdin not a tty → no keep prompt
+                stdin.isatty.return_value = False
+                stdout.isatty.return_value = False
+                run_upgrade(
+                    print_fn=messages.append,
+                    run_fn=runner,
+                    refresh_launch_agents=False,
+                )
+                setup.assert_not_called()
+
+            _ = environ  # prefs path isolation via load_preferences patch
+
     def test_setup_keep_local_renormalizes_privileged_port(self) -> None:
         import tempfile
         from pathlib import Path

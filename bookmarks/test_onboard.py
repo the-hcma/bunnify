@@ -440,6 +440,7 @@ class OnboardTests(SimpleTestCase):
             )
         upgrade.assert_called_once()
         self.assertIn("print_fn", upgrade.call_args.kwargs)
+        self.assertIn("prompt_fn", upgrade.call_args.kwargs)
         self.assertIn("theme", upgrade.call_args.kwargs)
 
     def test_run_onboard_reports_upgrade_client_error(self) -> None:

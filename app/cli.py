@@ -686,12 +686,17 @@ def run_upgrade(
     )
     if reconfigure_after_upgrade:
         log(colors.dim("Opening setup to reconfigure…"))
-        run_setup(
-            prompt_fn=ask,
-            print_fn=log,
-            skip_keep_confirmation=True,
-            theme=colors,
-        )
+        try:
+            run_setup(
+                prompt_fn=ask,
+                print_fn=log,
+                skip_keep_confirmation=True,
+                theme=colors,
+            )
+        except ClientError as exc:
+            # Package upgrade already succeeded; do not fail the CLI on setup abort.
+            log(colors.warn(f"Setup after upgrade did not finish: {exc}"))
+            log(colors.dim("Run `bunnify setup` when ready to reconfigure."))
 
 
 def _ensure_local_spotty_after_setup(
