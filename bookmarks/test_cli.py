@@ -838,6 +838,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -892,6 +893,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -950,6 +952,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -993,6 +996,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -1041,6 +1045,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch(
@@ -1200,6 +1205,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
@@ -1723,6 +1729,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             messages: list[str] = []
             with (
@@ -1768,6 +1775,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             # Keep configuration; then retry after local server failure
             responses = iter(["", ""])
@@ -2017,6 +2025,7 @@ class ConfigUnitTests(TestCase):
                     local_port=700,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             responses = iter(["", ""])
             messages: list[str] = []
@@ -2185,6 +2194,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             responses = iter(["n", "local", "", ""])
             with (
@@ -2650,6 +2660,7 @@ class ConfigUnitTests(TestCase):
                     local_port=700,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             responses = iter(["n", "", ""])  # decline keep; local mode; port default
             with (
@@ -3526,6 +3537,7 @@ class ConfigUnitTests(TestCase):
                     local_port=8123,
                 ),
                 env_path=path,
+            environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             messages: list[str] = []
             with (
