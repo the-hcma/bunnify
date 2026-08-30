@@ -1736,6 +1736,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
+                    environ={"XDG_CONFIG_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -1748,6 +1749,57 @@ class ConfigUnitTests(TestCase):
             preferences = load_preferences(environ={}, env_path=path)
             assert preferences is not None
             self.assertEqual(preferences.local_port, 8123)
+
+    def test_setup_keeps_existing_local_port_retries_ephemeral(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+            )
+            # Keep configuration; then retry after local server failure
+            responses = iter(["", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    side_effect=[
+                        RuntimeError("port unavailable"),
+                        ("http://127.0.0.1:9123", 9123),
+                    ],
+                ) as ensure_server,
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:9123")
+            self.assertEqual(
+                [call.kwargs["port"] for call in ensure_server.call_args_list],
+                [8123, None],
+            )
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.local_port, 9123)
 
     def test_setup_keeps_unreachable_remote_when_confirmed(self) -> None:
         import tempfile
@@ -1828,10 +1880,12 @@ class ConfigUnitTests(TestCase):
             )
             environ = {"XDG_CONFIG_HOME": tmp}
             messages: list[str] = []
-            runner = MagicMock(
-                return_value=MagicMock(returncode=0),
-            )
-            setup = MagicMock(return_value="https://new.example")
+            parent = MagicMock()
+            runner = parent.runner
+            runner.return_value = MagicMock(returncode=0)
+            setup = parent.setup
+            setup.return_value = "https://new.example"
+            pipx_upgrade = ["/usr/bin/pipx", "upgrade", "bunnify"]
 
             with (
                 patch("app.cli.load_preferences") as load_prefs,
@@ -1860,23 +1914,32 @@ class ConfigUnitTests(TestCase):
                     refresh_launch_agents=False,
                 )
                 setup.assert_not_called()
+                runner.assert_called_once()
+                self.assertEqual(runner.call_args.args[0], pipx_upgrade)
                 joined = "\n".join(messages)
                 self.assertIn("Current configuration", joined)
                 self.assertIn("Configured mode: remote", joined)
 
-                setup.reset_mock()
+                parent.reset_mock()
+                runner.return_value = MagicMock(returncode=0)
+                setup.return_value = "https://new.example"
                 messages.clear()
-                # Decline keep → reconfigure
+                # Decline keep → reconfigure after pipx upgrade
                 run_upgrade(
                     print_fn=messages.append,
                     prompt_fn=lambda _m: "n",
                     run_fn=runner,
                     refresh_launch_agents=False,
                 )
-                setup.assert_called_once()
+                self.assertEqual(
+                    [c[0] for c in parent.mock_calls if c[0] in {"runner", "setup"}],
+                    ["runner", "setup"],
+                )
+                self.assertEqual(runner.call_args.args[0], pipx_upgrade)
                 self.assertTrue(setup.call_args.kwargs.get("skip_keep_confirmation"))
 
-                setup.reset_mock()
+                parent.reset_mock()
+                runner.return_value = MagicMock(returncode=0)
                 # Non-interactive: no prompt_fn, stdin not a tty → no keep prompt
                 stdin.isatty.return_value = False
                 stdout.isatty.return_value = False
@@ -1886,6 +1949,8 @@ class ConfigUnitTests(TestCase):
                     refresh_launch_agents=False,
                 )
                 setup.assert_not_called()
+                runner.assert_called_once()
+                self.assertEqual(runner.call_args.args[0], pipx_upgrade)
 
             _ = environ  # prefs path isolation via load_preferences patch
 
@@ -1923,6 +1988,11 @@ class ConfigUnitTests(TestCase):
                 prompt_fn=lambda _m: "n",
                 run_fn=runner,
                 refresh_launch_agents=False,
+            )
+            runner.assert_called_once()
+            self.assertEqual(
+                runner.call_args.args[0],
+                ["/usr/bin/pipx", "upgrade", "bunnify"],
             )
             setup.assert_called_once()
             joined = "\n".join(messages)
