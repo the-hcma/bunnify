@@ -11,7 +11,12 @@ from pathlib import Path
 from packaging.version import InvalidVersion, Version
 
 from app.client import ClientError
-from app.config import default_bookmarks_path, env_file_path, load_preferences
+from app.config import (
+    default_bookmarks_path,
+    env_file_path,
+    format_server_preferences_summary,
+    load_preferences,
+)
 from app.pipx_install import (
     install_macos_extra,
     macos_extra_installed,
@@ -178,6 +183,28 @@ def run_onboard(
     log(colors.header(_command_banner("onboard")))
     for line in _format_install_summary(state):
         log(line)
+    preferences = load_preferences()
+    if preferences is not None and preferences.base_url:
+        log("")
+        log(colors.header("Current configuration"))
+        for line in format_server_preferences_summary(preferences):
+            log(line)
+        if interactive:
+            from app.cli import _retry_requested  # noqa: PLC0415
+
+            if not _retry_requested(
+                ask,
+                colors.brand("Keep this configuration?") + colors.dim(" [Y/n]") + ": ",
+            ):
+                from app.cli import run_setup  # noqa: PLC0415
+
+                log(colors.dim("Opening setup to reconfigure…"))
+                try:
+                    run_setup(prompt_fn=ask, print_fn=log, theme=colors)
+                except ClientError as exc:
+                    log(colors.err(f"error: {exc}"))
+                else:
+                    state = detect_install_state(read_executable_build=reader)
     log("")
 
     if interactive and state.upgrade_available and state.pypi_latest is not None:

@@ -1577,7 +1577,7 @@ class ConfigUnitTests(TestCase):
                 local_port=None,
             )
             save_preferences(original, env_path=path)
-            responses = iter(["remote", "https://broken.example", "n", "n"])
+            responses = iter(["n", "remote", "https://broken.example", "n", "n"])
             with patch("app.cli.check_health", return_value=False):
                 with self.assertRaises(ClientError):
                     run_setup(
@@ -1587,6 +1587,90 @@ class ConfigUnitTests(TestCase):
                     )
 
             self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_keeps_existing_remote_when_confirmed(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            original = ServerPreferences(
+                mode="remote",
+                base_url="https://working.example",
+                local_port=None,
+            )
+            save_preferences(original, env_path=path)
+            messages: list[str] = []
+            responses = iter([""])  # Keep this configuration? [Y/n]
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://working.example")
+            joined = "\n".join(messages)
+            self.assertIn("Configured mode: remote", joined)
+            self.assertIn("Current configuration", joined)
+            self.assertIn("Kept remote Bunnify server", joined)
+            self.assertEqual(load_preferences(environ={}, env_path=path), original)
+
+    def test_setup_defaults_mode_to_existing_when_reconfiguring(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.env"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://old.example",
+                    local_port=None,
+                ),
+                env_path=path,
+            )
+            # Decline keep; accept default mode [remote]; new URL
+            responses = iter(["n", "", "https://new.example/"])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "https://new.example")
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            self.assertEqual(preferences.base_url, "https://new.example")
 
     def test_setup_remote_unreachable_continues_when_confirmed(self) -> None:
         import tempfile
@@ -1683,7 +1767,7 @@ class ConfigUnitTests(TestCase):
                 ),
                 env_path=path,
             )
-            responses = iter(["local", "", ""])
+            responses = iter(["n", "local", "", ""])
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -2148,6 +2232,7 @@ class ConfigUnitTests(TestCase):
                 ),
                 env_path=path,
             )
+            responses = iter(["n", "", ""])  # decline keep; local mode; port default
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -2159,7 +2244,7 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.port_is_free", return_value=True),
             ):
                 result = run_setup(
-                    prompt_fn=lambda _message: "",
+                    prompt_fn=lambda _message: next(responses),
                     environ={"XDG_CONFIG_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
