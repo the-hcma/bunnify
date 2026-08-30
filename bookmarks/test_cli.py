@@ -1860,6 +1860,9 @@ class ConfigUnitTests(TestCase):
                     refresh_launch_agents=False,
                 )
                 setup.assert_not_called()
+                joined = "\n".join(messages)
+                self.assertIn("Current configuration", joined)
+                self.assertIn("Configured mode: remote", joined)
 
                 setup.reset_mock()
                 messages.clear()
