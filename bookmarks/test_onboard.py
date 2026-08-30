@@ -241,9 +241,12 @@ class OnboardTests(SimpleTestCase):
         ):
             stdin.isatty.return_value = True
             stdout_tty.isatty.return_value = True
-            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "n")
+            # Keep configured remote (first prompt); unreachable continue uses
+            # patched _confirm_explicit_yes → False (skip Spotty).
+            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "y")
         spotty.assert_not_called()
         self.assertIn("Skipping Spotty Bunny install", stdout.getvalue())
+        self.assertIn("Configured mode: remote", stdout.getvalue())
 
     def test_run_onboard_warns_when_macos_extra_install_fails(self) -> None:
         stdout = StringIO()
