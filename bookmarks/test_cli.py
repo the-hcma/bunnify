@@ -1736,7 +1736,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: "",
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
@@ -1786,7 +1786,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=lambda _message: None,
                 )
@@ -2032,7 +2032,7 @@ class ConfigUnitTests(TestCase):
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
-                    environ={"XDG_CONFIG_HOME": tmp},
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
                     env_path=path,
                     print_fn=messages.append,
                 )
