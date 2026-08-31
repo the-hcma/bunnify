@@ -38,6 +38,12 @@ The **primary clone** (repo root — first entry in `git worktree list`, usually
 - Target **Python 3.14+** and **Django 6.0+**. No deprecated APIs.
 - Use `uv` as the project dependency manager and runner.
 - Rely on modern Python features and type hinting whenever possible.
+- **Remote timeouts and bounded retries:** `.cursor/rules/remote-timeouts-retries.mdc`
+  (`alwaysApply`, org rule — template sync
+  [repository-helpers#570](https://github.com/the-hcma/repository-helpers/issues/570)).
+  Every `urllib.request` call passes `timeout=` (reuse `DEFAULT_TIMEOUT_SECONDS` /
+  `PYPI_TIMEOUT_S`); any retry is capped/budgeted, backed off, transient-only
+  (never blanket `HTTPError`), and never re-sends a non-idempotent write.
 
 ---
 
