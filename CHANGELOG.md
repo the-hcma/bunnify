@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.12.0...bunnify-v0.12.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* import NSWorkspaceDidWakeNotification from Cocoa ([#390](https://github.com/the-hcma/bunnify/issues/390)) ([6e81466](https://github.com/the-hcma/bunnify/commit/6e814668fdceb713596678aa0784ef413ab3d87f))
+
 ## [0.12.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.3...bunnify-v0.12.0) (2026-09-01)
 
 
