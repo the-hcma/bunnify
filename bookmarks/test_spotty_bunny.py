@@ -1239,7 +1239,11 @@ class SpottyBunnyAgentTests(SimpleTestCase):
 
     def test_status_reports_log_version_and_tcc(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
-        from app.spotty_bunny_tap_health import TAP_STATE_OK, write_spotty_bunny_health
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_OK,
+            format_activity_timestamp,
+            write_spotty_bunny_health,
+        )
         from app.version import build_version
 
         ctl = _FakeLaunchctl()
@@ -1249,7 +1253,12 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             home = Path(tmp)
             health_dir = home / "data"
             health_dir.mkdir()
-            write_spotty_bunny_health(health_dir=health_dir, tap=TAP_STATE_OK)
+            chord_at = 1_700_000_000.0
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                last_chord_at=chord_at,
+                tap=TAP_STATE_OK,
+            )
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
             program = home / "spotty-bunny"
@@ -1298,7 +1307,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("accessibility: yes", text)
             self.assertIn("input_monitoring: no", text)
             self.assertIn("tap: ok", text)
-            self.assertIn("last_chord: never", text)
+            self.assertIn(f"last_chord: {format_activity_timestamp(chord_at)}", text)
 
     def test_status_fails_when_running_without_health_snapshot(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
@@ -3799,6 +3808,19 @@ class SpottyBunnyTapHealthTests(SimpleTestCase):
         from app.spotty_bunny_tap_health import format_activity_timestamp
 
         self.assertEqual(format_activity_timestamp(None), "never")
+
+    def test_format_activity_timestamp_renders_epoch(self) -> None:
+        from datetime import UTC, datetime
+
+        from app.spotty_bunny_tap_health import format_activity_timestamp
+
+        epoch = 1_700_000_000.0
+        expected = (
+            datetime.fromtimestamp(epoch, tz=UTC)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
+        self.assertEqual(format_activity_timestamp(epoch), expected)
 
 
 class SpottyBunnyUpdateTests(SimpleTestCase):
