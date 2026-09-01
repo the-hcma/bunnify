@@ -26,6 +26,11 @@ from app.spotty_bunny_launch import (
     spotty_bunny_is_running,
     stop_spotty_bunny,
 )
+from app.spotty_bunny_tap_health import (
+    TAP_STATE_OK,
+    format_activity_timestamp,
+    read_spotty_bunny_health,
+)
 from app.version import build_version
 
 AGENT_COMMANDS = frozenset({"install", "status", "uninstall", "upgrade"})
@@ -401,7 +406,18 @@ def status_agent(
     out(f"version: {build_version()}")
     out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
     out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
-    healthy = installed and loaded and running and binary_ok
+    health = read_spotty_bunny_health()
+    if health is None:
+        out("tap: unknown")
+        out("last_chord: unknown")
+    else:
+        out(f"tap: {health.tap}")
+        out(f"last_chord: {format_activity_timestamp(health.last_chord_at)}")
+    tap_ok = health is not None and health.tap == TAP_STATE_OK
+    if running and not tap_ok:
+        healthy = False
+    else:
+        healthy = installed and loaded and running and binary_ok
     return 0 if healthy else 1
 
 

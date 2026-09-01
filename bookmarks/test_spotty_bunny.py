@@ -1239,6 +1239,11 @@ class SpottyBunnyAgentTests(SimpleTestCase):
 
     def test_status_reports_log_version_and_tcc(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_OK,
+            format_activity_timestamp,
+            write_spotty_bunny_health,
+        )
         from app.version import build_version
 
         ctl = _FakeLaunchctl()
@@ -1246,6 +1251,14 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         stdout = StringIO()
         with TemporaryDirectory() as tmp:
             home = Path(tmp)
+            health_dir = home / "data"
+            health_dir.mkdir()
+            chord_at = 1_700_000_000.0
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                last_chord_at=chord_at,
+                tap=TAP_STATE_OK,
+            )
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
             program = home / "spotty-bunny"
@@ -1260,9 +1273,15 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             pid_dir = home / "run"
             pid_dir.mkdir()
             (pid_dir / ".spotty-bunny.pid").write_text("99\n", encoding="utf-8")
-            with patch(
-                "app.spotty_bunny_agent.spotty_bunny_is_running",
-                return_value=True,
+            with (
+                patch(
+                    "app.spotty_bunny_agent.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_tap_health.data_dir",
+                    return_value=health_dir,
+                ),
             ):
                 code = status_agent(
                     home=home,
@@ -1287,6 +1306,166 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("version: " + build_version(), text)
             self.assertIn("accessibility: yes", text)
             self.assertIn("input_monitoring: no", text)
+            self.assertIn("tap: ok", text)
+            self.assertIn(f"last_chord: {format_activity_timestamp(chord_at)}", text)
+
+    def test_status_fails_when_running_without_health_snapshot(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            health_dir = home / "data"
+            health_dir.mkdir()
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            program = home / "spotty-bunny"
+            _write_executable(program)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[str(program)],
+                ),
+                encoding="utf-8",
+            )
+            pid_dir = home / "run"
+            pid_dir.mkdir()
+            (pid_dir / ".spotty-bunny.pid").write_text("99\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.spotty_bunny_agent.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_tap_health.data_dir",
+                    return_value=health_dir,
+                ),
+            ):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=lambda _p: TccStatus(True, True),
+                    program=program,
+                )
+            text = stdout.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("tap: unknown", text)
+
+    def test_status_fails_when_tap_disabled(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_DISABLED,
+            write_spotty_bunny_health,
+        )
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            health_dir = home / "data"
+            health_dir.mkdir()
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                tap=TAP_STATE_DISABLED,
+            )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            program = home / "spotty-bunny"
+            _write_executable(program)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[str(program)],
+                ),
+                encoding="utf-8",
+            )
+            pid_dir = home / "run"
+            pid_dir.mkdir()
+            (pid_dir / ".spotty-bunny.pid").write_text("99\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.spotty_bunny_agent.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_tap_health.data_dir",
+                    return_value=health_dir,
+                ),
+            ):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=lambda _p: TccStatus(True, True),
+                    program=program,
+                )
+            text = stdout.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("tap: disabled", text)
+            self.assertIn("last_chord: never", text)
+
+    def test_status_fails_when_tap_reinstalling(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_REINSTALLING,
+            write_spotty_bunny_health,
+        )
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            health_dir = home / "data"
+            health_dir.mkdir()
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                tap=TAP_STATE_REINSTALLING,
+            )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            program = home / "spotty-bunny"
+            _write_executable(program)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[str(program)],
+                ),
+                encoding="utf-8",
+            )
+            pid_dir = home / "run"
+            pid_dir.mkdir()
+            (pid_dir / ".spotty-bunny.pid").write_text("99\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.spotty_bunny_agent.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_tap_health.data_dir",
+                    return_value=health_dir,
+                ),
+            ):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=lambda _p: TccStatus(True, True),
+                    program=program,
+                )
+            text = stdout.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("tap: reinstalling", text)
 
     def test_status_fails_when_plist_binary_missing(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
@@ -3469,6 +3648,179 @@ class SpottyBunnyStatusTests(SimpleTestCase):
         self.assertIn("apply_spotty_chrome", source)
         self.assertIn("fill_rgb=PANEL_FILL_RGB", source)
         self.assertIn("frame_rgb=PANEL_FRAME_RGB", source)
+
+
+class SpottyBunnyTapHealthTests(SimpleTestCase):
+    def test_decide_tap_health_check(self) -> None:
+        from app.spotty_bunny_tap_health import decide_tap_health_check
+
+        self.assertEqual(
+            decide_tap_health_check(tap_is_none=True, tap_enabled=False),
+            "reinstall",
+        )
+        self.assertEqual(
+            decide_tap_health_check(tap_is_none=False, tap_enabled=True),
+            "ok",
+        )
+        self.assertEqual(
+            decide_tap_health_check(tap_is_none=False, tap_enabled=False),
+            "reenable",
+        )
+
+    def test_read_write_health_round_trip(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_OK,
+            read_spotty_bunny_health,
+            write_spotty_bunny_health,
+        )
+
+        with TemporaryDirectory() as tmp:
+            health_dir = Path(tmp)
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                last_chord_at=1000.0,
+                last_event_at=1000.5,
+                reinstall_failures=0,
+                tap=TAP_STATE_OK,
+                time_fn=lambda: 1001.0,
+            )
+            health = read_spotty_bunny_health(health_dir=health_dir)
+            assert health is not None
+            self.assertEqual(health.tap, TAP_STATE_OK)
+            self.assertEqual(health.last_chord_at, 1000.0)
+            self.assertEqual(health.last_event_at, 1000.5)
+            self.assertEqual(health.updated_at, 1001.0)
+
+    def test_write_preserves_unset_fields_from_previous_snapshot(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_DISABLED,
+            TAP_STATE_OK,
+            read_spotty_bunny_health,
+            write_spotty_bunny_health,
+        )
+
+        with TemporaryDirectory() as tmp:
+            health_dir = Path(tmp)
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                last_chord_at=1000.0,
+                last_event_at=1000.5,
+                reinstall_failures=2,
+                tap=TAP_STATE_OK,
+                time_fn=lambda: 1001.0,
+            )
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                tap=TAP_STATE_DISABLED,
+                time_fn=lambda: 1002.0,
+            )
+            health = read_spotty_bunny_health(health_dir=health_dir)
+            assert health is not None
+            self.assertEqual(health.tap, TAP_STATE_DISABLED)
+            self.assertEqual(health.last_chord_at, 1000.0)
+            self.assertEqual(health.reinstall_failures, 2)
+
+    def test_try_write_spotty_bunny_health_swallows_os_error(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_OK,
+            try_write_spotty_bunny_health,
+        )
+
+        with TemporaryDirectory() as tmp:
+            health_dir = Path(tmp)
+            blocked = health_dir / ".spotty-bunny-health"
+            blocked.mkdir()
+            result = try_write_spotty_bunny_health(
+                health_dir=health_dir,
+                tap=TAP_STATE_OK,
+            )
+            self.assertIsNone(result)
+
+    def test_next_reinstall_failure_count(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            SpottyBunnyHealth,
+            next_reinstall_failure_count,
+        )
+
+        self.assertEqual(next_reinstall_failure_count(None), 1)
+        prior = SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=2,
+            tap="missing",
+            updated_at=1.0,
+        )
+        self.assertEqual(next_reinstall_failure_count(prior), 3)
+
+    def test_process_reinstall_failure_triggers_exit_at_threshold(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            MAX_TAP_REINSTALL_FAILURES,
+            SpottyBunnyHealth,
+            process_reinstall_failure,
+            reset_reinstall_failures,
+        )
+
+        reset_reinstall_failures()
+        prior = SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=MAX_TAP_REINSTALL_FAILURES - 1,
+            tap="missing",
+            updated_at=1.0,
+        )
+        failures, should_exit = process_reinstall_failure(prior)
+        self.assertEqual(failures, MAX_TAP_REINSTALL_FAILURES)
+        self.assertTrue(should_exit)
+
+    def test_record_reinstall_failure_accumulates_when_disk_stale(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            SpottyBunnyHealth,
+            record_reinstall_failure,
+            reset_reinstall_failures,
+        )
+
+        reset_reinstall_failures()
+        stale = SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=0,
+            tap="missing",
+            updated_at=1.0,
+        )
+        self.assertEqual(record_reinstall_failure(stale), 1)
+        self.assertEqual(record_reinstall_failure(stale), 2)
+        self.assertEqual(record_reinstall_failure(stale), 3)
+
+    def test_should_exit_after_reinstall_failures(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            MAX_TAP_REINSTALL_FAILURES,
+            should_exit_after_reinstall_failures,
+        )
+
+        self.assertFalse(
+            should_exit_after_reinstall_failures(MAX_TAP_REINSTALL_FAILURES - 1)
+        )
+        self.assertTrue(
+            should_exit_after_reinstall_failures(MAX_TAP_REINSTALL_FAILURES)
+        )
+
+    def test_format_activity_timestamp_never(self) -> None:
+        from app.spotty_bunny_tap_health import format_activity_timestamp
+
+        self.assertEqual(format_activity_timestamp(None), "never")
+
+    def test_format_activity_timestamp_renders_epoch(self) -> None:
+        from datetime import UTC, datetime
+
+        from app.spotty_bunny_tap_health import format_activity_timestamp
+
+        epoch = 1_700_000_000.0
+        expected = (
+            datetime.fromtimestamp(epoch, tz=UTC)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
+        self.assertEqual(format_activity_timestamp(epoch), expected)
 
 
 class SpottyBunnyUpdateTests(SimpleTestCase):
