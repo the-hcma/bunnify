@@ -414,8 +414,14 @@ def status_agent(
     else:
         out(f"tap: {health.tap}")
         out(f"last_chord: {format_activity_timestamp(health.last_chord_at)}")
-    tap_ok = health is None or health.tap in {TAP_STATE_OK, TAP_STATE_REINSTALLING}
-    healthy = installed and loaded and running and binary_ok and tap_ok
+    tap_ok = health is not None and health.tap in {
+        TAP_STATE_OK,
+        TAP_STATE_REINSTALLING,
+    }
+    if running and not tap_ok:
+        healthy = False
+    else:
+        healthy = installed and loaded and running and binary_ok
     return 0 if healthy else 1
 
 

@@ -211,6 +211,7 @@ from app.spotty_bunny_tap_health import (
     TAP_STATE_REINSTALLING,
     read_spotty_bunny_health,
     should_exit_after_reinstall_failures,
+    try_write_spotty_bunny_health,
     write_spotty_bunny_health,
 )
 from app.spotty_bunny_update import (
@@ -1528,14 +1529,14 @@ def _check_event_tap_health(controller: SpottyBunnyController) -> None:
         _reinstall_event_tap(controller)
         return
     if _event_tap_enabled(tap):
-        write_spotty_bunny_health(tap=TAP_STATE_OK)
+        try_write_spotty_bunny_health(tap=TAP_STATE_OK)
         return
     logger.warning("event tap health check: tap disabled; re-enabling")
-    write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
     CGEventTapEnable(tap, True)
     if _event_tap_enabled(tap):
-        write_spotty_bunny_health(tap=TAP_STATE_OK)
+        try_write_spotty_bunny_health(tap=TAP_STATE_OK)
         return
+    try_write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
     logger.warning("event tap health check: re-enable failed; reinstalling")
     _reinstall_event_tap(controller)
 
@@ -1555,13 +1556,14 @@ def _create_event_tap_callback(
                 "event tap disabled (%s); re-enabling",
                 _event_type_name(event_type),
             )
-            write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
             if tap is not None:
                 CGEventTapEnable(tap, True)
                 if _event_tap_enabled(tap):
-                    write_spotty_bunny_health(tap=TAP_STATE_OK)
+                    try_write_spotty_bunny_health(tap=TAP_STATE_OK)
                 else:
                     _run_on_main(lambda: _reinstall_event_tap(controller))
+            else:
+                try_write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
             return event
         keycode = int(CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode))
         flags = int(CGEventGetFlags(event))
@@ -1613,7 +1615,6 @@ def _create_event_tap_callback(
             fired,
         )
         if fired:
-            _record_tap_activity(chord=True)
             logger.info(
                 "chord complete %s keycode=%s tracker left=%s right=%s",
                 key_name,
@@ -1621,7 +1622,12 @@ def _create_event_tap_callback(
                 controller.chord.held_left,
                 controller.chord.held_right,
             )
-            _run_on_main(lambda: controller.toggle())
+
+            def chord_action() -> None:
+                controller.toggle()
+                _record_tap_activity(chord=True)
+
+            _run_on_main(chord_action)
         return event
 
     return callback
@@ -1674,12 +1680,12 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
     controller.callback = callback
     controller.source = source
     controller.tap = tap
-    write_spotty_bunny_health(tap=TAP_STATE_OK)
+    write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
 
 
 def _record_tap_activity(*, chord: bool) -> None:
     now = time.time()
-    write_spotty_bunny_health(
+    try_write_spotty_bunny_health(
         last_chord_at=now if chord else None,
         last_event_at=now,
         tap=TAP_STATE_OK,
