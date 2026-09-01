@@ -79,6 +79,7 @@ from Foundation import (
 from PyObjCTools import MachSignals
 from Quartz import (
     CFMachPortCreateRunLoopSource,
+    CFMachPortInvalidate,
     CFRunLoopAddSource,
     CFRunLoopGetCurrent,
     CFRunLoopRemoveSource,
@@ -209,9 +210,10 @@ from app.spotty_bunny_tap_health import (
     TAP_STATE_MISSING,
     TAP_STATE_OK,
     TAP_STATE_REINSTALLING,
-    next_reinstall_failure_count,
+    decide_tap_health_check,
+    process_reinstall_failure,
     read_spotty_bunny_health,
-    should_exit_after_reinstall_failures,
+    reset_reinstall_failures,
     try_write_spotty_bunny_health,
 )
 from app.spotty_bunny_update import (
@@ -1524,14 +1526,19 @@ def _event_type_name(event_type: int) -> str:
 def _check_event_tap_health(controller: SpottyBunnyController) -> None:
     """Re-enable or reinstall the tap when macOS disables it silently."""
     tap = controller.tap
-    if tap is None:
+    action = decide_tap_health_check(
+        tap_is_none=tap is None,
+        tap_enabled=_event_tap_enabled(tap) if tap is not None else False,
+    )
+    if action == "reinstall":
         logger.warning("event tap health check: tap missing; reinstalling")
         _reinstall_event_tap(controller)
         return
-    if _event_tap_enabled(tap):
+    if action == "ok":
         try_write_spotty_bunny_health(tap=TAP_STATE_OK)
         return
     logger.warning("event tap health check: tap disabled; re-enabling")
+    assert tap is not None
     CGEventTapEnable(tap, True)
     if _event_tap_enabled(tap):
         try_write_spotty_bunny_health(tap=TAP_STATE_OK)
@@ -1645,6 +1652,17 @@ def _exit_after_tap_failure(failures: int) -> None:
     os._exit(1)
 
 
+def _handle_reinstall_failure() -> None:
+    prior = read_spotty_bunny_health()
+    failures, should_exit = process_reinstall_failure(prior)
+    try_write_spotty_bunny_health(
+        tap=TAP_STATE_MISSING,
+        reinstall_failures=failures,
+    )
+    if should_exit:
+        _exit_after_tap_failure(failures)
+
+
 def _install_event_tap(controller: SpottyBunnyController) -> None:
     tap_holder: dict[str, object] = {}
     callback = _create_event_tap_callback(controller, tap_holder=tap_holder)
@@ -1681,6 +1699,7 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
     controller.source = source
     controller.tap = tap
     try_write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
+    reset_reinstall_failures()
 
 
 def _record_tap_activity(*, chord: bool) -> None:
@@ -1704,20 +1723,18 @@ def _register_wake_observer(controller: SpottyBunnyController) -> None:
 
 def _reinstall_event_tap(controller: SpottyBunnyController) -> None:
     try_write_spotty_bunny_health(tap=TAP_STATE_REINSTALLING)
-    _teardown_event_tap(controller)
     try:
+        _teardown_event_tap(controller)
         _install_event_tap(controller)
     except SpottyBunnyEventTapError:
-        prior = read_spotty_bunny_health()
-        failures = next_reinstall_failure_count(prior)
-        try_write_spotty_bunny_health(
-            tap=TAP_STATE_MISSING,
-            reinstall_failures=failures,
-        )
-        if should_exit_after_reinstall_failures(failures):
-            _exit_after_tap_failure(failures)
+        _handle_reinstall_failure()
+        return
+    except Exception:
+        logger.exception("event tap reinstall failed unexpectedly")
+        _handle_reinstall_failure()
         return
     try_write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
+    reset_reinstall_failures()
 
 
 def _schedule_tap_health_checks(controller: SpottyBunnyController) -> None:
@@ -1737,6 +1754,7 @@ def _teardown_event_tap(controller: SpottyBunnyController) -> None:
     source = controller.source
     if tap is not None:
         CGEventTapEnable(tap, False)
+        CFMachPortInvalidate(tap)
     if source is not None:
         CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes)
     controller.callback = None

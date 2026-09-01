@@ -1403,6 +1403,61 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("tap: disabled", text)
             self.assertIn("last_chord: never", text)
 
+    def test_status_fails_when_tap_reinstalling(self) -> None:
+        from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_REINSTALLING,
+            write_spotty_bunny_health,
+        )
+
+        ctl = _FakeLaunchctl()
+        ctl.loaded = True
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            health_dir = home / "data"
+            health_dir.mkdir()
+            write_spotty_bunny_health(
+                health_dir=health_dir,
+                tap=TAP_STATE_REINSTALLING,
+            )
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            program = home / "spotty-bunny"
+            _write_executable(program)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[str(program)],
+                ),
+                encoding="utf-8",
+            )
+            pid_dir = home / "run"
+            pid_dir.mkdir()
+            (pid_dir / ".spotty-bunny.pid").write_text("99\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.spotty_bunny_agent.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_tap_health.data_dir",
+                    return_value=health_dir,
+                ),
+            ):
+                code = status_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=lambda _p: TccStatus(True, True),
+                    program=program,
+                )
+            text = stdout.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("tap: reinstalling", text)
+
     def test_status_fails_when_plist_binary_missing(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
 
@@ -3587,6 +3642,22 @@ class SpottyBunnyStatusTests(SimpleTestCase):
 
 
 class SpottyBunnyTapHealthTests(SimpleTestCase):
+    def test_decide_tap_health_check(self) -> None:
+        from app.spotty_bunny_tap_health import decide_tap_health_check
+
+        self.assertEqual(
+            decide_tap_health_check(tap_is_none=True, tap_enabled=False),
+            "reinstall",
+        )
+        self.assertEqual(
+            decide_tap_health_check(tap_is_none=False, tap_enabled=True),
+            "ok",
+        )
+        self.assertEqual(
+            decide_tap_health_check(tap_is_none=False, tap_enabled=False),
+            "reenable",
+        )
+
     def test_read_write_health_round_trip(self) -> None:
         from app.spotty_bunny_tap_health import (
             TAP_STATE_OK,
@@ -3671,6 +3742,45 @@ class SpottyBunnyTapHealthTests(SimpleTestCase):
             updated_at=1.0,
         )
         self.assertEqual(next_reinstall_failure_count(prior), 3)
+
+    def test_process_reinstall_failure_triggers_exit_at_threshold(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            MAX_TAP_REINSTALL_FAILURES,
+            SpottyBunnyHealth,
+            process_reinstall_failure,
+            reset_reinstall_failures,
+        )
+
+        reset_reinstall_failures()
+        prior = SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=MAX_TAP_REINSTALL_FAILURES - 1,
+            tap="missing",
+            updated_at=1.0,
+        )
+        failures, should_exit = process_reinstall_failure(prior)
+        self.assertEqual(failures, MAX_TAP_REINSTALL_FAILURES)
+        self.assertTrue(should_exit)
+
+    def test_record_reinstall_failure_accumulates_when_disk_stale(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            SpottyBunnyHealth,
+            record_reinstall_failure,
+            reset_reinstall_failures,
+        )
+
+        reset_reinstall_failures()
+        stale = SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=0,
+            tap="missing",
+            updated_at=1.0,
+        )
+        self.assertEqual(record_reinstall_failure(stale), 1)
+        self.assertEqual(record_reinstall_failure(stale), 2)
+        self.assertEqual(record_reinstall_failure(stale), 3)
 
     def test_should_exit_after_reinstall_failures(self) -> None:
         from app.spotty_bunny_tap_health import (

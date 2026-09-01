@@ -22,6 +22,7 @@ TAP_STATE_REINSTALLING = "reinstalling"
 logger = logging.getLogger(__name__)
 
 _health_cache: SpottyBunnyHealth | None = None
+_reinstall_failures_in_memory: int = 0
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,17 @@ def clear_spotty_bunny_health(*, health_dir: Path | None = None) -> None:
     """Remove the health snapshot (overlay exit)."""
     global _health_cache
     _health_cache = None
+    reset_reinstall_failures()
     spotty_bunny_health_path(health_dir=health_dir).unlink(missing_ok=True)
+
+
+def decide_tap_health_check(*, tap_enabled: bool, tap_is_none: bool) -> str:
+    """Return the next heal action: ``ok``, ``reinstall``, or ``reenable``."""
+    if tap_is_none:
+        return "reinstall"
+    if tap_enabled:
+        return "ok"
+    return "reenable"
 
 
 def format_activity_timestamp(epoch: float | None) -> str:
@@ -57,6 +68,14 @@ def next_reinstall_failure_count(
     return (prior.reinstall_failures if prior else 0) + 1
 
 
+def process_reinstall_failure(
+    prior: SpottyBunnyHealth | None,
+) -> tuple[int, bool]:
+    """Record a reinstall failure and return ``(count, should_exit)``."""
+    failures = record_reinstall_failure(prior)
+    return failures, should_exit_after_reinstall_failures(failures)
+
+
 def read_spotty_bunny_health(
     *, health_dir: Path | None = None
 ) -> SpottyBunnyHealth | None:
@@ -67,6 +86,21 @@ def read_spotty_bunny_health(
     except OSError:
         return None
     return _health_from_lines(lines)
+
+
+def record_reinstall_failure(prior: SpottyBunnyHealth | None) -> int:
+    """Increment and return the reinstall failure count (survives disk write loss)."""
+    global _reinstall_failures_in_memory
+    disk = prior.reinstall_failures if prior else 0
+    failures = max(disk, _reinstall_failures_in_memory) + 1
+    _reinstall_failures_in_memory = failures
+    return failures
+
+
+def reset_reinstall_failures() -> None:
+    """Clear the in-process reinstall failure counter."""
+    global _reinstall_failures_in_memory
+    _reinstall_failures_in_memory = 0
 
 
 def should_exit_after_reinstall_failures(failures: int) -> bool:

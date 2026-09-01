@@ -28,7 +28,6 @@ from app.spotty_bunny_launch import (
 )
 from app.spotty_bunny_tap_health import (
     TAP_STATE_OK,
-    TAP_STATE_REINSTALLING,
     format_activity_timestamp,
     read_spotty_bunny_health,
 )
@@ -414,10 +413,7 @@ def status_agent(
     else:
         out(f"tap: {health.tap}")
         out(f"last_chord: {format_activity_timestamp(health.last_chord_at)}")
-    tap_ok = health is not None and health.tap in {
-        TAP_STATE_OK,
-        TAP_STATE_REINSTALLING,
-    }
+    tap_ok = health is not None and health.tap == TAP_STATE_OK
     if running and not tap_ok:
         healthy = False
     else:
