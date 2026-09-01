@@ -65,6 +65,7 @@ from Cocoa import (
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
     NSWorkspace,
+    NSWorkspaceDidWakeNotification,
 )
 from Foundation import (
     NSAttributedString,
@@ -74,7 +75,6 @@ from Foundation import (
     NSOperationQueue,
     NSThread,
     NSTimer,
-    NSWorkspaceDidWakeNotification,
 )
 from PyObjCTools import MachSignals
 from Quartz import (
