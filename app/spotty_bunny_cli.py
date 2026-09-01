@@ -14,6 +14,7 @@ from pathlib import Path
 from app.config import data_dir
 from app.process_marker import BUILD_MARKER_FLAG
 from app.spotty_bunny_launch import clear_spotty_bunny_pid, write_spotty_bunny_pid
+from app.spotty_bunny_tap_health import clear_spotty_bunny_health
 from app.version import build_version
 
 COMMAND_NAME = "spotty-bunny"
@@ -130,6 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_spotty_bunny_pid(os.getpid())
         pid = os.getpid()
         atexit.register(lambda: clear_spotty_bunny_pid(only_pid=pid))
+        atexit.register(clear_spotty_bunny_health)
     return run_spotty_bunny()
 
 

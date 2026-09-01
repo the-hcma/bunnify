@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import signal
 import sys
+import time
 
 import objc
 from Cocoa import (
@@ -62,6 +64,7 @@ from Cocoa import (
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
+    NSWorkspace,
 )
 from Foundation import (
     NSAttributedString,
@@ -70,18 +73,22 @@ from Foundation import (
     NSMutableAttributedString,
     NSOperationQueue,
     NSThread,
+    NSTimer,
+    NSWorkspaceDidWakeNotification,
 )
 from PyObjCTools import MachSignals
 from Quartz import (
     CFMachPortCreateRunLoopSource,
     CFRunLoopAddSource,
     CFRunLoopGetCurrent,
+    CFRunLoopRemoveSource,
     CGEventGetFlags,
     CGEventGetIntegerValueField,
     CGEventMaskBit,
     CGEventSourceKeyState,
     CGEventTapCreate,
     CGEventTapEnable,
+    CGEventTapIsEnabled,
     CGRequestListenEventAccess,
     kCFRunLoopCommonModes,
     kCGEventFlagMaskAlternate,
@@ -196,6 +203,16 @@ from app.spotty_bunny_status import (
     status_text_runs,
     wrap_status_preferring_punctuation,
 )
+from app.spotty_bunny_tap_health import (
+    TAP_HEALTH_CHECK_INTERVAL_S,
+    TAP_STATE_DISABLED,
+    TAP_STATE_MISSING,
+    TAP_STATE_OK,
+    TAP_STATE_REINSTALLING,
+    read_spotty_bunny_health,
+    should_exit_after_reinstall_failures,
+    write_spotty_bunny_health,
+)
 from app.spotty_bunny_update import (
     UpdateStatus,
     cache_is_stale,
@@ -293,6 +310,10 @@ class SpottyBunnyController(NSObject):
         logger.debug("field-editor command ignored: %s", name)
         return False
 
+    def checkEventTapHealth_(self, _timer) -> None:
+        """Periodic timer: re-enable or reinstall a stale CGEventTap."""
+        _check_event_tap_health(self)
+
     def dismissWithEscape_(self, _sender) -> None:
         """Hide About first, then the overlay. Ignore repeats until key-up."""
         if self._escape_held:
@@ -361,6 +382,7 @@ class SpottyBunnyController(NSObject):
         self.status = None
         self.table = None
         self.tap = None
+        self._tap_health_timer = None
         self.visible = False
         self._build_panel()
         self._apply_update_status()
@@ -468,6 +490,11 @@ class SpottyBunnyController(NSObject):
         resigning = notification.object()
         if resigning is self.panel and self._became_key:
             self.hide()
+
+    def workspaceDidWake_(self, _notification) -> None:
+        """Reinstall the event tap after sleep/wake."""
+        logger.info("system wake; reinstalling event tap")
+        _reinstall_event_tap(self)
 
     def _apply_line_navigation(self, text_view, selector: str) -> None:
         """Move or extend the caret for Home/End (and Cocoa document aliases)."""
@@ -1283,6 +1310,8 @@ def run_spotty_bunny_app() -> int:
     controller = SpottyBunnyController.alloc().init()
     logger.info("NSApplication ready (activationPolicy=accessory)")
     _install_event_tap(controller)
+    _register_wake_observer(controller)
+    _schedule_tap_health_checks(controller)
     print(
         "spotty-bunny: hold one Control, press the other for the search box "
         "(Ctrl-C to quit)",
@@ -1491,34 +1520,31 @@ def _event_type_name(event_type: int) -> str:
     return names.get(int(event_type), f"type:{event_type}")
 
 
-def _install_edit_menu() -> None:
-    """Install a hidden Edit menu so Command cut/copy/paste reach the field editor."""
-    main = NSMenu.alloc().initWithTitle_("MainMenu")
-    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", None, "")
-    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
-    command = int(NSEventModifierFlagCommand)
-    command_shift = command | int(NSEventModifierFlagShift)
-    for title, action, key, modifiers in (
-        ("Undo", "undo:", "z", command),
-        ("Redo", "redo:", "z", command_shift),
-        ("Cut", "cut:", "x", command),
-        ("Copy", "copy:", "c", command),
-        ("Paste", "paste:", "v", command),
-        ("Select All", "selectAll:", "a", command),
-    ):
-        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            title, action, key
-        )
-        item.setKeyEquivalentModifierMask_(modifiers)
-        edit_menu.addItem_(item)
-    edit_item.setSubmenu_(edit_menu)
-    main.addItem_(edit_item)
-    NSApp.setMainMenu_(main)
+def _check_event_tap_health(controller: SpottyBunnyController) -> None:
+    """Re-enable or reinstall the tap when macOS disables it silently."""
+    tap = controller.tap
+    if tap is None:
+        logger.warning("event tap health check: tap missing; reinstalling")
+        _reinstall_event_tap(controller)
+        return
+    if _event_tap_enabled(tap):
+        write_spotty_bunny_health(tap=TAP_STATE_OK)
+        return
+    logger.warning("event tap health check: tap disabled; re-enabling")
+    write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
+    CGEventTapEnable(tap, True)
+    if _event_tap_enabled(tap):
+        write_spotty_bunny_health(tap=TAP_STATE_OK)
+        return
+    logger.warning("event tap health check: re-enable failed; reinstalling")
+    _reinstall_event_tap(controller)
 
 
-def _install_event_tap(controller: SpottyBunnyController) -> None:
-    tap_holder: dict[str, object] = {}
-
+def _create_event_tap_callback(
+    controller: SpottyBunnyController,
+    *,
+    tap_holder: dict[str, object],
+) -> object:
     def callback(_proxy, event_type, event, _refcon):
         tap = tap_holder.get("tap")
         if event_type in (
@@ -1529,8 +1555,13 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
                 "event tap disabled (%s); re-enabling",
                 _event_type_name(event_type),
             )
+            write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
             if tap is not None:
                 CGEventTapEnable(tap, True)
+                if _event_tap_enabled(tap):
+                    write_spotty_bunny_health(tap=TAP_STATE_OK)
+                else:
+                    _run_on_main(lambda: _reinstall_event_tap(controller))
             return event
         keycode = int(CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode))
         flags = int(CGEventGetFlags(event))
@@ -1582,6 +1613,7 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
             fired,
         )
         if fired:
+            _record_tap_activity(chord=True)
             logger.info(
                 "chord complete %s keycode=%s tracker left=%s right=%s",
                 key_name,
@@ -1592,6 +1624,24 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
             _run_on_main(lambda: controller.toggle())
         return event
 
+    return callback
+
+
+def _event_tap_enabled(tap: object) -> bool:
+    return bool(CGEventTapIsEnabled(tap))
+
+
+def _exit_after_tap_failure(failures: int) -> None:
+    logger.error(
+        "event tap reinstall failed %s times; exiting for KeepAlive restart",
+        failures,
+    )
+    os._exit(1)
+
+
+def _install_event_tap(controller: SpottyBunnyController) -> None:
+    tap_holder: dict[str, object] = {}
+    callback = _create_event_tap_callback(controller, tap_holder=tap_holder)
     CGRequestListenEventAccess()
     tap = CGEventTapCreate(
         kCGSessionEventTap,
@@ -1624,6 +1674,90 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
     controller.callback = callback
     controller.source = source
     controller.tap = tap
+    write_spotty_bunny_health(tap=TAP_STATE_OK)
+
+
+def _record_tap_activity(*, chord: bool) -> None:
+    now = time.time()
+    write_spotty_bunny_health(
+        last_chord_at=now if chord else None,
+        last_event_at=now,
+        tap=TAP_STATE_OK,
+    )
+
+
+def _register_wake_observer(controller: SpottyBunnyController) -> None:
+    center = NSWorkspace.sharedWorkspace().notificationCenter()
+    center.addObserver_selector_name_object_(
+        controller,
+        "workspaceDidWake:",
+        NSWorkspaceDidWakeNotification,
+        None,
+    )
+
+
+def _reinstall_event_tap(controller: SpottyBunnyController) -> None:
+    write_spotty_bunny_health(tap=TAP_STATE_REINSTALLING)
+    _teardown_event_tap(controller)
+    try:
+        _install_event_tap(controller)
+    except SpottyBunnyEventTapError:
+        prior = read_spotty_bunny_health()
+        failures = (prior.reinstall_failures if prior else 0) + 1
+        write_spotty_bunny_health(tap=TAP_STATE_MISSING, reinstall_failures=failures)
+        if should_exit_after_reinstall_failures(failures):
+            _exit_after_tap_failure(failures)
+        return
+    write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
+
+
+def _schedule_tap_health_checks(controller: SpottyBunnyController) -> None:
+    controller._tap_health_timer = (
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            TAP_HEALTH_CHECK_INTERVAL_S,
+            controller,
+            "checkEventTapHealth:",
+            None,
+            True,
+        )
+    )
+
+
+def _teardown_event_tap(controller: SpottyBunnyController) -> None:
+    tap = controller.tap
+    source = controller.source
+    if tap is not None:
+        CGEventTapEnable(tap, False)
+    if source is not None:
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes)
+    controller.callback = None
+    controller.source = None
+    controller.tap = None
+
+
+def _install_edit_menu() -> None:
+    """Install a hidden Edit menu so Command cut/copy/paste reach the field editor."""
+    main = NSMenu.alloc().initWithTitle_("MainMenu")
+    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", None, "")
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    command = int(NSEventModifierFlagCommand)
+    command_shift = command | int(NSEventModifierFlagShift)
+    for title, action, key, modifiers in (
+        ("Undo", "undo:", "z", command),
+        ("Redo", "redo:", "z", command_shift),
+        ("Cut", "cut:", "x", command),
+        ("Copy", "copy:", "c", command),
+        ("Paste", "paste:", "v", command),
+        ("Select All", "selectAll:", "a", command),
+    ):
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            title, action, key
+        )
+        item.setKeyEquivalentModifierMask_(modifiers)
+        edit_menu.addItem_(item)
+    edit_item.setSubmenu_(edit_menu)
+    main.addItem_(edit_item)
+    NSApp.setMainMenu_(main)
 
 
 def _post_wake_event() -> None:
