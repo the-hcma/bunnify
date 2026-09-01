@@ -50,6 +50,13 @@ def format_activity_timestamp(epoch: float | None) -> str:
     return when.strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
+def next_reinstall_failure_count(
+    prior: SpottyBunnyHealth | None,
+) -> int:
+    """Return the failure count after one more reinstall error."""
+    return (prior.reinstall_failures if prior else 0) + 1
+
+
 def read_spotty_bunny_health(
     *, health_dir: Path | None = None
 ) -> SpottyBunnyHealth | None:

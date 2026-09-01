@@ -3656,6 +3656,22 @@ class SpottyBunnyTapHealthTests(SimpleTestCase):
             )
             self.assertIsNone(result)
 
+    def test_next_reinstall_failure_count(self) -> None:
+        from app.spotty_bunny_tap_health import (
+            SpottyBunnyHealth,
+            next_reinstall_failure_count,
+        )
+
+        self.assertEqual(next_reinstall_failure_count(None), 1)
+        prior = SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=2,
+            tap="missing",
+            updated_at=1.0,
+        )
+        self.assertEqual(next_reinstall_failure_count(prior), 3)
+
     def test_should_exit_after_reinstall_failures(self) -> None:
         from app.spotty_bunny_tap_health import (
             MAX_TAP_REINSTALL_FAILURES,
