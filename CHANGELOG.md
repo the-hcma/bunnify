@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.3...bunnify-v0.12.0) (2026-09-01)
+
+
+### Features
+
+* auto-heal Spotty Bunny stale event taps ([#388](https://github.com/the-hcma/bunnify/issues/388)) ([5ea1da3](https://github.com/the-hcma/bunnify/commit/5ea1da3027f5e46f66c0f8782f5791ddaed40ce9))
+
 ## [0.11.3](https://github.com/the-hcma/bunnify/compare/bunnify-v0.11.2...bunnify-v0.11.3) (2026-08-30)
 
 
