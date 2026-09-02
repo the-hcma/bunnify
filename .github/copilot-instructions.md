@@ -1,3 +1,7 @@
+**Read [`AGENTS.md`](../AGENTS.md) at the repo root first — it is the single source of truth for this repo, and it tells you to also load every `alwaysApply: true` rule under `.cursor/rules/`.** The notes below are repo-specific Copilot hints only; do not treat them as a second rules source.
+
+---
+
 # Copilot Instructions for Bunnify
 
 ## Python Version Policy
