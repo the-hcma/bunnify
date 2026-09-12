@@ -96,6 +96,43 @@ if packaged != canonical:
     )
 PY
 
+echo "📦 Verifying sdist keeps etc/bunnify-completion at repo-root path..."
+uv run python - "$repo_root/etc/bunnify-completion" "$sdist_path" <<'PY'
+import sys
+import tarfile
+from pathlib import Path
+
+canonical = Path(sys.argv[1]).read_bytes()
+with tarfile.open(sys.argv[2], "r:gz") as sdist:
+    members = [
+        name
+        for name in sdist.getnames()
+        if name.endswith("/etc/bunnify-completion") or name == "etc/bunnify-completion"
+    ]
+    if len(members) != 1:
+        raise SystemExit(
+            f"Expected one etc/bunnify-completion in sdist, got {members!r}"
+        )
+    packaged = sdist.extractfile(members[0]).read()
+if packaged != canonical:
+    raise SystemExit("Sdist etc/bunnify-completion does not match repo file")
+PY
+
+echo "📦 Verifying wheel bundles etc/bunnify-completion..."
+uv run python - "$repo_root/etc/bunnify-completion" "$wheel_path" <<'PY'
+import sys
+import zipfile
+from pathlib import Path
+
+canonical = Path(sys.argv[1]).read_bytes()
+with zipfile.ZipFile(sys.argv[2]) as wheel:
+    packaged = wheel.read("app/data/bunnify-completion")
+if packaged != canonical:
+    raise SystemExit(
+        "Wheel app/data/bunnify-completion does not match etc/bunnify-completion"
+    )
+PY
+
 echo "📦 Installing wheel into an isolated virtual environment..."
 timeout 120 uv venv --python 3.14 "$venv_dir"
 timeout 120 uv pip install --python "$venv_dir/bin/python" "$wheel_path"
@@ -136,6 +173,13 @@ installed_env "$bin_dir/bunnify-server" --help >/dev/null
 installed_env "$bin_dir/bunnify-server" --version
 installed_env "$bin_dir/spotty-bunny" --help >/dev/null
 installed_env "$bin_dir/spotty-bunny" --version
+
+echo "📦 Verifying installed --completion bash needs no source checkout..."
+completion_output="$("$bin_dir/bunnify" --completion bash)"
+if [[ "$completion_output" != *"_bunnify_completion"* ]]; then
+    echo "Installed --completion bash did not print the completion script" >&2
+    exit 1
+fi
 
 echo "🐰 Starting installed server outside the repository..."
 installed_env "$bin_dir/bunnify-server" \

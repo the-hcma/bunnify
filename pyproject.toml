@@ -57,14 +57,16 @@ packages = ["app", "bookmarks"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "bunnify.json.example" = "app/data/bookmarks.example.json"
+"etc/bunnify-completion" = "app/data/bunnify-completion"
 
 [tool.hatch.build.targets.sdist]
 packages = ["app", "bookmarks"]
 
-# Keep the repo-root path inside the sdist so `uv build` (wheel-from-sdist) can
-# still resolve the wheel force-include source path above.
+# Keep the repo-root paths inside the sdist so `uv build` (wheel-from-sdist) can
+# still resolve the wheel force-include source paths above.
 [tool.hatch.build.targets.sdist.force-include]
 "bunnify.json.example" = "bunnify.json.example"
+"etc/bunnify-completion" = "etc/bunnify-completion"
 
 [dependency-groups]
 dev = [

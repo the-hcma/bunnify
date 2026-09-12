@@ -143,6 +143,20 @@ bunnify --print-url gh
 
 Unknown keys exit non-zero in direct mode (no search-engine fallback).
 
+### 4. Shell completion (optional)
+
+Tab completion for shortcut keys, outside the interactive REPL:
+
+```bash
+bunnify --completion bash > ~/.local/share/bash-completion/completions/bunnify.bash
+```
+
+That's a [bash-completion v2](https://github.com/scop/bash-completion) user
+directory — no rc file edit, lazy-loaded on first Tab press in a new shell.
+`zsh`/`fish` aren't supported yet.
+
+`source etc/bunnify-completion` (from a source checkout) still works too.
+
 ## Features
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys

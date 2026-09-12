@@ -1387,6 +1387,33 @@ class ConfigUnitTests(TestCase):
             self.assertNotIn("No bookmarks example found", str(context.exception))
             self.assertFalse(target.exists())
 
+    def test_completion_script_bytes_reads_packaged_resource(self) -> None:
+        from unittest.mock import patch
+
+        from app.config import completion_script_bytes
+
+        with patch("app.config.resources.files") as mock_files:
+            mock_files.return_value.joinpath.return_value.read_bytes.return_value = (
+                b"packaged script"
+            )
+            script = completion_script_bytes()
+
+        self.assertEqual(script, b"packaged script")
+        mock_files.assert_called_once_with("app")
+
+    def test_completion_script_bytes_falls_back_to_repo_etc(self) -> None:
+        from unittest.mock import patch
+
+        from app.config import completion_script_bytes
+
+        with patch(
+            "app.config.resources.files", side_effect=ModuleNotFoundError("app")
+        ):
+            script = completion_script_bytes()
+
+        self.assertIsNotNone(script)
+        self.assertIn(b"_bunnify_completion", script)
+
     def test_ensure_user_bookmarks_returns_existing_on_seed_race(self) -> None:
         import tempfile
         from pathlib import Path
@@ -2955,6 +2982,48 @@ class ConfigUnitTests(TestCase):
             flagged = CliRunner().invoke(main, ["--onboard"])
             self.assertEqual(flagged.exit_code, 0)
             self.assertIn("bunnify setup", flagged.output)
+
+    def test_completion_bash_prints_script(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["--completion", "bash"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("_bunnify_completion", result.output)
+        self.assertIn("complete -F _bunnify_completion bunnify", result.output)
+
+    def test_completion_unsupported_shell_exits_two(self) -> None:
+        from app.cli import main
+
+        for shell in ("zsh", "fish"):
+            with self.subTest(shell=shell):
+                result = CliRunner().invoke(main, ["--completion", shell])
+                self.assertEqual(result.exit_code, 2)
+                self.assertIn("not yet supported", result.output)
+
+    def test_completion_invalid_shell_is_usage_error(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["--completion", "powershell"])
+
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("Invalid value", result.output)
+
+    def test_completion_missing_value_is_usage_error(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["--completion"])
+
+        self.assertEqual(result.exit_code, 2)
+
+    def test_completion_missing_script_errors(self) -> None:
+        from app.cli import main
+
+        with patch("app.cli.completion_script_bytes", return_value=None):
+            result = CliRunner().invoke(main, ["--completion", "bash"])
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("unable to locate", result.output)
 
     def test_upgrade_runs_pipx_and_explains_checkout(self) -> None:
         import subprocess
