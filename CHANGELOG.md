@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.13.0...bunnify-v0.13.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **spotty-bunny:** reflect self-staleness in the update badge, not just PyPI ([#411](https://github.com/the-hcma/bunnify/issues/411)) ([1e9a80e](https://github.com/the-hcma/bunnify/commit/1e9a80e0dbfdb379d796dce4c12f90634995c96e))
+
 ## [0.13.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.12.1...bunnify-v0.13.0) (2026-09-12)
 
 
