@@ -4060,6 +4060,20 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
             "Spotty Bunny is up to date.",
         )
 
+    def test_summarize_update_check_reports_failure_not_up_to_date(self) -> None:
+        from app.spotty_bunny_update import UpdateStatus, summarize_update_check
+
+        # latest=None means no PyPI lookup has ever succeeded (offline,
+        # unreachable, transient failure) — must not read as "confirmed
+        # current".
+        never_checked = UpdateStatus(
+            checked_at=1.0, current="0.13.0", latest=None, outdated=False
+        )
+        self.assertEqual(
+            summarize_update_check(never_checked, self_stale=False),
+            "Could not check for updates.",
+        )
+
     def test_is_version_outdated_compares_pep440(self) -> None:
         from app.spotty_bunny_update import is_version_outdated
 

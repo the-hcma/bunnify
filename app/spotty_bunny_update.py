@@ -64,6 +64,10 @@ def summarize_update_check(
         return "Server build differs from this Mac's — see About for details."
     if status.outdated and status.latest:
         return f"Update available: {status.latest}"
+    if status.latest is None:
+        # No successful PyPI lookup has ever completed (offline, unreachable,
+        # or a transient failure) — that's not the same as confirmed current.
+        return "Could not check for updates."
     return "Spotty Bunny is up to date."
 
 

@@ -390,6 +390,7 @@ class SpottyBunnyController(NSObject):
         self._resolve_seq = 0
         self._resolving = False
         self._shortcuts_load_failed = False
+        self._self_stale = False
         self._server_skewed = False
         self._update_check_pending = False
         self._update_check_requeue = False
@@ -535,10 +536,17 @@ class SpottyBunnyController(NSObject):
         text_view.setSelectedRange_(NSMakeRange(location, sel_length))
 
     def _outdated_badge(self) -> bool:
-        """PyPI is newer, this process is stale, or the server build skews."""
+        """PyPI is newer, this process is stale, or the server build skews.
+
+        ``self._self_stale`` / ``self._server_skewed`` are refreshed on the
+        background daily/manual-check cadence (see ``_check_update_and_skew``)
+        rather than computed here: ``spotty_self_stale()`` can re-exec a file
+        and spawn a ``git`` subprocess, and this is called synchronously from
+        the AppKit main thread (``menuNeedsUpdate_`` on every right-click).
+        """
         return badge_should_show(
             self._update_status,
-            self_stale=spotty_self_stale(),
+            self_stale=self._self_stale,
             server_skewed=self._server_skewed,
         )
 
@@ -1248,15 +1256,16 @@ class SpottyBunnyController(NSObject):
                 if announce:
                     self._set_status("Could not check for updates.")
             elif isinstance(result, tuple) and isinstance(result[0], UpdateStatus):
-                status, server_skewed = result
+                status, server_skewed, self_stale = result
                 self._update_status = status
                 self._server_skewed = server_skewed
+                self._self_stale = self_stale
                 self._apply_update_status()
                 if announce:
                     self._set_status(
                         summarize_update_check(
                             status,
-                            self_stale=spotty_self_stale(),
+                            self_stale=self_stale,
                             server_skewed=server_skewed,
                         )
                     )
@@ -1512,17 +1521,21 @@ def _confirm_install_gh() -> bool:
     return int(alert.runModal()) == int(NSAlertFirstButtonReturn)
 
 
-def _check_update_and_skew(*, force: bool) -> tuple[UpdateStatus, bool]:
+def _check_update_and_skew(*, force: bool) -> tuple[UpdateStatus, bool, bool]:
     """Background-thread work for the daily/manual update check.
 
-    Bundles the PyPI lookup with a fresh server-skew read so a genuine
-    client/server mismatch (the About panel's #377 case) can drive the icon
-    badge too, on the same infrequent cadence as the PyPI check rather than
-    on every icon refresh.
+    Bundles the PyPI lookup with a fresh server-skew read and self-staleness
+    check so a genuine client/server mismatch (the About panel's #377 case)
+    and a stale-in-place-upgrade overlay can both drive the icon badge, on
+    the same infrequent cadence as the PyPI check. Also keeps
+    ``spotty_self_stale()`` — which can re-exec a file and spawn a ``git``
+    subprocess — off the AppKit main thread, which only reads the cached
+    result via ``_outdated_badge()``.
     """
     status = refresh_update_status(force=force)
     server_skewed = load_about_runtime_info().server_skewed
-    return status, server_skewed
+    self_stale = spotty_self_stale()
+    return status, server_skewed, self_stale
 
 
 def _confirm_uninstall() -> bool:
