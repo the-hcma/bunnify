@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import time
+from functools import partial
 
 import objc
 from Cocoa import (
@@ -112,6 +113,7 @@ from Quartz import (
 
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
+from app.coherence import spotty_self_stale
 from app.config import resolve_base_url
 from app.github_complete import (
     bootstrap_github_completion_cache,
@@ -185,6 +187,7 @@ from app.spotty_bunny_hotkey import (
 from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
 from app.spotty_bunny_menu import (
+    CHECK_FOR_UPDATES_STATUS,
     INSTALL_STATUS,
     UNINSTALL_INFORMATIVE,
     UNINSTALL_MENU_TITLE,
@@ -218,9 +221,11 @@ from app.spotty_bunny_tap_health import (
 )
 from app.spotty_bunny_update import (
     UpdateStatus,
+    badge_should_show,
     cache_is_stale,
     read_cached_update_status,
     refresh_update_status,
+    summarize_update_check,
 )
 from app.version import get_build_info
 
@@ -316,6 +321,14 @@ class SpottyBunnyController(NSObject):
     def checkEventTapHealth_(self, _timer) -> None:
         """Periodic timer: re-enable or reinstall a stale CGEventTap."""
         _check_event_tap_health(self)
+
+    def checkForUpdates_(self, _sender) -> None:
+        """Force an immediate PyPI check, bypassing the daily cache."""
+        if self._update_check_pending:
+            return
+        logger.info("check for updates from logo menu")
+        self._set_status(CHECK_FOR_UPDATES_STATUS)
+        self._schedule_update_check(force=True, announce=True)
 
     def dismissWithEscape_(self, _sender) -> None:
         """Hide About first, then the overlay. Ignore repeats until key-up."""
@@ -515,8 +528,12 @@ class SpottyBunnyController(NSObject):
         )
         text_view.setSelectedRange_(NSMakeRange(location, sel_length))
 
+    def _outdated_badge(self) -> bool:
+        """PyPI has a newer release, or this process predates what's installed."""
+        return badge_should_show(self._update_status, self_stale=spotty_self_stale())
+
     def _apply_update_status(self) -> None:
-        outdated = self._update_status.outdated
+        outdated = self._outdated_badge()
         if self.logo is not None:
             self.logo.setImage_(make_spotty_bunny_icon(LOGO_SIZE, outdated=outdated))
         if self._logo_menu is not None:
@@ -567,7 +584,7 @@ class SpottyBunnyController(NSObject):
         logo.setBezelStyle_(NSBezelStyleShadowlessSquare)
         logo.setBordered_(False)
         logo.setImage_(
-            make_spotty_bunny_icon(LOGO_SIZE, outdated=self._update_status.outdated)
+            make_spotty_bunny_icon(LOGO_SIZE, outdated=self._outdated_badge())
         )
         logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
         logo.setTarget_(self)
@@ -928,7 +945,7 @@ class SpottyBunnyController(NSObject):
         menu.removeAllItems()
         for title, action in logo_menu_specs(
             installed=is_agent_installed(),
-            outdated=self._update_status.outdated,
+            outdated=self._outdated_badge(),
         ):
             item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                 title,
@@ -1045,11 +1062,21 @@ class SpottyBunnyController(NSObject):
             )
         self._center_panel()
 
-    def _schedule_update_check(self) -> None:
+    def _schedule_update_check(
+        self, *, force: bool = False, announce: bool = False
+    ) -> None:
         if self._update_check_pending:
             return
         self._update_check_pending = True
-        self._io.submit(refresh_update_status, self._update_check_ready)
+        check = (
+            partial(refresh_update_status, force=True)
+            if force
+            else refresh_update_status
+        )
+        self._io.submit(
+            check,
+            lambda result: self._update_check_ready(result, announce=announce),
+        )
 
     def _show_completions(
         self,
@@ -1202,15 +1229,21 @@ class SpottyBunnyController(NSObject):
 
         self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
 
-    def _update_check_ready(self, result: object) -> None:
+    def _update_check_ready(self, result: object, *, announce: bool = False) -> None:
         def apply() -> None:
             self._update_check_pending = False
             if isinstance(result, Exception):
                 logger.warning("PyPI version check failed: %s", result)
+                if announce:
+                    self._set_status("Could not check for updates.")
                 return
             if isinstance(result, UpdateStatus):
                 self._update_status = result
                 self._apply_update_status()
+                if announce:
+                    self._set_status(
+                        summarize_update_check(result, self_stale=spotty_self_stale())
+                    )
 
         _run_on_main(apply)
 

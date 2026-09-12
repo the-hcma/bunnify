@@ -186,16 +186,21 @@ process, and clears the pid file. It does not delete the application log or
 your bookmarks. If the agent was never installed, it still succeeds.
 
 To stop the overlay **without** removing the LaunchAgent, right-click the bunny
-icon and choose **Quit Spotty Bunny**. That exits the process and boots the
-agent out so KeepAlive cannot immediately respawn it. The plist stays; the
-agent starts again at next login (`RunAtLoad`) until you `uninstall`.
+icon and choose **Quit**. That exits the process and boots the agent out so
+KeepAlive cannot immediately respawn it. The plist stays; the agent starts
+again at next login (`RunAtLoad`) until you `uninstall`.
 
-The same menu lists **Install Spotty Bunny** when the LaunchAgent is missing
-(then quits so launchd owns the overlay). When the agent is installed it
-offers **Uninstall Spotty Bunny** (confirms, then removes the plist before
-booting the agent out) and, when a newer PyPI release is known, **Upgrade
-Spotty Bunny** (`pipx upgrade`, rewrite the plist, then quit so KeepAlive
-relaunches). Items are listed A–Z by title.
+The same menu always lists **Check for Updates**, which forces an immediate
+PyPI lookup instead of waiting for the daily cache and reports the result
+(up to date, a new release, or "running an older build than what's
+installed"). It also lists **Install** when the LaunchAgent is missing (then
+quits so launchd owns the overlay). When the agent is installed it offers
+**Uninstall** (confirms, then removes the plist before booting the agent
+out) and **Upgrade** whenever a newer PyPI release is known *or* this
+running overlay predates what's currently installed (`pipx upgrade` if
+needed, rewrite the plist for the current binary, then quit so KeepAlive
+relaunches — this also fixes a stale overlay even when PyPI has nothing
+new). Items are listed A–Z by title.
 
 Invoking `bunnify` reuses a running local server and Spotty Bunny overlay
 when they match this CLI's commit. If either is missing it is started; if

@@ -10,7 +10,7 @@ from packaging.version import InvalidVersion, Version
 
 from app.client import HealthStatus, fetch_health
 from app.theme import Theme
-from app.version import get_build_info
+from app.version import get_build_info, installed_package_version
 
 RestartFn = Callable[[str | None, str], bool]
 
@@ -91,6 +91,35 @@ def cli_is_newer_than(health: HealthStatus) -> bool:
         return Version(health.version) < Version(local_version)
     except InvalidVersion:
         return False
+
+
+def running_is_stale(*, running_version: str, installed_version: str) -> bool:
+    """Return whether *installed_version* is newer than *running_version*.
+
+    Used to detect a long-running process (Spotty Bunny) whose own cached
+    build predates an in-place upgrade on disk — distinct from a genuine
+    server/client skew, since nothing about the server is involved here.
+    """
+    try:
+        return Version(running_version) < Version(installed_version)
+    except InvalidVersion:
+        return running_version != installed_version
+
+
+def spotty_self_stale() -> bool:
+    """Return whether this process's build predates what is now installed.
+
+    ``get_build_info()`` is cached once per process, so a long-running
+    Spotty Bunny overlay keeps reporting its build at launch even after a
+    local upgrade replaces the installed package underneath it. Comparing
+    that frozen value to a fresh, uncached read of the installed version
+    surfaces that self-staleness without needing a restart to detect it.
+    """
+    running_version, _running_commit = get_build_info()
+    return running_is_stale(
+        running_version=running_version,
+        installed_version=installed_package_version(),
+    )
 
 
 def ensure_local_spotty_aligned(

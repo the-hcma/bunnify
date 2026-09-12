@@ -37,6 +37,28 @@ def cache_is_stale(checked_at: float | None, *, now: float | None = None) -> boo
     return moment - checked_at >= CHECK_INTERVAL_S
 
 
+def badge_should_show(status: UpdateStatus, *, self_stale: bool) -> bool:
+    """True when the update badge should show.
+
+    Either PyPI has a newer release than what's installed, or this running
+    process's own build predates what is now installed (self-staleness —
+    fixable by Upgrade alone, no PyPI release required).
+    """
+    return status.outdated or self_stale
+
+
+def summarize_update_check(status: UpdateStatus, *, self_stale: bool) -> str:
+    """One-line result for a user-initiated "Check for Updates"."""
+    if self_stale:
+        return (
+            "This overlay is running an older build than what's installed. "
+            "Choose Upgrade to restart it."
+        )
+    if status.outdated and status.latest:
+        return f"Update available: {status.latest}"
+    return "Spotty Bunny is up to date."
+
+
 def is_version_outdated(current: str, latest: str | None) -> bool:
     """True when *latest* is a newer package version than *current*."""
     if not latest:

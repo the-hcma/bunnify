@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-INSTALL_MENU_TITLE = "Install Spotty Bunny"
+CHECK_FOR_UPDATES_MENU_TITLE = "Check for Updates"
+CHECK_FOR_UPDATES_STATUS = "Checking for updates…"
+INSTALL_MENU_TITLE = "Install"
 INSTALL_STATUS = "Installing LaunchAgent…"
-QUIT_MENU_TITLE = "Quit Spotty Bunny"
+QUIT_MENU_TITLE = "Quit"
 UNINSTALL_INFORMATIVE = (
     "Removes the login LaunchAgent and stops Spotty Bunny. "
     "Bookmarks and config.env are kept."
 )
-UNINSTALL_MENU_TITLE = "Uninstall Spotty Bunny"
-UPGRADE_MENU_TITLE = "Upgrade Spotty Bunny"
+UNINSTALL_MENU_TITLE = "Uninstall"
+UPGRADE_MENU_TITLE = "Upgrade"
 UPGRADE_STATUS = "Upgrading Bunnify from PyPI…"
 
 
@@ -21,10 +23,14 @@ def logo_menu_specs(
 ) -> tuple[tuple[str, str], ...]:
     """Return logo menu (title, action) pairs in lexicographic title order.
 
-    Install is shown when the LaunchAgent is missing. Upgrade is shown only
-    when the agent is installed and a newer PyPI version is known.
+    Check for Updates always shows. Install is shown when the LaunchAgent is
+    missing. Upgrade is shown only when the agent is installed and either a
+    newer PyPI version is known or the running overlay is itself stale.
     """
-    items: list[tuple[str, str]] = [(QUIT_MENU_TITLE, "quitSpottyBunny:")]
+    items: list[tuple[str, str]] = [
+        (CHECK_FOR_UPDATES_MENU_TITLE, "checkForUpdates:"),
+        (QUIT_MENU_TITLE, "quitSpottyBunny:"),
+    ]
     if installed:
         items.append((UNINSTALL_MENU_TITLE, "uninstallSpottyBunny:"))
         if outdated:

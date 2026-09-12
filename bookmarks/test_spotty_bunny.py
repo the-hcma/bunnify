@@ -528,6 +528,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             github_display="github.com/acme/repo",
             github_url="https://github.com/acme/repo",
             local_build_label="0.10.0 (abc123456789)",
+            self_stale=False,
             server_agent_installed=False,
             server_build_label="0.10.0 (abc123456789)",
             server_display="Local server · http://127.0.0.1:8000",
@@ -656,6 +657,92 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         self.assertIn("this Mac's 0.10.0 (newnewnewnew)", message)
         self.assertIn("redeploy", message)
         self.assertNotIn("bunnify-server", message)
+
+    def test_server_skew_message_self_stale_takes_priority(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        message = server_skew_message(
+            _about_runtime(
+                self_stale=True,
+                server_mode="remote",
+                server_skewed=True,
+            )
+        )
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertIn("older build", message)
+        self.assertIn("bunnify spotty-bunny upgrade", message)
+        self.assertNotIn("redeploy", message)
+        self.assertNotIn("Server build", message)
+
+    def test_server_skew_message_self_stale_without_server_skew(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        message = server_skew_message(
+            _about_runtime(self_stale=True, server_mode="local", server_skewed=False)
+        )
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertIn("older build", message)
+
+    def test_running_is_stale_compares_pep440(self) -> None:
+        from app.coherence import running_is_stale
+
+        self.assertTrue(
+            running_is_stale(running_version="0.12.0", installed_version="0.13.0")
+        )
+        self.assertFalse(
+            running_is_stale(running_version="0.13.0", installed_version="0.13.0")
+        )
+        self.assertFalse(
+            running_is_stale(running_version="0.13.0", installed_version="0.12.0")
+        )
+
+    def test_running_is_stale_falls_back_to_string_compare_when_unparseable(
+        self,
+    ) -> None:
+        from app.coherence import running_is_stale
+
+        self.assertTrue(
+            running_is_stale(running_version="unknown", installed_version="0.13.0")
+        )
+        self.assertFalse(
+            running_is_stale(running_version="unknown", installed_version="unknown")
+        )
+
+    def test_spotty_self_stale_detects_in_place_upgrade(self) -> None:
+        from unittest.mock import patch
+
+        from app.coherence import spotty_self_stale
+
+        with (
+            patch("app.coherence.get_build_info", return_value=("0.12.0", "oldold")),
+            patch("app.coherence.installed_package_version", return_value="0.13.0"),
+        ):
+            self.assertTrue(spotty_self_stale())
+
+    def test_installed_package_version_ignores_embedded_version(self) -> None:
+        from unittest.mock import patch
+
+        from app.version import installed_package_version, package_version
+
+        with patch("app.version._build_metadata.EMBEDDED_VERSION", "0.12.0+stale"):
+            self.assertEqual(package_version(), "0.12.0+stale")
+            # A real distribution is installed in this dev/test environment
+            # (via uv), so the fresh, uncached read differs from the frozen
+            # embedded stamp above.
+            self.assertNotEqual(installed_package_version(), "0.12.0+stale")
+
+    def test_spotty_self_stale_false_when_matching(self) -> None:
+        from unittest.mock import patch
+
+        from app.coherence import spotty_self_stale
+
+        with (
+            patch("app.coherence.get_build_info", return_value=("0.13.0", "newnew")),
+            patch("app.coherence.installed_package_version", return_value="0.13.0"),
+        ):
+            self.assertFalse(spotty_self_stale())
 
 
 class SpottyBunnyAgentTests(SimpleTestCase):
@@ -3333,20 +3420,29 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertNotIn('setTitle_("spotty-bunny")', source)
         self.assertIn("showAbout:", source)
         self.assertIn("SpottyBunnyLogoButton", source)
+        self.assertIn("def checkForUpdates_", source)
         self.assertIn("def installSpottyBunny_", source)
         self.assertIn("def quitSpottyBunny_", source)
         self.assertIn("def uninstallSpottyBunny_", source)
         self.assertIn("def upgradeSpottyBunny_", source)
         self.assertIn("menuNeedsUpdate_", source)
         self.assertIn("installed=is_agent_installed()", source)
-        self.assertIn("outdated=self._update_status.outdated", source)
+        self.assertIn("outdated=self._outdated_badge()", source)
+        self.assertIn("def _outdated_badge(self) -> bool:", source)
+        self.assertIn("badge_should_show(self._update_status, self_stale=", source)
         menu_source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_menu.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("Install Spotty Bunny", menu_source)
-        self.assertIn("Quit Spotty Bunny", menu_source)
-        self.assertIn("Uninstall Spotty Bunny", menu_source)
-        self.assertIn("Upgrade Spotty Bunny", menu_source)
+        self.assertIn('CHECK_FOR_UPDATES_MENU_TITLE = "Check for Updates"', menu_source)
+        self.assertIn('INSTALL_MENU_TITLE = "Install"', menu_source)
+        self.assertIn('QUIT_MENU_TITLE = "Quit"', menu_source)
+        self.assertIn('UNINSTALL_MENU_TITLE = "Uninstall"', menu_source)
+        self.assertIn('UPGRADE_MENU_TITLE = "Upgrade"', menu_source)
+        self.assertNotIn("Install Spotty Bunny", menu_source)
+        self.assertNotIn("Quit Spotty Bunny", menu_source)
+        self.assertNotIn("Uninstall Spotty Bunny", menu_source)
+        self.assertNotIn("Upgrade Spotty Bunny", menu_source)
+        self.assertIn("checkForUpdates:", menu_source)
         self.assertIn("installSpottyBunny:", menu_source)
         self.assertIn("quitSpottyBunny:", menu_source)
         self.assertIn("uninstallSpottyBunny:", menu_source)
@@ -3831,6 +3927,53 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
         self.assertFalse(cache_is_stale(100.0, now=100.0 + CHECK_INTERVAL_S - 1))
         self.assertTrue(cache_is_stale(100.0, now=100.0 + CHECK_INTERVAL_S))
 
+    def test_badge_should_show_reflects_self_stale_or_pypi_outdated(self) -> None:
+        from app.spotty_bunny_update import UpdateStatus, badge_should_show
+
+        current_status = UpdateStatus(
+            checked_at=1.0, current="0.13.0", latest="0.13.0", outdated=False
+        )
+        outdated_status = UpdateStatus(
+            checked_at=1.0, current="0.12.0", latest="0.13.0", outdated=True
+        )
+        self.assertFalse(badge_should_show(current_status, self_stale=False))
+        self.assertTrue(badge_should_show(current_status, self_stale=True))
+        self.assertTrue(badge_should_show(outdated_status, self_stale=False))
+        self.assertTrue(badge_should_show(outdated_status, self_stale=True))
+
+    def test_summarize_update_check_prioritizes_self_stale(self) -> None:
+        from app.spotty_bunny_update import UpdateStatus, summarize_update_check
+
+        outdated_status = UpdateStatus(
+            checked_at=1.0, current="0.12.0", latest="0.13.0", outdated=True
+        )
+        self.assertIn(
+            "older build",
+            summarize_update_check(outdated_status, self_stale=True),
+        )
+
+    def test_summarize_update_check_reports_pypi_release(self) -> None:
+        from app.spotty_bunny_update import UpdateStatus, summarize_update_check
+
+        outdated_status = UpdateStatus(
+            checked_at=1.0, current="0.12.0", latest="0.13.0", outdated=True
+        )
+        self.assertEqual(
+            summarize_update_check(outdated_status, self_stale=False),
+            "Update available: 0.13.0",
+        )
+
+    def test_summarize_update_check_reports_up_to_date(self) -> None:
+        from app.spotty_bunny_update import UpdateStatus, summarize_update_check
+
+        current_status = UpdateStatus(
+            checked_at=1.0, current="0.13.0", latest="0.13.0", outdated=False
+        )
+        self.assertEqual(
+            summarize_update_check(current_status, self_stale=False),
+            "Spotty Bunny is up to date.",
+        )
+
     def test_is_version_outdated_compares_pep440(self) -> None:
         from app.spotty_bunny_update import is_version_outdated
 
@@ -3847,6 +3990,7 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
 
     def test_logo_menu_specs_are_sorted_and_hide_upgrade_when_current(self) -> None:
         from app.spotty_bunny_menu import (
+            CHECK_FOR_UPDATES_MENU_TITLE,
             INSTALL_MENU_TITLE,
             QUIT_MENU_TITLE,
             UNINSTALL_MENU_TITLE,
@@ -3857,20 +4001,28 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
         missing = logo_menu_specs(installed=False, outdated=True)
         missing_titles = [title for title, _action in missing]
         self.assertEqual(missing_titles, sorted(missing_titles))
-        self.assertEqual(missing_titles, [INSTALL_MENU_TITLE, QUIT_MENU_TITLE])
+        self.assertEqual(
+            missing_titles,
+            [CHECK_FOR_UPDATES_MENU_TITLE, INSTALL_MENU_TITLE, QUIT_MENU_TITLE],
+        )
         current = logo_menu_specs(installed=True, outdated=False)
         titles = [title for title, _action in current]
         self.assertEqual(titles, sorted(titles))
         self.assertEqual(
             titles,
-            [QUIT_MENU_TITLE, UNINSTALL_MENU_TITLE],
+            [CHECK_FOR_UPDATES_MENU_TITLE, QUIT_MENU_TITLE, UNINSTALL_MENU_TITLE],
         )
         outdated = logo_menu_specs(installed=True, outdated=True)
         outdated_titles = [title for title, _action in outdated]
         self.assertEqual(outdated_titles, sorted(outdated_titles))
         self.assertEqual(
             outdated_titles,
-            [QUIT_MENU_TITLE, UNINSTALL_MENU_TITLE, UPGRADE_MENU_TITLE],
+            [
+                CHECK_FOR_UPDATES_MENU_TITLE,
+                QUIT_MENU_TITLE,
+                UNINSTALL_MENU_TITLE,
+                UPGRADE_MENU_TITLE,
+            ],
         )
 
     def test_pypi_latest_version_reads_info_version(self) -> None:
@@ -4028,6 +4180,7 @@ class _FakeClock:
 
 def _about_runtime(
     *,
+    self_stale: bool = False,
     server_agent_installed: bool = False,
     server_mode: Literal["local", "remote"],
     server_skewed: bool = False,
@@ -4038,6 +4191,7 @@ def _about_runtime(
         github_display=None,
         github_url=None,
         local_build_label="0.10.0 (newnewnewnew)",
+        self_stale=self_stale,
         server_agent_installed=server_agent_installed,
         server_build_label="0.9.0 (oldoldoldold)",
         server_display="Local server · http://127.0.0.1:8000",

@@ -91,6 +91,22 @@ def package_version(*, pyproject_path: Path | None = None) -> str:
         return _pyproject_version(path)
 
 
+def installed_package_version(*, pyproject_path: Path | None = None) -> str:
+    """Return the version actually installed on disk right now.
+
+    Unlike :func:`package_version`, this never returns the baked-in
+    ``EMBEDDED_VERSION`` a long-running process resolved at import time — it
+    re-reads distribution metadata (or, in a source checkout, ``pyproject.toml``)
+    on every call, so an in-place upgrade underneath an already-running process
+    is visible without restarting it.
+    """
+    try:
+        return version(PACKAGE_NAME)
+    except PackageNotFoundError:
+        path = pyproject_path or Path(__file__).resolve().parents[1] / "pyproject.toml"
+        return _pyproject_version(path)
+
+
 def running_command_path() -> Path:
     """Return the path of the command that started this process.
 
