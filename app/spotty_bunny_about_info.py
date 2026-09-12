@@ -12,7 +12,7 @@ from typing import Literal
 from urllib.parse import unquote, urlparse
 
 from app.client import fetch_health
-from app.coherence import builds_match, format_build_label
+from app.coherence import builds_match, format_build_label, spotty_self_stale
 from app.config import (
     default_bookmarks_path,
     load_preferences,
@@ -36,6 +36,7 @@ class AboutRuntimeInfo:
     github_display: str | None
     github_url: str | None
     local_build_label: str
+    self_stale: bool
     server_agent_installed: bool
     server_build_label: str | None
     server_display: str
@@ -216,6 +217,7 @@ def load_about_runtime_info(
         github_display=github_display,
         github_url=github_url,
         local_build_label=_local_build_label(),
+        self_stale=spotty_self_stale(),
         server_agent_installed=_server_agent_installed(),
         server_build_label=server_build_label,
         server_display=f"{label} · {base_url}",
@@ -256,10 +258,20 @@ def path_from_file_uri(uri: str) -> Path | None:
 def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
     """Return the About-panel build-skew warning, or None when aligned.
 
+    Self-staleness (this running overlay predates what's now installed)
+    takes priority: it explains a skew this process itself would otherwise
+    misattribute to the server, and it never requires touching the server.
+
     A remote server is deployed independently of this Mac, so skew there is
     advisory. A local server is expected to track this install, so name the
     command that realigns it.
     """
+    if runtime.self_stale:
+        return (
+            "This Spotty Bunny process is running an older build than what's "
+            "installed. Restart it: choose Upgrade from the 🐰 menu (or run "
+            "bunnify spotty-bunny upgrade)."
+        )
     if not runtime.server_skewed:
         return None
     server_build = f"Server build {runtime.server_build_label or 'unknown build'}"

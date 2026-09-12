@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import time
+from functools import partial
 
 import objc
 from Cocoa import (
@@ -112,6 +113,7 @@ from Quartz import (
 
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
+from app.coherence import spotty_self_stale
 from app.config import resolve_base_url
 from app.github_complete import (
     bootstrap_github_completion_cache,
@@ -130,6 +132,7 @@ from app.spotty_bunny_about import (
     build_about_panel,
     position_about_panel,
 )
+from app.spotty_bunny_about_info import load_about_runtime_info
 from app.spotty_bunny_agent import (
     bootout_loaded_agent,
     install_agent,
@@ -185,6 +188,7 @@ from app.spotty_bunny_hotkey import (
 from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
 from app.spotty_bunny_menu import (
+    CHECK_FOR_UPDATES_STATUS,
     INSTALL_STATUS,
     UNINSTALL_INFORMATIVE,
     UNINSTALL_MENU_TITLE,
@@ -218,9 +222,11 @@ from app.spotty_bunny_tap_health import (
 )
 from app.spotty_bunny_update import (
     UpdateStatus,
+    badge_should_show,
     cache_is_stale,
     read_cached_update_status,
     refresh_update_status,
+    summarize_update_check,
 )
 from app.version import get_build_info
 
@@ -317,6 +323,17 @@ class SpottyBunnyController(NSObject):
         """Periodic timer: re-enable or reinstall a stale CGEventTap."""
         _check_event_tap_health(self)
 
+    def checkForUpdates_(self, _sender) -> None:
+        """Force an immediate PyPI/server check, bypassing the daily cache.
+
+        If a check is already in flight, queue this one instead of dropping
+        it silently — it runs (forced, with a result reported) as soon as
+        the in-flight one finishes.
+        """
+        logger.info("check for updates from logo menu")
+        self._set_status(CHECK_FOR_UPDATES_STATUS)
+        self._schedule_update_check(force=True, announce=True)
+
     def dismissWithEscape_(self, _sender) -> None:
         """Hide About first, then the overlay. Ignore repeats until key-up."""
         if self._escape_held:
@@ -373,7 +390,10 @@ class SpottyBunnyController(NSObject):
         self._resolve_seq = 0
         self._resolving = False
         self._shortcuts_load_failed = False
+        self._self_stale = False
+        self._server_skewed = False
         self._update_check_pending = False
+        self._update_check_requeue = False
         self._update_status = read_cached_update_status()
         self.callback = None
         self.chord = ChordTracker()
@@ -515,8 +535,23 @@ class SpottyBunnyController(NSObject):
         )
         text_view.setSelectedRange_(NSMakeRange(location, sel_length))
 
+    def _outdated_badge(self) -> bool:
+        """PyPI is newer, this process is stale, or the server build skews.
+
+        ``self._self_stale`` / ``self._server_skewed`` are refreshed on the
+        background daily/manual-check cadence (see ``_check_update_and_skew``)
+        rather than computed here: ``spotty_self_stale()`` can re-exec a file
+        and spawn a ``git`` subprocess, and this is called synchronously from
+        the AppKit main thread (``menuNeedsUpdate_`` on every right-click).
+        """
+        return badge_should_show(
+            self._update_status,
+            self_stale=self._self_stale,
+            server_skewed=self._server_skewed,
+        )
+
     def _apply_update_status(self) -> None:
-        outdated = self._update_status.outdated
+        outdated = self._outdated_badge()
         if self.logo is not None:
             self.logo.setImage_(make_spotty_bunny_icon(LOGO_SIZE, outdated=outdated))
         if self._logo_menu is not None:
@@ -567,7 +602,7 @@ class SpottyBunnyController(NSObject):
         logo.setBezelStyle_(NSBezelStyleShadowlessSquare)
         logo.setBordered_(False)
         logo.setImage_(
-            make_spotty_bunny_icon(LOGO_SIZE, outdated=self._update_status.outdated)
+            make_spotty_bunny_icon(LOGO_SIZE, outdated=self._outdated_badge())
         )
         logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
         logo.setTarget_(self)
@@ -928,7 +963,7 @@ class SpottyBunnyController(NSObject):
         menu.removeAllItems()
         for title, action in logo_menu_specs(
             installed=is_agent_installed(),
-            outdated=self._update_status.outdated,
+            outdated=self._outdated_badge(),
         ):
             item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                 title,
@@ -1045,11 +1080,20 @@ class SpottyBunnyController(NSObject):
             )
         self._center_panel()
 
-    def _schedule_update_check(self) -> None:
+    def _schedule_update_check(
+        self, *, force: bool = False, announce: bool = False
+    ) -> None:
         if self._update_check_pending:
+            # Don't drop a manual check on the floor because a background one
+            # is already in flight — run it (forced, announced) right after.
+            if force:
+                self._update_check_requeue = True
             return
         self._update_check_pending = True
-        self._io.submit(refresh_update_status, self._update_check_ready)
+        self._io.submit(
+            partial(_check_update_and_skew, force=force),
+            lambda result: self._update_check_ready(result, announce=announce),
+        )
 
     def _show_completions(
         self,
@@ -1202,15 +1246,32 @@ class SpottyBunnyController(NSObject):
 
         self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
 
-    def _update_check_ready(self, result: object) -> None:
+    def _update_check_ready(self, result: object, *, announce: bool = False) -> None:
         def apply() -> None:
             self._update_check_pending = False
+            requeue = self._update_check_requeue
+            self._update_check_requeue = False
             if isinstance(result, Exception):
-                logger.warning("PyPI version check failed: %s", result)
-                return
-            if isinstance(result, UpdateStatus):
-                self._update_status = result
+                logger.warning("update/skew check failed: %s", result)
+                if announce:
+                    self._set_status("Could not check for updates.")
+            elif isinstance(result, tuple) and isinstance(result[0], UpdateStatus):
+                status, server_skewed, self_stale = result
+                self._update_status = status
+                self._server_skewed = server_skewed
+                self._self_stale = self_stale
                 self._apply_update_status()
+                if announce:
+                    self._set_status(
+                        summarize_update_check(
+                            status,
+                            self_stale=self_stale,
+                            server_skewed=server_skewed,
+                        )
+                    )
+            if requeue:
+                self._set_status(CHECK_FOR_UPDATES_STATUS)
+                self._schedule_update_check(force=True, announce=True)
 
         _run_on_main(apply)
 
@@ -1458,6 +1519,23 @@ def _confirm_install_gh() -> bool:
     alert.addButtonWithTitle_("Install")
     alert.addButtonWithTitle_("Not now")
     return int(alert.runModal()) == int(NSAlertFirstButtonReturn)
+
+
+def _check_update_and_skew(*, force: bool) -> tuple[UpdateStatus, bool, bool]:
+    """Background-thread work for the daily/manual update check.
+
+    Bundles the PyPI lookup with a fresh server-skew read and self-staleness
+    check so a genuine client/server mismatch (the About panel's #377 case)
+    and a stale-in-place-upgrade overlay can both drive the icon badge, on
+    the same infrequent cadence as the PyPI check. Also keeps
+    ``spotty_self_stale()`` — which can re-exec a file and spawn a ``git``
+    subprocess — off the AppKit main thread, which only reads the cached
+    result via ``_outdated_badge()``.
+    """
+    status = refresh_update_status(force=force)
+    server_skewed = load_about_runtime_info().server_skewed
+    self_stale = spotty_self_stale()
+    return status, server_skewed, self_stale
 
 
 def _confirm_uninstall() -> bool:
