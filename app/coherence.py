@@ -10,7 +10,11 @@ from packaging.version import InvalidVersion, Version
 
 from app.client import HealthStatus, fetch_health
 from app.theme import Theme
-from app.version import get_build_info, installed_package_version
+from app.version import (
+    get_build_info,
+    installed_package_commit,
+    installed_package_version,
+)
 
 RestartFn = Callable[[str | None, str], bool]
 
@@ -99,11 +103,14 @@ def running_is_stale(*, running_version: str, installed_version: str) -> bool:
     Used to detect a long-running process (Spotty Bunny) whose own cached
     build predates an in-place upgrade on disk — distinct from a genuine
     server/client skew, since nothing about the server is involved here.
+    Mirrors :func:`cli_is_newer_than`: an unparseable version (e.g. the
+    ``"unknown"`` sentinel) says nothing about direction, so it is never
+    treated as stale.
     """
     try:
         return Version(running_version) < Version(installed_version)
     except InvalidVersion:
-        return running_version != installed_version
+        return False
 
 
 def spotty_self_stale() -> bool:
@@ -114,12 +121,21 @@ def spotty_self_stale() -> bool:
     local upgrade replaces the installed package underneath it. Comparing
     that frozen value to a fresh, uncached read of the installed version
     surfaces that self-staleness without needing a restart to detect it.
+
+    A version bump isn't the only way to drift: a source-checkout rebuild
+    (or a same-version wheel reinstall) can change the commit without
+    changing ``pyproject.toml``'s version, so the commit is checked too.
     """
-    running_version, _running_commit = get_build_info()
-    return running_is_stale(
+    running_version, running_commit = get_build_info()
+    if running_is_stale(
         running_version=running_version,
         installed_version=installed_package_version(),
-    )
+    ):
+        return True
+    installed_commit = installed_package_commit()
+    if running_commit == "unknown" or installed_commit == "unknown":
+        return False
+    return running_commit != installed_commit
 
 
 def ensure_local_spotty_aligned(

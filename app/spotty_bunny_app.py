@@ -132,6 +132,7 @@ from app.spotty_bunny_about import (
     build_about_panel,
     position_about_panel,
 )
+from app.spotty_bunny_about_info import load_about_runtime_info
 from app.spotty_bunny_agent import (
     bootout_loaded_agent,
     install_agent,
@@ -323,9 +324,12 @@ class SpottyBunnyController(NSObject):
         _check_event_tap_health(self)
 
     def checkForUpdates_(self, _sender) -> None:
-        """Force an immediate PyPI check, bypassing the daily cache."""
-        if self._update_check_pending:
-            return
+        """Force an immediate PyPI/server check, bypassing the daily cache.
+
+        If a check is already in flight, queue this one instead of dropping
+        it silently — it runs (forced, with a result reported) as soon as
+        the in-flight one finishes.
+        """
         logger.info("check for updates from logo menu")
         self._set_status(CHECK_FOR_UPDATES_STATUS)
         self._schedule_update_check(force=True, announce=True)
@@ -386,7 +390,9 @@ class SpottyBunnyController(NSObject):
         self._resolve_seq = 0
         self._resolving = False
         self._shortcuts_load_failed = False
+        self._server_skewed = False
         self._update_check_pending = False
+        self._update_check_requeue = False
         self._update_status = read_cached_update_status()
         self.callback = None
         self.chord = ChordTracker()
@@ -529,8 +535,12 @@ class SpottyBunnyController(NSObject):
         text_view.setSelectedRange_(NSMakeRange(location, sel_length))
 
     def _outdated_badge(self) -> bool:
-        """PyPI has a newer release, or this process predates what's installed."""
-        return badge_should_show(self._update_status, self_stale=spotty_self_stale())
+        """PyPI is newer, this process is stale, or the server build skews."""
+        return badge_should_show(
+            self._update_status,
+            self_stale=spotty_self_stale(),
+            server_skewed=self._server_skewed,
+        )
 
     def _apply_update_status(self) -> None:
         outdated = self._outdated_badge()
@@ -1066,15 +1076,14 @@ class SpottyBunnyController(NSObject):
         self, *, force: bool = False, announce: bool = False
     ) -> None:
         if self._update_check_pending:
+            # Don't drop a manual check on the floor because a background one
+            # is already in flight — run it (forced, announced) right after.
+            if force:
+                self._update_check_requeue = True
             return
         self._update_check_pending = True
-        check = (
-            partial(refresh_update_status, force=True)
-            if force
-            else refresh_update_status
-        )
         self._io.submit(
-            check,
+            partial(_check_update_and_skew, force=force),
             lambda result: self._update_check_ready(result, announce=announce),
         )
 
@@ -1232,18 +1241,28 @@ class SpottyBunnyController(NSObject):
     def _update_check_ready(self, result: object, *, announce: bool = False) -> None:
         def apply() -> None:
             self._update_check_pending = False
+            requeue = self._update_check_requeue
+            self._update_check_requeue = False
             if isinstance(result, Exception):
-                logger.warning("PyPI version check failed: %s", result)
+                logger.warning("update/skew check failed: %s", result)
                 if announce:
                     self._set_status("Could not check for updates.")
-                return
-            if isinstance(result, UpdateStatus):
-                self._update_status = result
+            elif isinstance(result, tuple) and isinstance(result[0], UpdateStatus):
+                status, server_skewed = result
+                self._update_status = status
+                self._server_skewed = server_skewed
                 self._apply_update_status()
                 if announce:
                     self._set_status(
-                        summarize_update_check(result, self_stale=spotty_self_stale())
+                        summarize_update_check(
+                            status,
+                            self_stale=spotty_self_stale(),
+                            server_skewed=server_skewed,
+                        )
                     )
+            if requeue:
+                self._set_status(CHECK_FOR_UPDATES_STATUS)
+                self._schedule_update_check(force=True, announce=True)
 
         _run_on_main(apply)
 
@@ -1491,6 +1510,19 @@ def _confirm_install_gh() -> bool:
     alert.addButtonWithTitle_("Install")
     alert.addButtonWithTitle_("Not now")
     return int(alert.runModal()) == int(NSAlertFirstButtonReturn)
+
+
+def _check_update_and_skew(*, force: bool) -> tuple[UpdateStatus, bool]:
+    """Background-thread work for the daily/manual update check.
+
+    Bundles the PyPI lookup with a fresh server-skew read so a genuine
+    client/server mismatch (the About panel's #377 case) can drive the icon
+    badge too, on the same infrequent cadence as the PyPI check rather than
+    on every icon refresh.
+    """
+    status = refresh_update_status(force=force)
+    server_skewed = load_about_runtime_info().server_skewed
+    return status, server_skewed
 
 
 def _confirm_uninstall() -> bool:

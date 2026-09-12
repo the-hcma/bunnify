@@ -37,23 +37,31 @@ def cache_is_stale(checked_at: float | None, *, now: float | None = None) -> boo
     return moment - checked_at >= CHECK_INTERVAL_S
 
 
-def badge_should_show(status: UpdateStatus, *, self_stale: bool) -> bool:
+def badge_should_show(
+    status: UpdateStatus, *, self_stale: bool, server_skewed: bool = False
+) -> bool:
     """True when the update badge should show.
 
-    Either PyPI has a newer release than what's installed, or this running
-    process's own build predates what is now installed (self-staleness —
-    fixable by Upgrade alone, no PyPI release required).
+    Any of three signals: PyPI has a newer release than what's installed,
+    this running process's own build predates what is now installed
+    (self-staleness — fixable by Upgrade alone, no PyPI release required),
+    or the server's build genuinely differs from a freshly resolved local
+    build (the About panel's #377 skew message).
     """
-    return status.outdated or self_stale
+    return status.outdated or self_stale or server_skewed
 
 
-def summarize_update_check(status: UpdateStatus, *, self_stale: bool) -> str:
+def summarize_update_check(
+    status: UpdateStatus, *, self_stale: bool, server_skewed: bool = False
+) -> str:
     """One-line result for a user-initiated "Check for Updates"."""
     if self_stale:
         return (
             "This overlay is running an older build than what's installed. "
             "Choose Upgrade to restart it."
         )
+    if server_skewed:
+        return "Server build differs from this Mac's — see About for details."
     if status.outdated and status.latest:
         return f"Update available: {status.latest}"
     return "Spotty Bunny is up to date."

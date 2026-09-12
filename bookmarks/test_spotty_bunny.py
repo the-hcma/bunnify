@@ -448,12 +448,17 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     "app.coherence.get_build_info",
                     return_value=("0.10.0", "newnewnewnew"),
                 ),
+                patch(
+                    "app.spotty_bunny_about_info.spotty_self_stale",
+                    return_value=False,
+                ),
             ):
                 info = load_about_runtime_info(
                     environ=env,
                     origin_url_for=lambda _workdir: None,
                 )
             self.assertTrue(info.server_skewed)
+            self.assertFalse(info.self_stale)
             self.assertEqual(info.local_build_label, "0.10.0 (newnewnewnew)")
             self.assertEqual(info.server_mode, "local")
             self.assertTrue(info.server_agent_installed)
@@ -482,12 +487,17 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     "app.coherence.get_build_info",
                     return_value=("0.10.0", "newnewnewnew"),
                 ),
+                patch(
+                    "app.spotty_bunny_about_info.spotty_self_stale",
+                    return_value=True,
+                ),
             ):
                 info = load_about_runtime_info(
                     environ=env,
                     origin_url_for=lambda _workdir: None,
                 )
             self.assertFalse(info.server_skewed)
+            self.assertTrue(info.self_stale)
 
     def test_load_about_runtime_info_remote_server_and_github(self) -> None:
         from app.spotty_bunny_about_info import load_about_runtime_info
@@ -698,19 +708,22 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             running_is_stale(running_version="0.13.0", installed_version="0.12.0")
         )
 
-    def test_running_is_stale_falls_back_to_string_compare_when_unparseable(
-        self,
-    ) -> None:
+    def test_running_is_stale_never_claims_stale_when_unparseable(self) -> None:
         from app.coherence import running_is_stale
 
-        self.assertTrue(
+        # An unparseable version says nothing about direction (matches
+        # cli_is_newer_than's InvalidVersion handling) — never "stale".
+        self.assertFalse(
             running_is_stale(running_version="unknown", installed_version="0.13.0")
         )
         self.assertFalse(
             running_is_stale(running_version="unknown", installed_version="unknown")
         )
+        self.assertFalse(
+            running_is_stale(running_version="0.13.0", installed_version="unknown")
+        )
 
-    def test_spotty_self_stale_detects_in_place_upgrade(self) -> None:
+    def test_spotty_self_stale_detects_in_place_version_upgrade(self) -> None:
         from unittest.mock import patch
 
         from app.coherence import spotty_self_stale
@@ -720,6 +733,35 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             patch("app.coherence.installed_package_version", return_value="0.13.0"),
         ):
             self.assertTrue(spotty_self_stale())
+
+    def test_spotty_self_stale_detects_commit_only_drift(self) -> None:
+        from unittest.mock import patch
+
+        from app.coherence import spotty_self_stale
+
+        with (
+            patch(
+                "app.coherence.get_build_info", return_value=("0.13.0", "oldcommit1")
+            ),
+            patch("app.coherence.installed_package_version", return_value="0.13.0"),
+            patch(
+                "app.coherence.installed_package_commit",
+                return_value="newcommit2",
+            ),
+        ):
+            self.assertTrue(spotty_self_stale())
+
+    def test_spotty_self_stale_ignores_unknown_commits(self) -> None:
+        from unittest.mock import patch
+
+        from app.coherence import spotty_self_stale
+
+        with (
+            patch("app.coherence.get_build_info", return_value=("0.13.0", "unknown")),
+            patch("app.coherence.installed_package_version", return_value="0.13.0"),
+            patch("app.coherence.installed_package_commit", return_value="somecommit"),
+        ):
+            self.assertFalse(spotty_self_stale())
 
     def test_installed_package_version_ignores_embedded_version(self) -> None:
         from unittest.mock import patch
@@ -733,6 +775,29 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             # embedded stamp above.
             self.assertNotEqual(installed_package_version(), "0.12.0+stale")
 
+    def test_installed_package_commit_rereads_file_ignoring_imported_module(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app import _build_metadata
+        from app.version import installed_package_commit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_module = Path(tmp) / "_build_metadata.py"
+            fake_module.write_text(
+                'EMBEDDED_COMMIT = "freshfromdi"\nEMBEDDED_VERSION = ""\n',
+                encoding="utf-8",
+            )
+            # _build_metadata is already imported with EMBEDDED_COMMIT="" (this
+            # dev checkout); only its __file__ attribute is redirected, so the
+            # function must re-read the file rather than trust the module
+            # object already in memory.
+            with patch.object(_build_metadata, "__file__", str(fake_module)):
+                self.assertEqual(installed_package_commit(environ={}), "freshfromdi")
+
     def test_spotty_self_stale_false_when_matching(self) -> None:
         from unittest.mock import patch
 
@@ -741,6 +806,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         with (
             patch("app.coherence.get_build_info", return_value=("0.13.0", "newnew")),
             patch("app.coherence.installed_package_version", return_value="0.13.0"),
+            patch("app.coherence.installed_package_commit", return_value="newnew"),
         ):
             self.assertFalse(spotty_self_stale())
 
@@ -3429,7 +3495,9 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("installed=is_agent_installed()", source)
         self.assertIn("outdated=self._outdated_badge()", source)
         self.assertIn("def _outdated_badge(self) -> bool:", source)
-        self.assertIn("badge_should_show(self._update_status, self_stale=", source)
+        self.assertIn("badge_should_show(", source)
+        self.assertIn("server_skewed=self._server_skewed,", source)
+        self.assertIn("def _check_update_and_skew(*, force: bool)", source)
         menu_source = (
             Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_menu.py"
         ).read_text(encoding="utf-8")
@@ -3940,6 +4008,9 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
         self.assertTrue(badge_should_show(current_status, self_stale=True))
         self.assertTrue(badge_should_show(outdated_status, self_stale=False))
         self.assertTrue(badge_should_show(outdated_status, self_stale=True))
+        self.assertTrue(
+            badge_should_show(current_status, self_stale=False, server_skewed=True)
+        )
 
     def test_summarize_update_check_prioritizes_self_stale(self) -> None:
         from app.spotty_bunny_update import UpdateStatus, summarize_update_check
@@ -3949,7 +4020,22 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
         )
         self.assertIn(
             "older build",
-            summarize_update_check(outdated_status, self_stale=True),
+            summarize_update_check(
+                outdated_status, self_stale=True, server_skewed=True
+            ),
+        )
+
+    def test_summarize_update_check_reports_server_skew(self) -> None:
+        from app.spotty_bunny_update import UpdateStatus, summarize_update_check
+
+        current_status = UpdateStatus(
+            checked_at=1.0, current="0.13.0", latest="0.13.0", outdated=False
+        )
+        self.assertIn(
+            "Server build differs",
+            summarize_update_check(
+                current_status, self_stale=False, server_skewed=True
+            ),
         )
 
     def test_summarize_update_check_reports_pypi_release(self) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -105,6 +106,59 @@ def installed_package_version(*, pyproject_path: Path | None = None) -> str:
     except PackageNotFoundError:
         path = pyproject_path or Path(__file__).resolve().parents[1] / "pyproject.toml"
         return _pyproject_version(path)
+
+
+def installed_package_commit(
+    *,
+    environ: Mapping[str, str] | None = None,
+    repository: Path | None = None,
+) -> str:
+    """Return the commit actually installed on disk right now.
+
+    Distribution metadata has no standard commit field, so (unlike
+    :func:`installed_package_version`) this cannot lean on
+    :mod:`importlib.metadata`. Instead it re-reads the on-disk
+    ``_build_metadata`` module file fresh — bypassing the copy already
+    imported into this process, which an in-place upgrade (pipx reinstall,
+    sdist rebuild at the same version) leaves stale — falling back to a
+    live ``git`` lookup exactly like :func:`git_commit`.
+    """
+    environment = os.environ if environ is None else environ
+    for key in ("BUNNIFY_GIT_SHA", "GITHUB_SHA"):
+        configured_sha = environment.get(key, "").strip()
+        if configured_sha:
+            return _normalize_commit(configured_sha)
+
+    fresh_embedded = _reread_build_metadata_attr("EMBEDDED_COMMIT")
+    if fresh_embedded:
+        return _normalize_commit(fresh_embedded)
+
+    return git_commit(environ=environment, repository=repository)
+
+
+def _reread_build_metadata_attr(name: str) -> str:
+    """Re-read *name* from ``_build_metadata``'s current on-disk file.
+
+    Loaded as a throwaway module (never registered in ``sys.modules``) so a
+    file an in-place upgrade replaced on disk is reflected immediately,
+    instead of the already-imported ``app._build_metadata`` object's frozen
+    values.
+    """
+    path = getattr(_build_metadata, "__file__", None)
+    if not path:
+        return ""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_bunnify_fresh_build_metadata", path
+        )
+        if spec is None or spec.loader is None:
+            return ""
+        fresh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fresh)
+    except OSError, SyntaxError:
+        return ""
+    value = getattr(fresh, name, "")
+    return value.strip() if isinstance(value, str) else ""
 
 
 def running_command_path() -> Path:
