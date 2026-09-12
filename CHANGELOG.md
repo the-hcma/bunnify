@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.13.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.12.1...bunnify-v0.13.0) (2026-09-12)
+
+
+### Features
+
+* **cli:** emit shell completion via `bunnify --completion <shell>` ([#406](https://github.com/the-hcma/bunnify/issues/406)) ([a0be6d5](https://github.com/the-hcma/bunnify/commit/a0be6d51b0d516090cdd4351666c9f2c73083ba2))
+
+
+### Documentation
+
+* hyperlink the GitHub handle in the README license notice ([#407](https://github.com/the-hcma/bunnify/issues/407)) ([949a652](https://github.com/the-hcma/bunnify/commit/949a652015329933b27de08230e847939b0e84ee))
+* **rules:** adopt dedicated github-api-throttle rule (repository-helpers[#608](https://github.com/the-hcma/bunnify/issues/608)) ([#402](https://github.com/the-hcma/bunnify/issues/402)) ([5ca58cc](https://github.com/the-hcma/bunnify/commit/5ca58cce44344418816e7bf5acb145930bb1b593))
+
 ## [0.12.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.12.0...bunnify-v0.12.1) (2026-09-01)
 
 
