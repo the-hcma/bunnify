@@ -41,6 +41,7 @@ from app.config import (
     LOCAL_PORT_FILE_NAME,
     MIN_LOCAL_PORT,
     ServerPreferences,
+    completion_script_bytes,
     ensure_user_bookmarks,
     env_file_path,
     format_server_preferences_summary,
@@ -1876,6 +1877,27 @@ def _print_cli_version(
     ctx.exit()
 
 
+_SUPPORTED_COMPLETION_SHELLS = ("bash",)
+
+
+def _print_completion_script(
+    ctx: click.Context,
+    _param: click.Parameter,
+    value: str | None,
+) -> None:
+    if value is None or ctx.resilient_parsing:
+        return
+    if value not in _SUPPORTED_COMPLETION_SHELLS:
+        click.echo(f"bunnify: --completion {value} is not yet supported", err=True)
+        ctx.exit(2)
+    script = completion_script_bytes()
+    if script is None:
+        click.echo("bunnify: unable to locate the bash completion script", err=True)
+        ctx.exit(1)
+    click.echo(script.decode("utf-8"), nl=False)
+    ctx.exit(0)
+
+
 @click.command(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -1886,6 +1908,15 @@ def _print_cli_version(
     expose_value=False,
     callback=_print_cli_version,
     help="Show the version and exit.",
+)
+@click.option(
+    "--completion",
+    type=click.Choice(_SUPPORTED_COMPLETION_SHELLS + ("zsh", "fish")),
+    is_eager=True,
+    expose_value=False,
+    callback=_print_completion_script,
+    metavar="SHELL",
+    help="Print the shell completion script for SHELL and exit (bash only, for now).",
 )
 @click.argument("shortcut_args", nargs=-1)
 @click.option(

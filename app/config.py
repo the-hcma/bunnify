@@ -17,6 +17,7 @@ from app.client import DEFAULT_BASE_URL
 
 BOOKMARKS_ENV_VAR = "BUNNIFY_BOOKMARKS"
 BOOKMARKS_FILE_NAME = "bookmarks.json"
+COMPLETION_SCRIPT_NAME = "bunnify-completion"
 DATA_DIR_ENV_VAR = "BUNNIFY_DATA_DIR"
 ENV_FILE_NAME = "config.env"
 ENV_VAR = "BUNNIFY_BASE_URL"
@@ -301,6 +302,31 @@ def example_bookmarks_bytes() -> bytes | None:
 def example_bookmarks_path(*, root: Path | None = None) -> Path:
     """Return the canonical example bookmarks file in a repository checkout."""
     return (root if root is not None else repo_root()) / EXAMPLE_BOOKMARKS_NAME
+
+
+def completion_script_bytes() -> bytes | None:
+    """Load the bash completion script from the packaged resource or repo etc/."""
+    try:
+        packaged = resources.files("app").joinpath("data", COMPLETION_SCRIPT_NAME)
+        return packaged.read_bytes()
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        AttributeError,
+    ):
+        pass
+
+    repo_script = completion_script_path()
+    if repo_script.is_file():
+        return repo_script.read_bytes()
+    return None
+
+
+def completion_script_path(*, root: Path | None = None) -> Path:
+    """Return the canonical bash completion script in a repository checkout."""
+    return (root if root is not None else repo_root()) / "etc" / COMPLETION_SCRIPT_NAME
 
 
 def seed_bookmarks_from_example(dest: Path) -> Path:
