@@ -993,6 +993,26 @@ class ConfigUnitTests(TestCase):
         self.assertIn('base_url = "http://127.0.0.1:8765"', text)
         self.assertIn("local_port = 8765", text)
 
+    def test_load_preferences_raises_on_non_integer_legacy_local_port(self) -> None:
+        # config.env is never read again once config.toml exists, so a
+        # non-integer BUNNIFY_LOCAL_PORT must be reported during migration
+        # rather than silently dropped -- a silent skip would permanently
+        # lose the user's saved port with no diagnostic.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=local\nBUNNIFY_LOCAL_PORT=abc\n", encoding="utf-8"
+        )
+
+        with self.assertRaises(config_mod.ConfigParseError):
+            config_mod.load_preferences()
+
+        # And the failed migration must not have left a partial config.toml
+        # that would then be treated as "already migrated" on retry.
+        self.assertFalse(config_mod.env_file_path().is_file())
+
     def test_load_preferences_migrates_when_caller_passes_resolved_default_path(
         self,
     ) -> None:
@@ -1096,6 +1116,23 @@ class ConfigUnitTests(TestCase):
             with patch.object(pathlib.Path, "read_text", fake_read_text):
                 with self.assertRaises(ConfigParseError):
                     read_toml_document(path)
+
+    def test_read_toml_document_raises_on_invalid_utf8(self) -> None:
+        # A file that isn't valid UTF-8 (e.g. truncated mid-multibyte
+        # character by an interrupted, non-atomic write_toml_document, or
+        # saved as Latin-1) raises UnicodeDecodeError from read_text, which
+        # is a ValueError -- not an OSError. It must still be treated as a
+        # corrupt config, not silently swallowed by a bare `except OSError`.
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, read_toml_document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_bytes(b'mode = "local\xff"\n')
+            with self.assertRaises(ConfigParseError):
+                read_toml_document(path)
 
     def test_set_config_value_does_not_clobber_unreadable_config_toml(self) -> None:
         # Mirrors test_set_config_value_does_not_clobber_corrupt_config_toml

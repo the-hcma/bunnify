@@ -212,7 +212,7 @@ def read_toml_document(path: Path) -> tomlkit.TOMLDocument:
         return tomlkit.document()
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigParseError(
             f"{path} could not be read ({exc}). Fix its permissions or "
             "remove it, then retry."
@@ -338,8 +338,16 @@ def _migrate_legacy_config_if_needed(
     if local_port:
         try:
             document[LOCAL_PORT_KEY] = int(local_port)
-        except ValueError:
-            pass
+        except ValueError as exc:
+            # Report the broken legacy value instead of silently dropping it:
+            # config.env is never read again once config.toml exists, so a
+            # silent skip here would permanently lose the user's saved port
+            # with no diagnostic (base_url would still name the old port).
+            raise ConfigParseError(
+                f"{legacy_path} has a non-integer "
+                f"{_LEGACY_LOCAL_PORT_ENV_KEY}={local_port!r}. Fix or remove "
+                "it, then retry."
+            ) from exc
     write_toml_document(path, document)
 
 
