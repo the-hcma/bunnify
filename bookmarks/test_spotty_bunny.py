@@ -537,6 +537,35 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             self.assertEqual(info.server_mode, "remote")
             self.assertEqual(info.server_url, "https://bun.example.com")
 
+    def test_load_about_runtime_info_survives_corrupt_config_toml(self) -> None:
+        # A hand-edited/truncated config.toml must not kill the About panel
+        # (reached from the AppKit main thread on a left-click of the
+        # menu-bar bunny) -- load_preferences/resolve_base_url now raise
+        # ConfigParseError instead of silently treating it as absent, so
+        # load_about_runtime_info must catch that and degrade gracefully.
+        from app.client import DEFAULT_BASE_URL
+        from app.spotty_bunny_about_info import load_about_runtime_info
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            config_home = root / "cfg"
+            config_toml = config_home / "bunnify" / "config.toml"
+            config_toml.parent.mkdir(parents=True, exist_ok=True)
+            config_toml.write_text("mode = local\n", encoding="utf-8")  # invalid
+            env = {
+                "BUNNIFY_BOOKMARKS": str(bookmarks),
+                "XDG_CONFIG_HOME": str(config_home),
+            }
+
+            info = load_about_runtime_info(
+                environ=env,
+                origin_url_for=lambda _workdir: None,
+            )
+
+            self.assertEqual(info.server_url, DEFAULT_BASE_URL)
+
     def test_about_details_text_and_links(self) -> None:
         from app.spotty_bunny_about_info import (
             AboutRuntimeInfo,
