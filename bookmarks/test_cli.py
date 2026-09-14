@@ -855,6 +855,78 @@ class ConfigUnitTests(TestCase):
             self.assertIn('base_url = "http://127.0.0.1:8765"', text)
             self.assertIn("local_port = 8765", text)
 
+    def test_spotty_bunny_hotkey_defaults_to_auto(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import load_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "auto")
+
+    def test_spotty_bunny_hotkey_round_trip(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import load_spotty_bunny_hotkey, save_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            save_spotty_bunny_hotkey("Option", env_path=path)
+            self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "option")
+            text = path.read_text(encoding="utf-8")
+            self.assertIn('spotty_bunny_hotkey = "option"', text)
+
+    def test_spotty_bunny_hotkey_save_rejects_unknown_choice(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import save_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            with self.assertRaises(ValueError):
+                save_spotty_bunny_hotkey("shift", env_path=path)
+
+    def test_spotty_bunny_hotkey_load_rejects_unknown_choice(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            set_config_value("spotty_bunny_hotkey", "shift", env_path=path)
+            from app.config import load_spotty_bunny_hotkey
+
+            with self.assertRaises(ValueError):
+                load_spotty_bunny_hotkey(env_path=path)
+
+    def test_spotty_bunny_hotkey_preserved_when_saving_server_preferences(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import (
+            ServerPreferences,
+            load_spotty_bunny_hotkey,
+            save_preferences,
+            save_spotty_bunny_hotkey,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            save_spotty_bunny_hotkey("command", env_path=path)
+            save_preferences(
+                ServerPreferences(
+                    mode="local", base_url="http://127.0.0.1:8765", local_port=8765
+                ),
+                env_path=path,
+            )
+            self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "command")
+
     def test_ensure_ready_base_url_ensures_local_bookmarks(self) -> None:
         import tempfile
         from pathlib import Path

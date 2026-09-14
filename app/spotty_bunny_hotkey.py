@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 CONTROL_LEFT_KEYCODE = 59
 CONTROL_RIGHT_KEYCODE = 62
+OPTION_LEFT_KEYCODE = 58
+OPTION_RIGHT_KEYCODE = 61
+COMMAND_LEFT_KEYCODE = 55
+COMMAND_RIGHT_KEYCODE = 54
 ESCAPE_KEYCODE = 53
 PAGE_DOWN_KEYCODE = 121
 PAGE_UP_KEYCODE = 116
@@ -67,11 +72,54 @@ class ChordTracker:
         return fired
 
 
-# IOKit IOLLEvent.h: NX_DEVICELCTLKEYMASK / NX_DEVICERCTLKEYMASK in CGEvent flags.
+# IOKit IOLLEvent.h: NX_DEVICEL*KEYMASK / NX_DEVICER*KEYMASK bits in CGEvent flags.
 DEVICE_LEFT_CONTROL_MASK = 0x00000001
 DEVICE_RIGHT_CONTROL_MASK = 0x00002000
+DEVICE_LEFT_OPTION_MASK = 0x00000020
+DEVICE_RIGHT_OPTION_MASK = 0x00000040
+DEVICE_LEFT_COMMAND_MASK = 0x00000008
+DEVICE_RIGHT_COMMAND_MASK = 0x00000010
 # Quartz may deliver two flagsChanged for one physical press a few ms apart.
 DUPLICATE_EVENT_WINDOW_S = 0.008
+
+
+@dataclass(frozen=True)
+class ChordKeys:
+    """One left/right modifier keycode+device-mask pair for the chord tracker."""
+
+    name: str
+    left_keycode: int
+    right_keycode: int
+    left_device_mask: int
+    right_device_mask: int
+
+
+CONTROL_CHORD_KEYS = ChordKeys(
+    "control",
+    CONTROL_LEFT_KEYCODE,
+    CONTROL_RIGHT_KEYCODE,
+    DEVICE_LEFT_CONTROL_MASK,
+    DEVICE_RIGHT_CONTROL_MASK,
+)
+OPTION_CHORD_KEYS = ChordKeys(
+    "option",
+    OPTION_LEFT_KEYCODE,
+    OPTION_RIGHT_KEYCODE,
+    DEVICE_LEFT_OPTION_MASK,
+    DEVICE_RIGHT_OPTION_MASK,
+)
+COMMAND_CHORD_KEYS = ChordKeys(
+    "command",
+    COMMAND_LEFT_KEYCODE,
+    COMMAND_RIGHT_KEYCODE,
+    DEVICE_LEFT_COMMAND_MASK,
+    DEVICE_RIGHT_COMMAND_MASK,
+)
+
+CHORD_KEYS_BY_NAME: dict[str, ChordKeys] = {
+    keys.name: keys
+    for keys in (CONTROL_CHORD_KEYS, OPTION_CHORD_KEYS, COMMAND_CHORD_KEYS)
+}
 
 # Carbon HIToolbox Events.h kVK_* (ANSI US). Ordered by keycode.
 KEYCODE_NAMES: dict[int, str] = {
@@ -216,13 +264,19 @@ def apply_control_event(
     hid_left: bool,
     hid_right: bool,
     keycode: int,
+    left_keycode: int = CONTROL_LEFT_KEYCODE,
+    right_keycode: int = CONTROL_RIGHT_KEYCODE,
 ) -> bool:
     """Resolve and apply one tap event.
 
     ``keyDown`` / ``keyUp`` are ignored. Duplicate ``flagsChanged`` snapshots
     (same keycode and sensor bits) inside ``DUPLICATE_EVENT_WINDOW_S`` are
-    ignored so a HID-blind Control press cannot toggle off on the echo event.
-    The same snapshot after that window is a real release or repress.
+    ignored so a HID-blind press cannot toggle off on the echo event. The
+    same snapshot after that window is a real release or repress.
+
+    ``left_keycode``/``right_keycode`` select which modifier pair (Control,
+    Option, or Command) the chord tracks; they default to Control for
+    backward compatibility.
     """
     if not flags_changed:
         return False
@@ -239,12 +293,16 @@ def apply_control_event(
         held_right=tracker.held_right,
         control_flag=control_flag,
         flags_changed=True,
+        left_keycode=left_keycode,
+        right_keycode=right_keycode,
     )
     return apply_hid_snapshot(
         tracker,
         keycode=keycode,
         left_down=left_down,
         right_down=right_down,
+        left_keycode=left_keycode,
+        right_keycode=right_keycode,
     )
 
 
@@ -254,8 +312,10 @@ def apply_hid_snapshot(
     keycode: int,
     left_down: bool,
     right_down: bool,
+    left_keycode: int = CONTROL_LEFT_KEYCODE,
+    right_keycode: int = CONTROL_RIGHT_KEYCODE,
 ) -> bool:
-    """Apply a HID snapshot from one Control key event.
+    """Apply a HID snapshot from one modifier key event.
 
     When both keys already read down but the tracker is idle (batched
     ``flagsChanged``), treat *keycode* as the completing press so a fast
@@ -264,10 +324,10 @@ def apply_hid_snapshot(
     """
     idle = not tracker.held_left and not tracker.held_right
     if idle and left_down and right_down:
-        if keycode == CONTROL_LEFT_KEYCODE:
+        if keycode == left_keycode:
             tracker.sync(left_down=False, right_down=True)
             return tracker.sync(left_down=True, right_down=True)
-        if keycode == CONTROL_RIGHT_KEYCODE:
+        if keycode == right_keycode:
             tracker.sync(left_down=True, right_down=False)
             return tracker.sync(left_down=True, right_down=True)
     return tracker.sync(left_down=left_down, right_down=right_down)
@@ -321,36 +381,67 @@ def resolve_control_snapshot(
     held_right: bool,
     control_flag: bool = False,
     flags_changed: bool = True,
+    left_keycode: int = CONTROL_LEFT_KEYCODE,
+    right_keycode: int = CONTROL_RIGHT_KEYCODE,
 ) -> tuple[bool, bool]:
     """Merge HID, device-dependent flags, and the event keycode.
 
-    ``CGEventSourceKeyState`` often stays False for right Control. Quartz
-    still delivers ``flagsChanged`` with keycode 62 and may set
-    ``NX_DEVICERCTLKEYMASK``. If both miss, treat that keycode as an edge
-    against the tracker's previous held state — only on ``flagsChanged``,
-    never on ``keyDown`` / ``keyUp``. A HID-blind held key stays down while
-    ``control_flag`` is set and the event names a different key. When the
-    Control modifier is fully up, both keys are released.
+    ``CGEventSourceKeyState`` often stays False for the right-hand key of a
+    pair. Quartz still delivers ``flagsChanged`` with the right keycode and
+    may set the matching device mask bit. If both miss, treat that keycode
+    as an edge against the tracker's previous held state — only on
+    ``flagsChanged``, never on ``keyDown`` / ``keyUp``. A HID-blind held key
+    stays down while ``control_flag`` is set and the event names a different
+    key. When the modifier is fully up, both keys are released.
+
+    ``left_keycode``/``right_keycode`` select which modifier pair (Control,
+    Option, or Command) is being tracked; they default to Control.
     """
     left_seen = hid_left or flag_left
     right_seen = hid_right or flag_right
     left_down = left_seen
     right_down = right_seen
     if flags_changed:
-        if keycode == CONTROL_LEFT_KEYCODE and not left_seen:
+        if keycode == left_keycode and not left_seen:
             left_down = not held_left
-        if keycode == CONTROL_RIGHT_KEYCODE and not right_seen:
+        if keycode == right_keycode and not right_seen:
             right_down = not held_right
-    if held_left and not left_down and keycode != CONTROL_LEFT_KEYCODE and control_flag:
+    if held_left and not left_down and keycode != left_keycode and control_flag:
         left_down = True
-    if (
-        held_right
-        and not right_down
-        and keycode != CONTROL_RIGHT_KEYCODE
-        and control_flag
-    ):
+    if held_right and not right_down and keycode != right_keycode and control_flag:
         right_down = True
     if flags_changed and not control_flag and not left_seen and not right_seen:
         left_down = False
         right_down = False
     return left_down, right_down
+
+
+AUTO_HOTKEY_CHOICE = "auto"
+
+
+def resolve_auto_chord_keys(*, has_external_keyboard: bool) -> ChordKeys:
+    """Pick a default chord for ``spotty_bunny_hotkey = "auto"``.
+
+    Standard MacBook built-in keyboards expose only one physical Control key
+    (bottom-left); the dual-Control chord cannot be pressed on built-in-only
+    setups. When no external/full-size keyboard is detected, fall back to
+    the built-in Option pair (every Mac keyboard has both a left and right
+    Option key). When an external keyboard is present, keep the historical
+    dual-Control chord.
+    """
+    return CONTROL_CHORD_KEYS if has_external_keyboard else OPTION_CHORD_KEYS
+
+
+def resolve_chord_keys(
+    choice: str, *, has_external_keyboard: bool = False
+) -> ChordKeys:
+    """Resolve a configured hotkey *choice* (``auto``/``control``/``option``/
+    ``command``) to concrete :class:`ChordKeys`.
+    """
+    normalized = choice.strip().lower()
+    if normalized == AUTO_HOTKEY_CHOICE:
+        return resolve_auto_chord_keys(has_external_keyboard=has_external_keyboard)
+    try:
+        return CHORD_KEYS_BY_NAME[normalized]
+    except KeyError as exc:
+        raise ValueError(f"Unknown hotkey choice: {choice!r}") from exc

@@ -27,9 +27,13 @@ from app.spotty_bunny_history import (
     load_history_lines,
 )
 from app.spotty_bunny_hotkey import (
+    COMMAND_LEFT_KEYCODE,
+    COMMAND_RIGHT_KEYCODE,
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
     ESCAPE_KEYCODE,
+    OPTION_LEFT_KEYCODE,
+    OPTION_RIGHT_KEYCODE,
     PAGE_DOWN_KEYCODE,
     PAGE_UP_KEYCODE,
     TAB_KEYCODE,
@@ -38,6 +42,7 @@ from app.spotty_bunny_hotkey import (
     apply_hid_snapshot,
     describe_key,
     page_selector_for_keycode,
+    resolve_chord_keys,
     resolve_control_snapshot,
 )
 from app.spotty_bunny_quit import (
@@ -2783,6 +2788,114 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
             held_right=True,
             control_flag=True,
             flags_changed=True,
+        )
+        self.assertEqual((left, right), (True, True))
+
+
+class SpottyBunnyConfigurableChordTests(SimpleTestCase):
+    """Option/Command chord support (bunnify#414)."""
+
+    def test_resolve_chord_keys_control(self) -> None:
+        keys = resolve_chord_keys("control")
+        self.assertEqual(keys.name, "control")
+        self.assertEqual(keys.left_keycode, CONTROL_LEFT_KEYCODE)
+        self.assertEqual(keys.right_keycode, CONTROL_RIGHT_KEYCODE)
+
+    def test_resolve_chord_keys_option(self) -> None:
+        keys = resolve_chord_keys("option")
+        self.assertEqual(keys.name, "option")
+        self.assertEqual(keys.left_keycode, OPTION_LEFT_KEYCODE)
+        self.assertEqual(keys.right_keycode, OPTION_RIGHT_KEYCODE)
+
+    def test_resolve_chord_keys_command(self) -> None:
+        keys = resolve_chord_keys("command")
+        self.assertEqual(keys.name, "command")
+        self.assertEqual(keys.left_keycode, COMMAND_LEFT_KEYCODE)
+        self.assertEqual(keys.right_keycode, COMMAND_RIGHT_KEYCODE)
+
+    def test_resolve_chord_keys_is_case_insensitive(self) -> None:
+        self.assertEqual(resolve_chord_keys("OPTION").name, "option")
+
+    def test_resolve_chord_keys_unknown_choice_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_chord_keys("shift")
+
+    def test_resolve_chord_keys_auto_without_external_keyboard_is_option(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolve_chord_keys("auto", has_external_keyboard=False).name, "option"
+        )
+
+    def test_resolve_chord_keys_auto_with_external_keyboard_is_control(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolve_chord_keys("auto", has_external_keyboard=True).name, "control"
+        )
+
+    def test_option_chord_fires_like_control_chord(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=OPTION_LEFT_KEYCODE,
+                hid_left=True,
+                hid_right=False,
+                flag_left=True,
+                flag_right=False,
+                control_flag=True,
+                flags_changed=True,
+                left_keycode=OPTION_LEFT_KEYCODE,
+                right_keycode=OPTION_RIGHT_KEYCODE,
+            )
+        )
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=OPTION_RIGHT_KEYCODE,
+                hid_left=True,
+                hid_right=True,
+                flag_left=True,
+                flag_right=True,
+                control_flag=True,
+                flags_changed=True,
+                left_keycode=OPTION_LEFT_KEYCODE,
+                right_keycode=OPTION_RIGHT_KEYCODE,
+            )
+        )
+
+    def test_option_chord_ignores_control_keycodes(self) -> None:
+        """A configured Option chord must not fire on Control key events."""
+        tracker = ChordTracker()
+        apply_control_event(
+            tracker,
+            keycode=CONTROL_LEFT_KEYCODE,
+            hid_left=False,
+            hid_right=False,
+            flag_left=False,
+            flag_right=False,
+            control_flag=False,
+            flags_changed=True,
+            left_keycode=OPTION_LEFT_KEYCODE,
+            right_keycode=OPTION_RIGHT_KEYCODE,
+        )
+        self.assertFalse(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+
+    def test_command_chord_snapshot_resolution(self) -> None:
+        left, right = resolve_control_snapshot(
+            keycode=COMMAND_RIGHT_KEYCODE,
+            hid_left=True,
+            hid_right=True,
+            flag_left=True,
+            flag_right=True,
+            held_left=True,
+            held_right=False,
+            control_flag=True,
+            flags_changed=True,
+            left_keycode=COMMAND_LEFT_KEYCODE,
+            right_keycode=COMMAND_RIGHT_KEYCODE,
         )
         self.assertEqual((left, right), (True, True))
 
