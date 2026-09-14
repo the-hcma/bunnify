@@ -321,6 +321,7 @@ def hotkey_command(rest: Sequence[str] = ()) -> int:
     """Show or set the ``spotty_bunny_hotkey`` chord choice in config.toml."""
     from app.config import (
         SPOTTY_BUNNY_HOTKEY_CHOICES,
+        ConfigParseError,
         load_spotty_bunny_hotkey,
         save_spotty_bunny_hotkey,
     )
@@ -338,6 +339,12 @@ def hotkey_command(rest: Sequence[str] = ()) -> int:
     choice = rest[0].strip().lower()
     try:
         save_spotty_bunny_hotkey(choice)
+    except ConfigParseError as exc:
+        # A corrupt config.toml is not the same failure as an invalid
+        # choice; name the parse failure so the operator fixes the right
+        # thing instead of re-checking their (perfectly valid) choice.
+        print(f"{COMMAND_NAME} hotkey: {exc}", file=sys.stderr)
+        return 2
     except ValueError:
         choices = ", ".join(SPOTTY_BUNNY_HOTKEY_CHOICES)
         print(

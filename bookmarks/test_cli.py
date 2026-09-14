@@ -954,6 +954,34 @@ class ConfigUnitTests(TestCase):
         self.assertIn('base_url = "http://127.0.0.1:8765"', text)
         self.assertIn("local_port = 8765", text)
 
+    def test_load_preferences_migrates_when_caller_passes_resolved_default_path(
+        self,
+    ) -> None:
+        # app/cli.py's run_setup/run_stop resolve the default config path
+        # themselves (`path = env_path if env_path is not None else
+        # env_file_path(...)`) and pass that concrete path to
+        # load_preferences, rather than leaving env_path=None. Migration
+        # must still fire in that case (matching the resolved path against
+        # the canonical default), or an upgraded install that only has
+        # config.env never gets migrated by `bunnify setup` / `bunnify stop`.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=remote\nBUNNIFY_BASE_URL=http://127.0.0.1:9\n",
+            encoding="utf-8",
+        )
+
+        resolved_path = config_mod.env_file_path()
+        preferences = config_mod.load_preferences(env_path=resolved_path)
+
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "remote")
+        self.assertEqual(preferences.base_url, "http://127.0.0.1:9")
+        self.assertTrue(resolved_path.is_file())
+
     def test_load_preferences_does_not_reimport_over_existing_config_toml(
         self,
     ) -> None:

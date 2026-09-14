@@ -141,7 +141,7 @@ def load_preferences(
     """
     env = environ if environ is not None else os.environ
     path = env_path if env_path is not None else env_file_path(environ=env)
-    if env_path is None:
+    if path == env_file_path(environ=env):
         _migrate_legacy_config_if_needed(path, environ=env)
     document = read_toml_document(path)
 
@@ -235,7 +235,7 @@ def set_config_value(
     """Create or update one ``config.toml`` value, preserving other keys."""
     env = environ if environ is not None else os.environ
     path = env_path if env_path is not None else env_file_path(environ=env)
-    if env_path is None:
+    if path == env_file_path(environ=env):
         _migrate_legacy_config_if_needed(path, environ=env)
     document = read_toml_document(path)
     document[key] = value
@@ -388,7 +388,7 @@ def save_preferences(
     """Persist a complete, verified server preference set to ``config.toml``."""
     env = environ if environ is not None else os.environ
     path = env_path if env_path is not None else env_file_path(environ=env)
-    if env_path is None:
+    if path == env_file_path(environ=env):
         _migrate_legacy_config_if_needed(path, environ=env)
     document = read_toml_document(path)
     document[BASE_URL_KEY] = normalize_base_url(preferences.base_url)
@@ -605,14 +605,14 @@ def resolve_base_url(
 
     env = environ if environ is not None else os.environ
     primary = env_path if env_path is not None else env_file_path(environ=env)
-    if env_path is None:
+    if primary == env_file_path(environ=env):
         _migrate_legacy_config_if_needed(primary, environ=env)
     from_file = get_config_value(BASE_URL_KEY, env_path=primary, environ=env)
     if from_file:
         return _ensure_http_scheme(normalize_base_url(from_file))
 
     # Fall back to legacy checkout env file (read-only unless user re-prompts).
-    if env_path is None:
+    if primary == env_file_path(environ=env):
         legacy = read_base_url_from_env_file(legacy_env_file_path())
         if legacy:
             return _ensure_http_scheme(legacy)

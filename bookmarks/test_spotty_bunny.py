@@ -883,6 +883,29 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         printed.assert_called_once()
         self.assertIn("config.toml is not valid TOML", printed.call_args.args[0])
 
+    def test_hotkey_command_set_reports_corrupt_config_distinctly(self) -> None:
+        # save_spotty_bunny_hotkey can also raise ConfigParseError (a
+        # ValueError subclass) for a corrupt config.toml. That must be
+        # reported as a parse failure, not folded into the generic "is not
+        # one of: auto, control, option, command" invalid-choice message,
+        # or a user with a perfectly valid choice gets told their choice is
+        # wrong and never learns the file itself is unparsable.
+        from app.config import ConfigParseError
+        from app.spotty_bunny_agent import hotkey_command
+
+        with (
+            patch(
+                "app.config.save_spotty_bunny_hotkey",
+                side_effect=ConfigParseError("config.toml is not valid TOML"),
+            ),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(hotkey_command(("option",)), 2)
+        printed.assert_called_once()
+        message = printed.call_args.args[0]
+        self.assertIn("config.toml is not valid TOML", message)
+        self.assertNotIn("is not one of", message)
+
     def test_hotkey_command_rejects_extra_arguments(self) -> None:
         from app.spotty_bunny_agent import hotkey_command
 
@@ -3796,6 +3819,21 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn(
             "control_flag=bool(flags & _chord_modifier_flag_mask(chord_keys))",
             source,
+        )
+
+    def test_check_event_tap_health_re_resolves_configured_chord(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # Plugging/unplugging an external keyboard while spotty-bunny is
+        # running (in "auto" mode) must be picked up without a restart --
+        # _check_event_tap_health (the periodic tap-health timer) is the
+        # only place that re-probes and re-applies the configured chord.
+        start = source.index("def _check_event_tap_health(")
+        end = source.index("\ndef ", start + 1)
+        check_event_tap_health_body = source[start:end]
+        self.assertIn(
+            "_resolve_configured_chord(controller)", check_event_tap_health_body
         )
 
 
