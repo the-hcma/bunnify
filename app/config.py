@@ -202,15 +202,21 @@ class ConfigParseError(ValueError, RuntimeError):
 def read_toml_document(path: Path) -> tomlkit.TOMLDocument:
     """Return a parsed TOML document from ``path`` (empty when missing).
 
-    Raises :class:`ConfigParseError` when *path* exists but is not valid
-    TOML, so callers never mistake a corrupt file for an absent one.
+    Raises :class:`ConfigParseError` when *path* exists but is not valid TOML
+    or cannot be read (e.g. a permissions problem left by a stray ``sudo``
+    invocation), so callers never mistake a corrupt/unreadable file for an
+    absent one — and so writers never read it as empty and clobber every
+    other saved key.
     """
     if not path.is_file():
         return tomlkit.document()
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
-        return tomlkit.document()
+    except OSError as exc:
+        raise ConfigParseError(
+            f"{path} could not be read ({exc}). Fix its permissions or "
+            "remove it, then retry."
+        ) from exc
     try:
         return tomlkit.parse(text)
     except tomlkit.exceptions.ParseError as exc:
@@ -308,8 +314,15 @@ def _migrate_legacy_config_if_needed(
     legacy_path = legacy_config_env_file_path(environ=env)
 
     def legacy_value(key: str) -> str | None:
-        from_environment = (env.get(key) or "").strip()
-        return from_environment or read_env_value(legacy_path, key)
+        # Prefer the persisted config.env over a same-named process env var:
+        # config.env is what `bunnify setup` actually saved, while the env
+        # var may just be a transient per-invocation override (e.g. from an
+        # old shell profile) that would otherwise get silently frozen into
+        # config.toml ahead of the user's real saved settings.
+        from_file = read_env_value(legacy_path, key)
+        if from_file:
+            return from_file
+        return (env.get(key) or "").strip() or None
 
     mode = legacy_value(_LEGACY_MODE_ENV_KEY)
     base_url = legacy_value(_LEGACY_BASE_URL_ENV_KEY)

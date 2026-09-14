@@ -760,6 +760,16 @@ class ConfigUnitTests(TestCase):
         }
         self._environ_patch = patch.dict(os.environ, self._xdg_defaults, clear=False)
         self._environ_patch.start()
+        # Tests assert legacy-migration values read from config.env; a
+        # BUNNIFY_MODE/BASE_URL/LOCAL_PORT left in the real shell environment
+        # (e.g. an old per-invocation override in .zshrc) would otherwise
+        # take precedence and make those assertions machine-dependent.
+        for _legacy_env_key in (
+            "BUNNIFY_MODE",
+            "BUNNIFY_BASE_URL",
+            "BUNNIFY_LOCAL_PORT",
+        ):
+            os.environ.pop(_legacy_env_key, None)
         real_persist = config_mod.persist_local_port
 
         def _persist_local_port_isolated(
@@ -927,6 +937,35 @@ class ConfigUnitTests(TestCase):
             )
             self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "command")
 
+    def test_save_preferences_drops_local_port_when_switching_to_remote(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="local", base_url="http://127.0.0.1:8123", local_port=8123
+                ),
+                env_path=path,
+            )
+            save_preferences(
+                ServerPreferences(
+                    mode="remote", base_url="https://remote.example", local_port=None
+                ),
+                env_path=path,
+            )
+
+            self.assertNotIn("local_port", path.read_text(encoding="utf-8"))
+            preferences = load_preferences(env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertIsNone(preferences.local_port)
+
     def test_load_preferences_migrates_legacy_config_env(self) -> None:
         import app.config as config_mod
 
@@ -1032,6 +1071,56 @@ class ConfigUnitTests(TestCase):
             path.write_text("mode = local\n", encoding="utf-8")  # unquoted: invalid
             with self.assertRaises(ConfigParseError):
                 read_toml_document(path)
+
+    def test_read_toml_document_raises_on_unreadable_file(self) -> None:
+        # A file that exists but can't be read (e.g. permissions left by a
+        # stray `sudo bunnify`) must be treated the same as a corrupt one --
+        # not silently returned as an empty document, which would both hide
+        # the saved settings and let the next write clobber them.
+        import pathlib
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, read_toml_document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('mode = "local"\n', encoding="utf-8")
+            original_read_text = pathlib.Path.read_text
+
+            def fake_read_text(self: pathlib.Path, *args: object, **kwargs: object):
+                if self == path:
+                    raise PermissionError("Permission denied")
+                return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+            with patch.object(pathlib.Path, "read_text", fake_read_text):
+                with self.assertRaises(ConfigParseError):
+                    read_toml_document(path)
+
+    def test_set_config_value_does_not_clobber_unreadable_config_toml(self) -> None:
+        # Mirrors test_set_config_value_does_not_clobber_corrupt_config_toml
+        # but for a read failure rather than a parse failure -- the write
+        # path must refuse rather than treat the unreadable file as empty.
+        import pathlib
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('mode = "local"\n', encoding="utf-8")
+            original_read_text = pathlib.Path.read_text
+
+            def fake_read_text(self: pathlib.Path, *args: object, **kwargs: object):
+                if self == path:
+                    raise PermissionError("Permission denied")
+                return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+            with patch.object(pathlib.Path, "read_text", fake_read_text):
+                with self.assertRaises(ConfigParseError):
+                    set_config_value("spotty_bunny_hotkey", "option", env_path=path)
+            self.assertEqual(path.read_text(encoding="utf-8"), 'mode = "local"\n')
 
     def test_set_config_value_does_not_clobber_corrupt_config_toml(self) -> None:
         import tempfile
