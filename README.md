@@ -162,7 +162,8 @@ at completion time, so Tab-completing shortcuts needs the server running.
 ## Features
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
-- **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`;
+- **Spotty Bunny** — configurable-chord search box (`spotty-bunny`; dual-Control
+  by default, `spotty-bunny hotkey` to change; extra `macos`;
   login LaunchAgent via `install` / `upgrade` / `uninstall`)
 - **macOS server LaunchAgent** — local setup installs `bunnify-server` under
   launchd (`bunnify-server install|status|upgrade|uninstall`)

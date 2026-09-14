@@ -1380,8 +1380,8 @@ def run_spotty_bunny_app() -> int:
     _register_wake_observer(controller)
     _schedule_tap_health_checks(controller)
     print(
-        "spotty-bunny: hold one Control, press the other for the search box "
-        "(Ctrl-C to quit)",
+        f"spotty-bunny: hold one {controller.chord_keys.name.capitalize()}, "
+        "press the other for the search box (Ctrl-C to quit)",
         file=sys.stderr,
     )
     logger.info("event loop starting (MachSignals SIGINT → NSApp.stop_)")

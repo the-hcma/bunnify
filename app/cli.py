@@ -1540,7 +1540,8 @@ def _run_repl(
         if ensure_spotty_bunny_running(restart=offer_restart):
             click.echo(
                 theme.dim(
-                    "Spotty Bunny overlay ready (hold one Control, tap the other)"
+                    "Spotty Bunny overlay ready (hold one modifier key, tap "
+                    "the other — see `spotty-bunny hotkey` for the choice)"
                 )
             )
     click.echo(

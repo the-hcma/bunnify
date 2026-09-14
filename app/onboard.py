@@ -292,7 +292,7 @@ def run_onboard(
             log(colors.warn("Skipping Spotty Bunny install (server not confirmed)."))
         else:
             prompt = (
-                "Install or refresh Spotty Bunny (LaunchAgent + Control chord test)? "
+                "Install or refresh Spotty Bunny (LaunchAgent + hotkey chord test)? "
                 "[y/N]: "
             )
             if not state.spotty_agent_installed or yes(ask, colors.brand(prompt)):
@@ -304,7 +304,7 @@ def run_onboard(
                 if code == 0:
                     log(
                         colors.ok(
-                            "✓ Spotty Bunny is installed and the Control chord works."
+                            "✓ Spotty Bunny is installed and the hotkey chord works."
                         )
                     )
                     state = detect_install_state(read_executable_build=reader)

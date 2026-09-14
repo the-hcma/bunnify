@@ -20,7 +20,7 @@ from app.version import build_version
 COMMAND_NAME = "spotty-bunny"
 
 EVENT_TAP_FAILED_MESSAGE = f"""\
-{COMMAND_NAME}: could not listen for the Control chord.
+{COMMAND_NAME}: could not listen for the hotkey chord.
 
 Grant Accessibility and Input Monitoring to this Python interpreter
 (or Terminal) in System Settings → Privacy & Security, then re-run.
