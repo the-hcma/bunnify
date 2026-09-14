@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from functools import partial
 
 import objc
@@ -1367,6 +1368,14 @@ def _primary_screen():
     return screens[0] if screens else None
 
 
+def _print_hotkey_banner(controller: SpottyBunnyController) -> None:
+    print(
+        f"spotty-bunny: hold one {controller.chord_keys.name.capitalize()}, "
+        "press the other for the search box (Ctrl-C to quit)",
+        file=sys.stderr,
+    )
+
+
 def run_spotty_bunny_app() -> int:
     """Run NSApplication until SIGINT (Ctrl-C) or NSApp.stop_."""
     NSApplication.sharedApplication()
@@ -1375,15 +1384,17 @@ def run_spotty_bunny_app() -> int:
     _install_edit_menu()
     controller = SpottyBunnyController.alloc().init()
     logger.info("NSApplication ready (activationPolicy=accessory)")
-    _resolve_configured_chord(controller)
+    # Pinned choices resolve synchronously, so the banner prints immediately;
+    # "auto" probes for an external keyboard off-thread (see
+    # _resolve_configured_chord), so the banner is deferred until that first
+    # resolution lands to avoid naming the wrong chord (e.g. printing
+    # "Control" when auto is about to resolve to Option on a laptop).
+    _resolve_configured_chord(
+        controller, on_resolved=partial(_print_hotkey_banner, controller)
+    )
     _install_event_tap(controller)
     _register_wake_observer(controller)
     _schedule_tap_health_checks(controller)
-    print(
-        f"spotty-bunny: hold one {controller.chord_keys.name.capitalize()}, "
-        "press the other for the search box (Ctrl-C to quit)",
-        file=sys.stderr,
-    )
     logger.info("event loop starting (MachSignals SIGINT → NSApp.stop_)")
     # AppHelper.runEventLoop() skips Mach SIGINT when NSApp already exists.
     MachSignals.signal(signal.SIGINT, _quit_on_sigint)
@@ -1615,7 +1626,11 @@ def _event_type_name(event_type: int) -> str:
     return names.get(int(event_type), f"type:{event_type}")
 
 
-def _resolve_configured_chord(controller: SpottyBunnyController) -> None:
+def _resolve_configured_chord(
+    controller: SpottyBunnyController,
+    *,
+    on_resolved: Callable[[], None] | None = None,
+) -> None:
     """Refresh ``controller.chord_keys`` from the configured hotkey choice.
 
     Pinned choices (``control``/``option``/``command``) resolve synchronously
@@ -1625,6 +1640,13 @@ def _resolve_configured_chord(controller: SpottyBunnyController) -> None:
     :func:`_check_event_tap_health`) lets Spotty Bunny pick up an external
     keyboard being plugged in or unplugged without a restart or blocking
     chord delivery / panel UI on the AppKit main thread.
+
+    ``on_resolved``, when given, runs once ``controller.chord_keys`` reflects
+    this call's choice — immediately for pinned choices, or after the
+    ``auto`` probe's result lands on the main thread. Callers that need to
+    report the resolved chord (e.g. the startup banner) should use this
+    instead of reading ``controller.chord_keys`` right after calling, which
+    would still be the stale default while an ``auto`` probe is in flight.
     """
     try:
         choice = load_spotty_bunny_hotkey()
@@ -1635,15 +1657,19 @@ def _resolve_configured_chord(controller: SpottyBunnyController) -> None:
 
     if choice != "auto":
         _apply_resolved_chord(controller, choice, has_external_keyboard=False)
+        if on_resolved is not None:
+            on_resolved()
         return
 
     def apply(result: object) -> None:
         external = bool(result) if isinstance(result, bool) else False
-        _run_on_main(
-            lambda: _apply_resolved_chord(
-                controller, choice, has_external_keyboard=external
-            )
-        )
+
+        def _apply_and_notify() -> None:
+            _apply_resolved_chord(controller, choice, has_external_keyboard=external)
+            if on_resolved is not None:
+                on_resolved()
+
+        _run_on_main(_apply_and_notify)
 
     controller._io.submit(has_external_keyboard, apply)
 

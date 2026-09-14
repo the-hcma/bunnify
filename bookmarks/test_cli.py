@@ -1019,6 +1019,39 @@ class ConfigUnitTests(TestCase):
             # The corrupt file must survive untouched for the user to fix.
             self.assertEqual(path.read_text(encoding="utf-8"), "mode = local\n")
 
+    def test_config_parse_error_is_a_value_error(self) -> None:
+        # app/spotty_bunny_app.py's _resolve_configured_chord and
+        # app/spotty_bunny_agent.py's hotkey_command only catch ValueError
+        # around load_spotty_bunny_hotkey(); ConfigParseError must be a
+        # ValueError (in addition to RuntimeError, for app/cli.py's catch)
+        # or a corrupt config.toml crashes the tap-health timer / CLI
+        # instead of falling back / printing a clean error.
+        from app.config import ConfigParseError
+
+        self.assertTrue(issubclass(ConfigParseError, ValueError))
+        self.assertTrue(issubclass(ConfigParseError, RuntimeError))
+
+    def test_load_spotty_bunny_hotkey_raises_config_parse_error_on_corrupt_file(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, load_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = local\n", encoding="utf-8")  # unquoted: invalid
+            with self.assertRaises(ConfigParseError):
+                load_spotty_bunny_hotkey(env_path=path)
+            # And since ConfigParseError is-a ValueError, a bare `except
+            # ValueError:` (as used by both non-CLI callers) catches it too.
+            try:
+                load_spotty_bunny_hotkey(env_path=path)
+                self.fail("expected ConfigParseError")
+            except ValueError:
+                pass
+
     def test_ensure_ready_base_url_ensures_local_bookmarks(self) -> None:
         import tempfile
         from pathlib import Path

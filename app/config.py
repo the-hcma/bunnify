@@ -185,12 +185,17 @@ def normalize_base_url(value: str) -> str:
     return value.strip().rstrip("/")
 
 
-class ConfigParseError(RuntimeError):
+class ConfigParseError(ValueError, RuntimeError):
     """``config.toml`` exists but could not be parsed as TOML.
 
     Raised instead of silently treating a corrupt/truncated file as "no
     config" — that would make the next write clobber every other saved key
     (mode, base_url, local_port, spotty_bunny_hotkey) with an empty document.
+
+    Subclasses both ``ValueError`` and ``RuntimeError`` so callers that only
+    guard one or the other (``_resolve_configured_chord``/``hotkey_command``
+    catch ``ValueError``; ``app/cli.py`` catches ``RuntimeError``) all treat a
+    corrupt file the same way instead of letting it propagate uncaught.
     """
 
 

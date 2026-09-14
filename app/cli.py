@@ -136,7 +136,7 @@ def ensure_ready_base_url(
 
     if preferences.mode == "remote":
         if not preferences.base_url:
-            raise ClientError("Remote mode requires BUNNIFY_BASE_URL")
+            raise ClientError("Remote mode requires base_url in config.toml")
         base_url = _wait_for_healthy_remote(
             preferences.base_url,
             prompt_fn=ask,
@@ -2000,8 +2000,9 @@ def _print_completion_script(
     type=click.Path(path_type=Path),
     default=None,
     help=(
-        "Path to the environment file (default: ~/.config/bunnify/config.env, "
-        "XDG-aware; legacy repo-root bunnify.env is a fallback)."
+        "Path to the config file (default: ~/.config/bunnify/config.toml, "
+        "XDG-aware; a legacy per-user config.env or repo-root bunnify.env is "
+        "migrated into it once, then ignored)."
     ),
 )
 @click.option(

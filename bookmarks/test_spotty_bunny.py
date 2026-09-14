@@ -31,6 +31,12 @@ from app.spotty_bunny_hotkey import (
     COMMAND_RIGHT_KEYCODE,
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
+    DEVICE_LEFT_COMMAND_MASK,
+    DEVICE_LEFT_CONTROL_MASK,
+    DEVICE_LEFT_OPTION_MASK,
+    DEVICE_RIGHT_COMMAND_MASK,
+    DEVICE_RIGHT_CONTROL_MASK,
+    DEVICE_RIGHT_OPTION_MASK,
     ESCAPE_KEYCODE,
     OPTION_LEFT_KEYCODE,
     OPTION_RIGHT_KEYCODE,
@@ -857,6 +863,25 @@ class SpottyBunnyAgentTests(SimpleTestCase):
 
         with patch("app.config.save_spotty_bunny_hotkey", side_effect=ValueError):
             self.assertEqual(hotkey_command(("bogus",)), 2)
+
+    def test_hotkey_command_show_reports_corrupt_config_cleanly(self) -> None:
+        # ConfigParseError (raised when config.toml exists but fails to
+        # parse) is a ValueError subclass, so the existing `except
+        # ValueError:` guard around the show path must catch it too and
+        # print a clean message + exit 2, instead of an uncaught traceback.
+        from app.config import ConfigParseError
+        from app.spotty_bunny_agent import hotkey_command
+
+        with (
+            patch(
+                "app.config.load_spotty_bunny_hotkey",
+                side_effect=ConfigParseError("config.toml is not valid TOML"),
+            ),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(hotkey_command(()), 2)
+        printed.assert_called_once()
+        self.assertIn("config.toml is not valid TOML", printed.call_args.args[0])
 
     def test_hotkey_command_rejects_extra_arguments(self) -> None:
         from app.spotty_bunny_agent import hotkey_command
@@ -2836,18 +2861,24 @@ class SpottyBunnyConfigurableChordTests(SimpleTestCase):
         self.assertEqual(keys.name, "control")
         self.assertEqual(keys.left_keycode, CONTROL_LEFT_KEYCODE)
         self.assertEqual(keys.right_keycode, CONTROL_RIGHT_KEYCODE)
+        self.assertEqual(keys.left_device_mask, DEVICE_LEFT_CONTROL_MASK)
+        self.assertEqual(keys.right_device_mask, DEVICE_RIGHT_CONTROL_MASK)
 
     def test_resolve_chord_keys_option(self) -> None:
         keys = resolve_chord_keys("option")
         self.assertEqual(keys.name, "option")
         self.assertEqual(keys.left_keycode, OPTION_LEFT_KEYCODE)
         self.assertEqual(keys.right_keycode, OPTION_RIGHT_KEYCODE)
+        self.assertEqual(keys.left_device_mask, DEVICE_LEFT_OPTION_MASK)
+        self.assertEqual(keys.right_device_mask, DEVICE_RIGHT_OPTION_MASK)
 
     def test_resolve_chord_keys_command(self) -> None:
         keys = resolve_chord_keys("command")
         self.assertEqual(keys.name, "command")
         self.assertEqual(keys.left_keycode, COMMAND_LEFT_KEYCODE)
         self.assertEqual(keys.right_keycode, COMMAND_RIGHT_KEYCODE)
+        self.assertEqual(keys.left_device_mask, DEVICE_LEFT_COMMAND_MASK)
+        self.assertEqual(keys.right_device_mask, DEVICE_RIGHT_COMMAND_MASK)
 
     def test_resolve_chord_keys_is_case_insensitive(self) -> None:
         self.assertEqual(resolve_chord_keys("OPTION").name, "option")
@@ -3708,10 +3739,64 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             'if choice != "auto":\n'
             "        _apply_resolved_chord"
             "(controller, choice, has_external_keyboard=False)\n"
+            "        if on_resolved is not None:\n"
+            "            on_resolved()\n"
             "        return",
             source,
         )
         self.assertIn("controller._io.submit(has_external_keyboard, apply)", source)
+
+    def test_startup_banner_waits_for_resolved_chord(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # The startup banner must not read controller.chord_keys immediately
+        # after _resolve_configured_chord — for "auto" that call only
+        # kicks off an async probe, so the chord is still the stale default
+        # until on_resolved fires. Printing early would tell a laptop user
+        # to hold Control when auto is about to resolve to Option.
+        self.assertIn(
+            "_resolve_configured_chord(\n"
+            "        controller, "
+            "on_resolved=partial(_print_hotkey_banner, controller)\n"
+            "    )",
+            source,
+        )
+        start = source.index("def run_spotty_bunny_app(")
+        end = source.index("\ndef ", start + 1)
+        run_spotty_bunny_app_body = source[start:end]
+        self.assertNotIn(
+            'print(\n        f"spotty-bunny: hold one '
+            '{controller.chord_keys.name.capitalize()}, "',
+            run_spotty_bunny_app_body,
+        )
+
+    def test_live_tap_callback_uses_resolved_chord_and_flag_masks(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # The live event-tap callback must key off controller.chord_keys
+        # (the resolved chord) rather than any hardcoded Control constant,
+        # and _chord_modifier_flag_mask must map each chord name to its own
+        # Quartz modifier flag — otherwise a non-Control chord would be
+        # wired up but never actually fire at runtime.
+        self.assertIn("chord_keys = controller.chord_keys", source)
+        self.assertIn("hid_left = _control_key_down(chord_keys.left_keycode)", source)
+        self.assertIn("hid_right = _control_key_down(chord_keys.right_keycode)", source)
+        self.assertIn("flag_left = bool(flags & chord_keys.left_device_mask)", source)
+        self.assertIn("flag_right = bool(flags & chord_keys.right_device_mask)", source)
+        self.assertIn(
+            "_CHORD_MODIFIER_FLAG_MASK: dict[str, int] = {\n"
+            '    "control": kCGEventFlagMaskControl,\n'
+            '    "option": kCGEventFlagMaskAlternate,\n'
+            '    "command": kCGEventFlagMaskCommand,\n'
+            "}",
+            source,
+        )
+        self.assertIn(
+            "control_flag=bool(flags & _chord_modifier_flag_mask(chord_keys))",
+            source,
+        )
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):

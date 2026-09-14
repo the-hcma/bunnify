@@ -126,7 +126,7 @@ def format_onboarding_text(
         step += 1
     lines.extend(
         [
-            f"{step}. Configure Chrome or Edge using BUNNIFY_BASE_URL from:",
+            f"{step}. Configure Chrome or Edge using base_url from:",
             f"     {config}",
             "   Guide: https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md",
             "",
@@ -146,7 +146,7 @@ def format_onboarding_text(
         [
             "Upgrade later (preferred):",
             "     bunnify upgrade   # shows from/to versions, then pipx upgrade",
-            "   Bookmarks and config.env are kept across upgrades.",
+            "   Bookmarks and config.toml are kept across upgrades.",
             "   If --version still shows a checkout SHA, PATH is using",
             "   ./scripts/bunnify or a repo .venv — the pipx app lives in",
             "   ~/.local/bin/bunnify.",
