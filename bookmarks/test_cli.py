@@ -993,6 +993,43 @@ class ConfigUnitTests(TestCase):
         self.assertIn('base_url = "http://127.0.0.1:8765"', text)
         self.assertIn("local_port = 8765", text)
 
+    def test_load_preferences_raises_on_out_of_range_legacy_local_port(
+        self,
+    ) -> None:
+        # Mirrors the non-integer case: an out-of-range legacy port must be
+        # reported during migration, not silently written to config.toml
+        # where load_preferences would then immediately reject it with no
+        # path back to fixing the (no-longer-consulted) config.env.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=local\nBUNNIFY_LOCAL_PORT=70000\n", encoding="utf-8"
+        )
+
+        with self.assertRaises(config_mod.ConfigParseError):
+            config_mod.load_preferences()
+
+        self.assertFalse(config_mod.env_file_path().is_file())
+
+    def test_load_preferences_raises_on_invalid_legacy_mode(self) -> None:
+        # Mirrors the local_port cases: an invalid legacy BUNNIFY_MODE must
+        # be reported during migration rather than silently written to
+        # config.toml, where load_preferences would then immediately reject
+        # it with no path back to fixing the (no-longer-consulted)
+        # config.env.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text("BUNNIFY_MODE=remte\n", encoding="utf-8")
+
+        with self.assertRaises(config_mod.ConfigParseError):
+            config_mod.load_preferences()
+
+        self.assertFalse(config_mod.env_file_path().is_file())
+
     def test_load_preferences_raises_on_non_integer_legacy_local_port(self) -> None:
         # config.env is never read again once config.toml exists, so a
         # non-integer BUNNIFY_LOCAL_PORT must be reported during migration

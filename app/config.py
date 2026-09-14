@@ -332,12 +332,18 @@ def _migrate_legacy_config_if_needed(
 
     document = tomlkit.document()
     if mode:
-        document[MODE_KEY] = mode.strip().lower()
+        normalized_mode = mode.strip().lower()
+        if normalized_mode not in {"local", "remote"}:
+            raise ConfigParseError(
+                f"{legacy_path} has {_LEGACY_MODE_ENV_KEY}={mode!r}, which "
+                "must be 'local' or 'remote'. Fix or remove it, then retry."
+            )
+        document[MODE_KEY] = normalized_mode
     if base_url:
         document[BASE_URL_KEY] = normalize_base_url(base_url)
     if local_port:
         try:
-            document[LOCAL_PORT_KEY] = int(local_port)
+            local_port_int = int(local_port)
         except ValueError as exc:
             # Report the broken legacy value instead of silently dropping it:
             # config.env is never read again once config.toml exists, so a
@@ -348,6 +354,19 @@ def _migrate_legacy_config_if_needed(
                 f"{_LEGACY_LOCAL_PORT_ENV_KEY}={local_port!r}. Fix or remove "
                 "it, then retry."
             ) from exc
+        if not 1 <= local_port_int <= 65535:
+            # Same reasoning: without this, a migrated out-of-range port
+            # gets written to config.toml, load_preferences immediately
+            # rejects it, and the legacy config.env -- which the error
+            # message would otherwise still point at -- is never consulted
+            # again to fix it (migration only runs while config.toml is
+            # absent).
+            raise ConfigParseError(
+                f"{legacy_path} has "
+                f"{_LEGACY_LOCAL_PORT_ENV_KEY}={local_port!r}, which must be "
+                "between 1 and 65535. Fix or remove it, then retry."
+            )
+        document[LOCAL_PORT_KEY] = local_port_int
     write_toml_document(path, document)
 
 
