@@ -214,7 +214,9 @@ the bunny icon shows a small up-arrow badge and About includes
 
 ### Using the overlay
 
-Hold **one** Control, then press the **other** to show the search box. Esc
+Hold **one** modifier key, then press the **other** on the same side to show
+the search box (Control by default; `bunnify spotty-bunny hotkey` shows or
+changes the chord — see `spotty_bunny_hotkey` in `docs/CONFIG.md`). Esc
 (or the same chord again) hides it. Up/down walks the CLI REPL history file
 (`platformdirs` cache `bunnify/repl_history`). Tab uses the same completers as
 the CLI (`FirstTokenFuzzyCompleter` / `ShortcutCompleter`) and lists matches

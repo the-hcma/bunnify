@@ -56,9 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=COMMAND_NAME,
         description=(
-            "Spotty Bunny: macOS Spotlight-style search box. Hold one Control, "
-            "press the other to show it. Subcommands: install, uninstall, "
-            "status, upgrade (login LaunchAgent). Bare invocation is foreground."
+            "Spotty Bunny: macOS Spotlight-style search box. Hold one modifier "
+            "key, press the other on the same side to show it (Control by "
+            "default; run `spotty-bunny hotkey` to view/change or `auto` to "
+            "pick Option on laptops with no second Control key). Subcommands: "
+            "hotkey, install, uninstall, status, upgrade (login LaunchAgent). "
+            "Bare invocation is foreground."
         ),
     )
     # Stamped by the launcher so `ps` identifies this process and its build.

@@ -174,8 +174,24 @@ at completion time, so Tab-completing shortcuts needs the server running.
 
 ## Spotty Bunny (macOS)
 
-Optional Spotlight-style search box. Hold one Control and tap the other to
-type a shortcut. Needs the `macos` extra (PyObjC).
+Optional Spotlight-style search box. Hold one modifier key and tap the other
+on the same side to type a shortcut — Control by default, or Option/Command
+if configured (see below). Needs the `macos` extra (PyObjC).
+
+### Hotkey chord
+
+Standard MacBook keyboards have only one physical Control key, so the
+default dual-Control chord doesn't work on laptop-only setups. Configure the
+chord in `~/.config/bunnify/config.toml` (`spotty_bunny_hotkey`), or via:
+
+```bash
+bunnify spotty-bunny hotkey            # show the current choice
+bunnify spotty-bunny hotkey auto       # Option on laptops with no external
+                                        # keyboard, Control when one is attached
+bunnify spotty-bunny hotkey control    # dual-Control (needs two Control keys)
+bunnify spotty-bunny hotkey option     # dual-Option
+bunnify spotty-bunny hotkey command    # dual-Command
+```
 
 ### Install
 

@@ -33,7 +33,7 @@ from app.spotty_bunny_tap_health import (
 )
 from app.version import build_version
 
-AGENT_COMMANDS = frozenset({"install", "status", "uninstall", "upgrade"})
+AGENT_COMMANDS = frozenset({"hotkey", "install", "status", "uninstall", "upgrade"})
 AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
@@ -44,7 +44,9 @@ Accessibility / Input Monitoring. Restarting the agent — test again when ready
 """
 CHORD_TEST_PROMPT = f"{COMMAND_NAME}: did the search box appear? [y/N]: "
 POST_INSTALL_HINT = (
-    f"{COMMAND_NAME}: hold one Control and press the other to test the overlay."
+    f"{COMMAND_NAME}: hold one modifier key and press the other on the same "
+    "side to test the overlay (Control by default; `spotty-bunny hotkey` "
+    "shows/changes the choice)."
 )
 TCC_INSTRUCTIONS = f"""\
 {COMMAND_NAME}: Accessibility and Input Monitoring must be granted to the
@@ -61,7 +63,7 @@ TCC_RECHECK_PROMPT = (
 TCC_PROBE_TIMEOUT_S = 15
 UNKNOWN_COMMAND_MESSAGE = (
     f"{COMMAND_NAME}: unknown command '{{command}}'. "
-    "Use install, uninstall, status, or upgrade; "
+    "Use hotkey, install, uninstall, status, or upgrade; "
     "or run with no subcommand for the foreground overlay."
 )
 
@@ -295,6 +297,8 @@ def run_agent_command(
     **kwargs: object,
 ) -> int:
     """Dispatch a LaunchAgent subcommand. Extra argv is an error."""
+    if command == "hotkey":
+        return hotkey_command(rest)
     if rest:
         print(
             f"{COMMAND_NAME} {command}: unexpected arguments.",
@@ -311,6 +315,37 @@ def run_agent_command(
         return upgrade_agent(**kwargs)
     print(UNKNOWN_COMMAND_MESSAGE.format(command=command), file=sys.stderr)
     return 2
+
+
+def hotkey_command(rest: Sequence[str] = ()) -> int:
+    """Show or set the ``spotty_bunny_hotkey`` chord choice in config.toml."""
+    from app.config import (
+        SPOTTY_BUNNY_HOTKEY_CHOICES,
+        load_spotty_bunny_hotkey,
+        save_spotty_bunny_hotkey,
+    )
+
+    if len(rest) > 1:
+        print(f"{COMMAND_NAME} hotkey: unexpected arguments.", file=sys.stderr)
+        return 2
+    if not rest:
+        print(load_spotty_bunny_hotkey())
+        return 0
+    choice = rest[0].strip().lower()
+    try:
+        save_spotty_bunny_hotkey(choice)
+    except ValueError:
+        choices = ", ".join(SPOTTY_BUNNY_HOTKEY_CHOICES)
+        print(
+            f"{COMMAND_NAME} hotkey: '{rest[0]}' is not one of: {choices}.",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        f"{COMMAND_NAME} hotkey: set to '{choice}'. "
+        "Restart spotty-bunny (or wait for the next health check) to apply."
+    )
+    return 0
 
 
 def spotty_bunny_program() -> Path | None:

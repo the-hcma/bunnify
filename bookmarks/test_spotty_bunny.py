@@ -834,6 +834,42 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         self.assertFalse(bootout_loaded_agent(launchctl=ctl))
         self.assertFalse(any(call[1] == "bootout" for call in ctl.calls))
 
+    def test_hotkey_command_prints_current_choice(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        with (
+            patch("app.config.load_spotty_bunny_hotkey", return_value="auto") as load,
+            patch("app.spotty_bunny_agent.print") as printed,
+        ):
+            self.assertEqual(hotkey_command(()), 0)
+            load.assert_called_once_with()
+        printed.assert_called_once_with("auto")
+
+    def test_hotkey_command_saves_valid_choice(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        with patch("app.config.save_spotty_bunny_hotkey") as save:
+            self.assertEqual(hotkey_command(("Option",)), 0)
+        save.assert_called_once_with("option")
+
+    def test_hotkey_command_rejects_unknown_choice(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        with patch("app.config.save_spotty_bunny_hotkey", side_effect=ValueError):
+            self.assertEqual(hotkey_command(("bogus",)), 2)
+
+    def test_hotkey_command_rejects_extra_arguments(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        self.assertEqual(hotkey_command(("option", "extra")), 2)
+
+    def test_run_agent_command_dispatches_hotkey(self) -> None:
+        from app.spotty_bunny_agent import run_agent_command
+
+        with patch("app.spotty_bunny_agent.hotkey_command", return_value=0) as cmd:
+            self.assertEqual(run_agent_command("hotkey", ("option",)), 0)
+        cmd.assert_called_once_with(("option",))
+
     def test_format_agent_plist_matches_example_placeholders(self) -> None:
         from app.spotty_bunny_agent import (
             AGENT_LABEL,
