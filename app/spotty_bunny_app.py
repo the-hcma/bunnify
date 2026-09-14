@@ -1618,9 +1618,13 @@ def _event_type_name(event_type: int) -> str:
 def _resolve_configured_chord(controller: SpottyBunnyController) -> None:
     """Refresh ``controller.chord_keys`` from the configured hotkey choice.
 
-    For ``auto`` this re-probes connected keyboards, so calling this
-    periodically (see :func:`_check_event_tap_health`) lets Spotty Bunny pick
-    up an external keyboard being plugged in or unplugged without a restart.
+    Pinned choices (``control``/``option``/``command``) resolve synchronously
+    with no subprocess call. ``auto`` probes connected keyboards
+    (``has_external_keyboard``, an ``ioreg`` subprocess) off the main thread
+    via ``controller._io``, so calling this periodically (see
+    :func:`_check_event_tap_health`) lets Spotty Bunny pick up an external
+    keyboard being plugged in or unplugged without a restart or blocking
+    chord delivery / panel UI on the AppKit main thread.
     """
     try:
         choice = load_spotty_bunny_hotkey()
@@ -1628,9 +1632,28 @@ def _resolve_configured_chord(controller: SpottyBunnyController) -> None:
         logger.exception("invalid spotty_bunny_hotkey config value; using auto")
         choice = "auto"
     controller.hotkey_choice = choice
+
+    if choice != "auto":
+        _apply_resolved_chord(controller, choice, has_external_keyboard=False)
+        return
+
+    def apply(result: object) -> None:
+        external = bool(result) if isinstance(result, bool) else False
+        _run_on_main(
+            lambda: _apply_resolved_chord(
+                controller, choice, has_external_keyboard=external
+            )
+        )
+
+    controller._io.submit(has_external_keyboard, apply)
+
+
+def _apply_resolved_chord(
+    controller: SpottyBunnyController, choice: str, *, has_external_keyboard: bool
+) -> None:
     try:
         chord_keys = resolve_chord_keys(
-            choice, has_external_keyboard=has_external_keyboard()
+            choice, has_external_keyboard=has_external_keyboard
         )
     except ValueError:
         logger.exception("could not resolve hotkey choice %r; using Control", choice)

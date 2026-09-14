@@ -185,8 +185,21 @@ def normalize_base_url(value: str) -> str:
     return value.strip().rstrip("/")
 
 
+class ConfigParseError(RuntimeError):
+    """``config.toml`` exists but could not be parsed as TOML.
+
+    Raised instead of silently treating a corrupt/truncated file as "no
+    config" — that would make the next write clobber every other saved key
+    (mode, base_url, local_port, spotty_bunny_hotkey) with an empty document.
+    """
+
+
 def read_toml_document(path: Path) -> tomlkit.TOMLDocument:
-    """Return a parsed TOML document from ``path``, or an empty one."""
+    """Return a parsed TOML document from ``path`` (empty when missing).
+
+    Raises :class:`ConfigParseError` when *path* exists but is not valid
+    TOML, so callers never mistake a corrupt file for an absent one.
+    """
     if not path.is_file():
         return tomlkit.document()
     try:
@@ -195,8 +208,10 @@ def read_toml_document(path: Path) -> tomlkit.TOMLDocument:
         return tomlkit.document()
     try:
         return tomlkit.parse(text)
-    except Exception:
-        return tomlkit.document()
+    except tomlkit.exceptions.ParseError as exc:
+        raise ConfigParseError(
+            f"{path} is not valid TOML ({exc}). Fix or remove it, then retry."
+        ) from exc
 
 
 def write_toml_document(path: Path, document: tomlkit.TOMLDocument) -> None:
@@ -215,6 +230,8 @@ def set_config_value(
     """Create or update one ``config.toml`` value, preserving other keys."""
     env = environ if environ is not None else os.environ
     path = env_path if env_path is not None else env_file_path(environ=env)
+    if env_path is None:
+        _migrate_legacy_config_if_needed(path, environ=env)
     document = read_toml_document(path)
     document[key] = value
     write_toml_document(path, document)
@@ -366,6 +383,8 @@ def save_preferences(
     """Persist a complete, verified server preference set to ``config.toml``."""
     env = environ if environ is not None else os.environ
     path = env_path if env_path is not None else env_file_path(environ=env)
+    if env_path is None:
+        _migrate_legacy_config_if_needed(path, environ=env)
     document = read_toml_document(path)
     document[BASE_URL_KEY] = normalize_base_url(preferences.base_url)
     if preferences.local_port is not None:

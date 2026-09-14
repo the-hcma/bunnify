@@ -927,6 +927,98 @@ class ConfigUnitTests(TestCase):
             )
             self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "command")
 
+    def test_load_preferences_migrates_legacy_config_env(self) -> None:
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=local\n"
+            "BUNNIFY_BASE_URL=http://127.0.0.1:8765\n"
+            "BUNNIFY_LOCAL_PORT=8765\n",
+            encoding="utf-8",
+        )
+
+        preferences = config_mod.load_preferences()
+
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "local")
+        self.assertEqual(preferences.base_url, "http://127.0.0.1:8765")
+        self.assertEqual(preferences.local_port, 8765)
+
+        toml_path = config_mod.env_file_path()
+        self.assertTrue(toml_path.is_file())
+        text = toml_path.read_text(encoding="utf-8")
+        self.assertIn('mode = "local"', text)
+        self.assertIn('base_url = "http://127.0.0.1:8765"', text)
+        self.assertIn("local_port = 8765", text)
+
+    def test_load_preferences_does_not_reimport_over_existing_config_toml(
+        self,
+    ) -> None:
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text("BUNNIFY_MODE=remote\n", encoding="utf-8")
+
+        toml_path = config_mod.env_file_path()
+        toml_path.parent.mkdir(parents=True, exist_ok=True)
+        config_mod.set_config_value("mode", "local", env_path=toml_path)
+        config_mod.set_config_value("local_port", 9999, env_path=toml_path)
+
+        preferences = config_mod.load_preferences()
+
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "local")
+        self.assertEqual(preferences.local_port, 9999)
+
+    def test_save_spotty_bunny_hotkey_migrates_legacy_config_env_first(
+        self,
+    ) -> None:
+        """A pinned hotkey choice must not create config.toml ahead of migration."""
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text("BUNNIFY_MODE=remote\n", encoding="utf-8")
+
+        config_mod.save_spotty_bunny_hotkey("option")
+
+        self.assertEqual(config_mod.load_spotty_bunny_hotkey(), "option")
+        preferences = config_mod.load_preferences()
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "remote")
+
+    def test_read_toml_document_raises_on_corrupt_file(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, read_toml_document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = local\n", encoding="utf-8")  # unquoted: invalid
+            with self.assertRaises(ConfigParseError):
+                read_toml_document(path)
+
+    def test_set_config_value_does_not_clobber_corrupt_config_toml(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = local\n", encoding="utf-8")  # unquoted: invalid
+            with self.assertRaises(ConfigParseError):
+                set_config_value("spotty_bunny_hotkey", "option", env_path=path)
+            # The corrupt file must survive untouched for the user to fix.
+            self.assertEqual(path.read_text(encoding="utf-8"), "mode = local\n")
+
     def test_ensure_ready_base_url_ensures_local_bookmarks(self) -> None:
         import tempfile
         from pathlib import Path
@@ -935,7 +1027,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -990,7 +1082,7 @@ class ConfigUnitTests(TestCase):
             health_ok["value"] = False
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1049,7 +1141,7 @@ class ConfigUnitTests(TestCase):
             raise RuntimeError("failed to start")
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1093,7 +1185,7 @@ class ConfigUnitTests(TestCase):
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
         messages: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1142,7 +1234,7 @@ class ConfigUnitTests(TestCase):
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1191,7 +1283,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1225,7 +1317,7 @@ class ConfigUnitTests(TestCase):
 
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1264,7 +1356,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1302,7 +1394,7 @@ class ConfigUnitTests(TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1723,7 +1815,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://working.example",
@@ -1752,7 +1844,7 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://working.example",
@@ -1793,7 +1885,7 @@ class ConfigUnitTests(TestCase):
 
         mismatched = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://working.example",
@@ -1826,7 +1918,7 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1867,7 +1959,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1913,7 +2005,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1965,7 +2057,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://broken.example",
@@ -1998,7 +2090,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://broken.example",
@@ -2024,7 +2116,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -2163,7 +2255,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -2213,7 +2305,7 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -2255,7 +2347,7 @@ class ConfigUnitTests(TestCase):
         from app.config import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             responses = iter(["remote", "https://broken.example", "y"])
             with patch("app.cli.check_health", return_value=False):
                 result = run_setup(
@@ -2281,7 +2373,7 @@ class ConfigUnitTests(TestCase):
 
         healthy = HealthStatus(ok=True, version="0.3.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             messages: list[str] = []
             with (
@@ -2332,7 +2424,7 @@ class ConfigUnitTests(TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -2382,7 +2474,7 @@ class ConfigUnitTests(TestCase):
         from app.config import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             responses = iter(["local", "8765"])
             with (
@@ -2417,7 +2509,7 @@ class ConfigUnitTests(TestCase):
         from app.cli import run_setup
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             responses = iter(["local", ""])
             messages: list[str] = []
@@ -2466,7 +2558,7 @@ class ConfigUnitTests(TestCase):
         from app.cli import run_setup
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             responses = iter(["local", ""])
             messages: list[str] = []
@@ -2512,7 +2604,7 @@ class ConfigUnitTests(TestCase):
 
         healthy = _healthy_status()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             messages: list[str] = []
             with (
@@ -2555,7 +2647,7 @@ class ConfigUnitTests(TestCase):
         responses = iter(["local", "", "y"])  # explicit y to restart
         messages: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             managed = run_dir(environ=environ)
@@ -2618,7 +2710,7 @@ class ConfigUnitTests(TestCase):
                 raise EOFError from exc
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             managed = run_dir(environ=environ)
@@ -2659,7 +2751,7 @@ class ConfigUnitTests(TestCase):
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
         messages: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
@@ -2703,7 +2795,7 @@ class ConfigUnitTests(TestCase):
             return port_state["free"]
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
@@ -2756,7 +2848,7 @@ class ConfigUnitTests(TestCase):
             return port_state["free"]
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             managed = run_dir(environ=environ)
@@ -2798,7 +2890,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -2847,7 +2939,7 @@ class ConfigUnitTests(TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
-            path = Path(tmp) / "bunnify" / "config.env"
+            path = Path(tmp) / "bunnify" / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="local",
@@ -2875,7 +2967,7 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             responses = iter(["remote", "https://remote.example/"])
             with (
                 patch("app.cli.check_health", return_value=True),
@@ -2908,7 +3000,7 @@ class ConfigUnitTests(TestCase):
 
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             responses = iter(["remote", "https://remote.example/", ""])
             with (
                 patch("app.cli.check_health", return_value=True),
@@ -2938,7 +3030,7 @@ class ConfigUnitTests(TestCase):
 
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             responses = iter(["remote", "https://remote.example/", "y"])
             with (
                 patch("app.cli.check_health", return_value=True),
@@ -3588,7 +3680,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_home = Path(tmp) / "config"
             data_home = Path(tmp) / "data"
-            env_path = config_home / "bunnify" / "config.env"
+            env_path = config_home / "bunnify" / "config.toml"
             env_path.parent.mkdir(parents=True)
             isolated = {
                 "XDG_CONFIG_HOME": str(config_home),
@@ -3634,7 +3726,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_home = Path(tmp) / "config"
             data_home = Path(tmp) / "data"
-            env_path = config_home / "bunnify" / "config.env"
+            env_path = config_home / "bunnify" / "config.toml"
             env_path.parent.mkdir(parents=True)
             isolated = {
                 "XDG_CONFIG_HOME": str(config_home),
@@ -3676,7 +3768,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_home = Path(tmp) / "config"
             data_home = Path(tmp) / "data"
-            env_path = config_home / "bunnify" / "config.env"
+            env_path = config_home / "bunnify" / "config.toml"
             env_path.parent.mkdir(parents=True)
             isolated = {
                 "XDG_CONFIG_HOME": str(config_home),
@@ -3718,7 +3810,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="local",
@@ -3773,7 +3865,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            env_path = Path(tmp) / "config.env"
+            env_path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",

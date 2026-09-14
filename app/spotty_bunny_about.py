@@ -66,7 +66,7 @@ ABOUT_PANEL_MIN_WIDTH = 320.0
 ABOUT_ROW_GAP = 8.0
 ABOUT_SUMMARY = (
     "Search and open your Bunnify shortcuts from anywhere on macOS. "
-    "Hold one modifier key and tap the other to show this box (Control by "
+    "Hold one modifier key and tap the other to show this box (auto by "
     "default; run `spotty-bunny hotkey` to view/change), type a shortcut "
     "(Tab completes, like the CLI), and press Return to open it in your browser. "
     "Text that is not a shortcut opens a Google search, like the browser. "

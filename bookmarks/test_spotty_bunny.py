@@ -3697,6 +3697,22 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "Henrique Andrade"', pyproject)
 
+    def test_resolve_configured_chord_skips_ioreg_for_pinned_choices(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # Pinned control/option/command choices must resolve synchronously,
+        # with no ioreg subprocess call — only "auto" probes hardware, and it
+        # does so off the AppKit main thread via controller._io.submit.
+        self.assertIn(
+            'if choice != "auto":\n'
+            "        _apply_resolved_chord"
+            "(controller, choice, has_external_keyboard=False)\n"
+            "        return",
+            source,
+        )
+        self.assertIn("controller._io.submit(has_external_keyboard, apply)", source)
+
 
 class SpottyBunnyResolveTests(SimpleTestCase):
     def test_failure_does_not_append_history(self) -> None:

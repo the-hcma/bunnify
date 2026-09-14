@@ -45,7 +45,7 @@ Accessibility / Input Monitoring. Restarting the agent — test again when ready
 CHORD_TEST_PROMPT = f"{COMMAND_NAME}: did the search box appear? [y/N]: "
 POST_INSTALL_HINT = (
     f"{COMMAND_NAME}: hold one modifier key and press the other on the same "
-    "side to test the overlay (Control by default; `spotty-bunny hotkey` "
+    "side to test the overlay (auto by default; `spotty-bunny hotkey` "
     "shows/changes the choice)."
 )
 TCC_INSTRUCTIONS = f"""\
@@ -329,7 +329,11 @@ def hotkey_command(rest: Sequence[str] = ()) -> int:
         print(f"{COMMAND_NAME} hotkey: unexpected arguments.", file=sys.stderr)
         return 2
     if not rest:
-        print(load_spotty_bunny_hotkey())
+        try:
+            print(load_spotty_bunny_hotkey())
+        except ValueError as exc:
+            print(f"{COMMAND_NAME} hotkey: {exc}", file=sys.stderr)
+            return 2
         return 0
     choice = rest[0].strip().lower()
     try:
