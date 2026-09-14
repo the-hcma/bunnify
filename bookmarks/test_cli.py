@@ -808,21 +808,19 @@ class ConfigUnitTests(TestCase):
                 Path(tmp) / "bunnify",
             )
 
-    def test_default_env_file_under_xdg_resolves_base_url(self) -> None:
+    def test_default_config_file_under_xdg_resolves_base_url(self) -> None:
         import tempfile
         from pathlib import Path
 
-        from app.config import (
-            env_file_path,
-            resolve_base_url,
-            write_base_url_to_env_file,
-        )
+        from app.config import env_file_path, resolve_base_url, set_config_value
 
         with tempfile.TemporaryDirectory() as tmp:
             environ = {"XDG_CONFIG_HOME": tmp}
-            path = Path(tmp) / "bunnify" / "config.env"
+            path = Path(tmp) / "bunnify" / "config.toml"
             self.assertEqual(env_file_path(environ=environ), path)
-            write_base_url_to_env_file(path, "http://from-xdg:9000")
+            set_config_value(
+                "base_url", "http://from-xdg:9000", env_path=path, environ=environ
+            )
             self.assertEqual(
                 resolve_base_url(environ=environ, persist=False),
                 "http://from-xdg:9000",
@@ -853,9 +851,9 @@ class ConfigUnitTests(TestCase):
                 expected,
             )
             text = path.read_text(encoding="utf-8")
-            self.assertIn("BUNNIFY_MODE=local", text)
-            self.assertIn("BUNNIFY_BASE_URL=http://127.0.0.1:8765", text)
-            self.assertIn("BUNNIFY_LOCAL_PORT=8765", text)
+            self.assertIn('mode = "local"', text)
+            self.assertIn('base_url = "http://127.0.0.1:8765"', text)
+            self.assertIn("local_port = 8765", text)
 
     def test_ensure_ready_base_url_ensures_local_bookmarks(self) -> None:
         import tempfile
@@ -1534,32 +1532,23 @@ class ConfigUnitTests(TestCase):
                 '{"personal": true}\n',
             )
 
-    def test_resolve_prefers_cli_then_env_then_file(self) -> None:
+    def test_resolve_prefers_cli_then_file(self) -> None:
         import tempfile
         from pathlib import Path
 
-        from app.config import ENV_VAR, resolve_base_url, write_base_url_to_env_file
+        from app.config import resolve_base_url, set_config_value
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "bunnify.env"
-            write_base_url_to_env_file(path, "http://from-file:9000")
+            path = Path(tmp) / "config.toml"
+            set_config_value("base_url", "http://from-file:9000", env_path=path)
             self.assertEqual(
                 resolve_base_url(
                     cli_value="http://from-cli:1",
-                    environ={ENV_VAR: "http://from-env:2"},
+                    environ={},
                     env_path=path,
                     persist=False,
                 ),
                 "http://from-cli:1",
-            )
-            self.assertEqual(
-                resolve_base_url(
-                    cli_value=None,
-                    environ={ENV_VAR: "http://from-env:2"},
-                    env_path=path,
-                    persist=False,
-                ),
-                "http://from-env:2",
             )
             self.assertEqual(
                 resolve_base_url(
@@ -1594,14 +1583,14 @@ class ConfigUnitTests(TestCase):
                     "http://from-legacy:9000",
                 )
 
-    def test_prompt_persists_env_file(self) -> None:
+    def test_prompt_persists_config_file(self) -> None:
         import tempfile
         from pathlib import Path
 
-        from app.config import read_base_url_from_env_file, resolve_base_url
+        from app.config import get_config_value, resolve_base_url
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "bunnify.env"
+            path = Path(tmp) / "config.toml"
             url = resolve_base_url(
                 cli_value=None,
                 environ={},
@@ -1611,7 +1600,30 @@ class ConfigUnitTests(TestCase):
                 prompt_fn=lambda _msg: "http://prompted:8000/",
             )
             self.assertEqual(url, "http://prompted:8000")
-            self.assertEqual(read_base_url_from_env_file(path), "http://prompted:8000")
+            self.assertEqual(
+                get_config_value("base_url", env_path=path),
+                "http://prompted:8000",
+            )
+
+    def test_process_env_vars_do_not_override_config_file(self) -> None:
+        """Process environment variables must never override config.toml."""
+        import tempfile
+        from pathlib import Path
+
+        from app.config import resolve_base_url, set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            set_config_value("base_url", "http://from-file:9000", env_path=path)
+            self.assertEqual(
+                resolve_base_url(
+                    cli_value=None,
+                    environ={"BUNNIFY_BASE_URL": "http://from-env:2"},
+                    env_path=path,
+                    persist=False,
+                ),
+                "http://from-file:9000",
+            )
 
     def test_env_file_strips_inline_comments(self) -> None:
         import tempfile

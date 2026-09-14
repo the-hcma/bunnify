@@ -37,7 +37,6 @@ from app.coherence import (
     running_spotty_commit,
 )
 from app.config import (
-    ENV_VAR,
     LOCAL_PORT_FILE_NAME,
     MIN_LOCAL_PORT,
     ServerPreferences,
@@ -1925,8 +1924,8 @@ def _print_completion_script(
     default=None,
     help=(
         "Base URL of the local Bunnify server. "
-        f"Falls back to {ENV_VAR}, ~/.config/bunnify/config.env, then legacy "
-        "bunnify.env; prompts and persists to the XDG config if unset."
+        "Falls back to ~/.config/bunnify/config.toml, then legacy "
+        "bunnify.env; prompts and persists to config.toml if unset."
     ),
 )
 @click.option(
