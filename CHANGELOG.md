@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.13.1...bunnify-v0.14.0) (2026-09-15)
+
+
+### Features
+
+* harden LaunchAgent upgrade rollback and add `bunnify status` ([#419](https://github.com/the-hcma/bunnify/issues/419)) ([a2b1334](https://github.com/the-hcma/bunnify/commit/a2b13341dae8212aa68d64ce97459911f41b8033))
+* make the spotty-bunny hotkey configurable and migrate config to TOML ([#415](https://github.com/the-hcma/bunnify/issues/415)) ([72806ad](https://github.com/the-hcma/bunnify/commit/72806ad3402103e4225d80aa35342daae5ebb6c6))
+
 ## [0.13.1](https://github.com/the-hcma/bunnify/compare/bunnify-v0.13.0...bunnify-v0.13.1) (2026-09-12)
 
 
