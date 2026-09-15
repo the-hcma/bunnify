@@ -175,11 +175,11 @@ at completion time, so Tab-completing shortcuts needs the server running.
 
 ## Spotty Bunny (macOS)
 
-Optional Spotlight-style search box. Hold one modifier key and tap the other
-on the same side to type a shortcut. By default (`auto`) this is dual-Control
-when an external keyboard is attached, or dual-Option on a built-in-only
-keyboard — see below to pin it or change it. Needs the `macos` extra
-(PyObjC).
+Optional Spotlight-style search box. Hold the left (or right) copy of the
+chord's modifier key, then tap the other copy of the *same* modifier — for
+example, hold left Control and tap right Control. By default (`auto`) the
+modifier is chosen automatically from which keyboard is attached — see below
+to pin it or change it. Needs the `macos` extra (PyObjC).
 
 ### Hotkey chord
 
@@ -196,6 +196,20 @@ bunnify spotty-bunny hotkey control    # dual-Control (needs two Control keys)
 bunnify spotty-bunny hotkey option     # dual-Option
 bunnify spotty-bunny hotkey command    # dual-Command
 ```
+
+**Default (`auto`) keystrokes by keyboard:**
+
+| Keyboard attached | Chord used | Keystroke |
+|---|---|---|
+| Built-in only (no external keyboard) | Option | Hold left **Option**, tap right **Option** (or the reverse) |
+| External keyboard present (USB/Bluetooth) | Control | Hold left **Control**, tap right **Control** (or the reverse) |
+
+`auto` is re-checked on every periodic tap health check, so plugging in or
+unplugging an external keyboard switches the chord without restarting Spotty
+Bunny. Pinning a choice (`control` / `option` / `command`) always uses both
+copies of that modifier, regardless of what's attached — useful on an
+external keyboard that lacks a second Option or Command key, or if you just
+prefer one chord everywhere.
 
 ### Install
 

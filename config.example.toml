@@ -18,8 +18,13 @@ base_url = "http://127.0.0.1:8000"
 # TCP port for the local managed server. Only meaningful when mode = "local".
 local_port = 8000
 
-# Spotty Bunny's overlay modifier chord: "auto" (default -- Option on
-# laptops with no external keyboard attached, Control when one is present),
-# "control", "option", or "command". Change it with:
+# Spotty Bunny's overlay modifier chord: "auto" (default), "control",
+# "option", or "command". Each chord is hold-left-tap-right (or the
+# reverse) of the *same* modifier, e.g. hold left Control, tap right
+# Control. Default ("auto") picks:
+#   - Option, on a built-in-only keyboard (no external keyboard attached)
+#   - Control, when an external (USB/Bluetooth) keyboard is present
+# Re-checked on every periodic tap health check, so plugging in/out an
+# external keyboard switches the chord without a restart. Change it with:
 #   bunnify spotty-bunny hotkey <auto|control|option|command>
 spotty_bunny_hotkey = "auto"

@@ -83,8 +83,18 @@ bunnify spotty-bunny hotkey
 bunnify spotty-bunny hotkey option
 ```
 
+Each chord is held-left-tap-right (or the reverse) of the *same* modifier —
+e.g. hold left Control, tap right Control. Default (`auto`) keystrokes:
+
+| Keyboard attached | Chord used | Keystroke |
+|---|---|---|
+| Built-in only (no external keyboard) | Option | Hold left Option, tap right Option (or the reverse) |
+| External keyboard present (USB/Bluetooth) | Control | Hold left Control, tap right Control (or the reverse) |
+
 Auto-detection is re-checked on each periodic tap health check, so plugging
 in (or unplugging) an external keyboard is picked up without a restart.
+Pinning a choice (`control` / `option` / `command`) always uses both copies
+of that modifier regardless of what's attached.
 
 ## Bookmark schema
 
