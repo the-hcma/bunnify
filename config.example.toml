@@ -23,12 +23,26 @@ base_url = "http://127.0.0.1:8000"
 local_port = 8000
 
 # Spotty Bunny's overlay modifier chord: "auto" (default), "control",
-# "option", or "command". Each chord is hold-left-tap-right (or the
-# reverse) of the *same* modifier, e.g. hold left Control, tap right
-# Control. Default ("auto") picks:
+# "option", or "command". There is no separate keycode/combo syntax here --
+# this value only *selects a modifier key*; the gesture is always the same
+# "hold one side, tap the other side of that modifier" chord (no function
+# keys or multi-modifier combinations are supported). Exact keys pressed:
+#   - "control": hold left Control, tap right Control (or the reverse)
+#   - "option":  hold left Option,  tap right Option  (or the reverse)
+#   - "command": hold left Command, tap right Command (or the reverse)
+# "auto" picks between Option and Control for you, re-checked on every
+# periodic tap health check (so plugging in/out an external keyboard
+# switches the chord live, without a restart):
 #   - Option, on a built-in-only keyboard (no external keyboard attached)
 #   - Control, when an external (USB/Bluetooth) keyboard is present
-# Re-checked on every periodic tap health check, so plugging in/out an
-# external keyboard switches the chord without a restart. Change it with:
+#
+# Uncomment one of these to pin a specific chord instead of auto-detecting
+# (useful on an external keyboard missing a second Option/Command key, or
+# if you just prefer one chord everywhere):
+#   spotty_bunny_hotkey = "control"
+#   spotty_bunny_hotkey = "option"
+#   spotty_bunny_hotkey = "command"
+#
+# Change it live with:
 #   bunnify spotty-bunny hotkey <auto|control|option|command>
 spotty_bunny_hotkey = "auto"
