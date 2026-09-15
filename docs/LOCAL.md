@@ -16,6 +16,14 @@ automatic fallback to a local server. Re-run `bunnify setup` and choose local
 Remote mode fits a **home server** (or similar) that stays up on the LAN/VPN so
 phones, desktops, and laptops can share one bookmark install.
 
+Switching from **local** to **remote** in `bunnify setup` stops the previous
+local server (and, on macOS, boots out an installed LaunchAgent) once the new
+remote URL is verified, so a stale local process doesn't keep running and
+listening on its old port after the switch. If that stop fails, setup still
+saves the remote configuration and prints a warning telling you to run
+`bunnify stop` yourself. Switching from **remote** to **local** has nothing to
+stop on the client side — it starts a fresh managed local server as usual.
+
 ## Setup
 
 ```bash
