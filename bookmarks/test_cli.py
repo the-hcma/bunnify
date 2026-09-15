@@ -3254,6 +3254,79 @@ class ConfigUnitTests(TestCase):
             self.assertIn("stuck process", joined)
             self.assertIn(f"--stop --pid-dir {managed}", joined)
 
+    def test_setup_switch_to_remote_reports_launchagent_stop_failure(self) -> None:
+        """The stop-failure warning must reference the LaunchAgent's own
+        pid_dir (where its pid/port files actually live), not the CLI run
+        dir, or the printed recovery command would find nothing to stop.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            agent_pid_dir = Path(tmp) / "launchd"
+            agent_pid_dir.mkdir(parents=True, exist_ok=True)
+            (agent_pid_dir / LOCAL_PORT_FILE_NAME).write_text(
+                "8123\n", encoding="utf-8"
+            )
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=RuntimeError("stuck process"),
+                ),
+                patch("app.cli.sys") as fake_sys,
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=agent_pid_dir,
+                ),
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
+            ):
+                fake_sys.platform = "darwin"
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            bootout.assert_called_once()
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Could not stop the previous local Bunnify server", joined)
+            self.assertIn("stuck process", joined)
+            self.assertIn(f"--stop --pid-dir {agent_pid_dir}", joined)
+
     def test_setup_switch_to_unreachable_remote_still_stops_local_server(
         self,
     ) -> None:
@@ -3362,6 +3435,16 @@ class ConfigUnitTests(TestCase):
                     return_value=("0.10.0", "abc123456789"),
                 ),
                 patch("app.cli.stop_local_server") as stop_server,
+                # Defensive isolation: if the `existing.mode == "local"`
+                # guard this test targets were ever dropped or inverted, the
+                # helper would fall through to the *real* is_agent_installed
+                # / bootout_loaded_agent on a macOS dev machine or runner
+                # rather than a mock, which is exactly the isolation #417
+                # requires the test harness to never risk.
+                patch(
+                    "app.server_agent.is_agent_installed", return_value=False
+                ) as is_agent_installed,
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
             ):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
@@ -3372,6 +3455,8 @@ class ConfigUnitTests(TestCase):
 
             self.assertEqual(result, "https://new.example")
             stop_server.assert_not_called()
+            is_agent_installed.assert_not_called()
+            bootout.assert_not_called()
             preferences = load_preferences(environ={}, env_path=path)
             assert preferences is not None
             self.assertEqual(preferences.mode, "remote")
