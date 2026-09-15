@@ -3069,13 +3069,14 @@ class ConfigUnitTests(TestCase):
                 env_path=path,
                 environ=environ,
             )
-            # The LaunchAgent's own pid_dir (distinct from this CLI run's
-            # pid_dir) is where its port is recorded; only it should be
-            # consulted once `is_agent_installed()` is true.
+            # Deliberately different from local_port=8123 above: the CLI
+            # run-dir lookup (or its config fallback) resolves the port
+            # before the LaunchAgent's own pid_dir is ever consulted, so
+            # 9123 here must never reach stop_local_server.
             agent_pid_dir = Path(tmp) / "launchd"
             agent_pid_dir.mkdir(parents=True, exist_ok=True)
             (agent_pid_dir / LOCAL_PORT_FILE_NAME).write_text(
-                "8123\n", encoding="utf-8"
+                "9123\n", encoding="utf-8"
             )
             with (
                 patch("app.cli.check_health", return_value=True),
@@ -3106,7 +3107,83 @@ class ConfigUnitTests(TestCase):
             launchd_pid_dir.assert_called_once()
             stop_server.assert_called_once()
             self.assertEqual(stop_server.call_args.args[0], agent_pid_dir)
+            # The config's local_port (8123) already resolved the port
+            # before the LaunchAgent branch runs, so its own port file
+            # (9123) is correctly ignored -- mirrors run_stop's precedence.
             self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Stopped the local Bunnify LaunchAgent", joined)
+
+    def test_setup_switch_to_remote_uses_agent_port_when_no_fallback(self) -> None:
+        """When neither the CLI run-dir port file nor config `local_port`
+        resolve a port, the LaunchAgent's own port file must be consulted --
+        this is the branch `if port is None:` (app/cli.py) guards, which the
+        other LaunchAgent test above cannot exercise once a fallback port is
+        already available.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:0",
+                    local_port=None,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            agent_pid_dir = Path(tmp) / "launchd"
+            agent_pid_dir.mkdir(parents=True, exist_ok=True)
+            (agent_pid_dir / LOCAL_PORT_FILE_NAME).write_text(
+                "9123\n", encoding="utf-8"
+            )
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch("app.cli.sys") as fake_sys,
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=agent_pid_dir,
+                ),
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
+            ):
+                fake_sys.platform = "darwin"
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            bootout.assert_called_once()
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.args[0], agent_pid_dir)
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 9123)
             preferences = load_preferences(environ={}, env_path=path)
             assert preferences is not None
             self.assertEqual(preferences.mode, "remote")
