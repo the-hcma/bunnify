@@ -6,7 +6,7 @@ import subprocess
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.test import SimpleTestCase
 
@@ -318,10 +318,15 @@ class ServerAgentTests(SimpleTestCase):
             plist.write_text(previous_plist_text, encoding="utf-8")
             stderr = StringIO()
             with (
-                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.stop_local_server") as stop,
                 patch("app.server_agent.port_is_free", return_value=True),
                 patch("app.server_agent._reload_agent", return_value=False),
-                patch("app.server_agent._wait_for_managed_health", return_value=True),
+                patch(
+                    "app.server_agent._wait_for_managed_health",
+                    side_effect=lambda base_url, *, pid_dir, port, timeout_s: (
+                        port == 8000
+                    ),
+                ),
             ):
                 code = install_agent(
                     home=home,
@@ -338,6 +343,16 @@ class ServerAgentTests(SimpleTestCase):
             self.assertIn(
                 "restored the previous LaunchAgent configuration",
                 stderr.getvalue(),
+            )
+            # _wait_for_managed_health is asserted (via side_effect) to have
+            # been probed on the *restored* plist's port (8000), proving
+            # install_agent re-derives the port from the restored plist
+            # rather than reusing the failed attempt's port (8123). The
+            # defensive cleanup of the failed attempt's port runs twice
+            # (initial rollback stop + post-restore safety net).
+            self.assertEqual(
+                stop.call_args_list.count(call(pid_dir, port=8123, port_timeout_s=5)),
+                2,
             )
 
     def test_install_removes_plist_when_restore_also_fails(self) -> None:
@@ -368,7 +383,7 @@ class ServerAgentTests(SimpleTestCase):
             )
             stderr = StringIO()
             with (
-                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.stop_local_server") as stop,
                 patch("app.server_agent.port_is_free", return_value=True),
                 patch("app.server_agent._reload_agent", return_value=False),
                 patch("app.server_agent._wait_for_managed_health", return_value=False),
@@ -388,6 +403,9 @@ class ServerAgentTests(SimpleTestCase):
                 "local mode is now down",
                 stderr.getvalue(),
             )
+            # Cleanup after a failed restore must target the *restored*
+            # plist's port (8000), not the failed attempt's port (8123).
+            stop.assert_any_call(pid_dir, port=8000, port_timeout_s=5)
 
     def test_install_rejects_foreign_server_on_port(self) -> None:
         from app.server_agent import AGENT_LABEL, install_agent

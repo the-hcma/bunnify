@@ -4536,7 +4536,11 @@ class ConfigUnitTests(TestCase):
                 patch("app.cli.sys.platform", "linux"),
                 patch("app.cli.fetch_health", return_value=_healthy_status()),
             ):
-                code = run_status(env_path=env_path, print_fn=messages.append)
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
 
         self.assertEqual(code, 0)
         self.assertIn("mode: local", messages)
@@ -4571,7 +4575,11 @@ class ConfigUnitTests(TestCase):
                 ),
                 patch("app.server_agent.status_agent", return_value=0) as status_agent,
             ):
-                code = run_status(env_path=env_path, print_fn=messages.append)
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
 
         self.assertEqual(code, 0)
         status_agent.assert_called_once()
@@ -4596,7 +4604,11 @@ class ConfigUnitTests(TestCase):
             )
             messages: list[str] = []
             with patch("app.cli.sys.platform", "linux"):
-                code = run_status(env_path=env_path, print_fn=messages.append)
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
 
         self.assertEqual(code, 1)
         self.assertIn("url: none", messages)

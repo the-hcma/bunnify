@@ -150,7 +150,9 @@ def install_agent(
             port=port,
             previous_plist_bytes=previous_plist_bytes,
         )
-        err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
+        # Callers (e.g. app.cli's setup/restart-on-mismatch flows) surface the
+        # *last* captured message as the reported error, so keep the root
+        # cause last and the restore/removal note first.
         err(
             f"{COMMAND_NAME}: "
             + (
@@ -160,6 +162,7 @@ def install_agent(
                 f"local mode is now down. Run: {COMMAND_NAME} install"
             )
         )
+        err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
     if not _wait_for_managed_health(
         base_url,
@@ -174,7 +177,6 @@ def install_agent(
             port=port,
             previous_plist_bytes=previous_plist_bytes,
         )
-        err(f"{COMMAND_NAME}: server at {base_url} did not become healthy.")
         err(
             f"{COMMAND_NAME}: "
             + (
@@ -184,6 +186,7 @@ def install_agent(
                 f"local mode is now down. Run: {COMMAND_NAME} install"
             )
         )
+        err(f"{COMMAND_NAME}: server at {base_url} did not become healthy.")
         return 1
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: plist {plist}")
@@ -642,6 +645,16 @@ def _rollback_failed_install(
             port=restored_port,
             timeout_s=restore_timeout_s,
         ):
+            if restored_port != port:
+                # The failed attempt's own stop (above) targeted *port*, but
+                # bootout is asynchronous; make a second, defensive attempt
+                # now that the restored (different-port) server is confirmed
+                # healthy, so a surviving failed-build process doesn't keep
+                # holding *port*.
+                try:
+                    stop_local_server(pid_dir, port=port, port_timeout_s=5)
+                except OSError, RuntimeError, ValueError:
+                    pass
             return True
         _bootout_agent(launchctl=launchctl)
         try:

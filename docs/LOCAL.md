@@ -78,12 +78,14 @@ bunnify status
 # equivalent: bunnify --status
 ```
 
-On macOS, when the Spotty Bunny LaunchAgent is installed, `status` reports the
-same detail as `bunnify spotty-bunny status` (loaded/healthy/binary/version).
-Otherwise it reports `mode`, `url`, `healthy`, and the running build for
-whichever managed local server or remote host is configured. Exit code `0`
-means the configured target is reachable and healthy; `1` means it is not (or
-Bunnify has never been configured — run `bunnify setup`).
+On macOS, when the **server** LaunchAgent (`com.thehcma.bunnify`, installed by
+`bunnify setup`) is installed, `status` reports the same detail as
+`bunnify-server status` (loaded/healthy/binary/version) — not Spotty Bunny,
+which has its own `bunnify spotty-bunny status`. Otherwise it reports `mode`,
+`url`, `healthy`, and the running build for whichever managed local server or
+remote host is configured. Exit code `0` means the configured target is
+reachable and healthy; `1` means it is not (or Bunnify has never been
+configured — run `bunnify setup`).
 
 ### Switching between local and remote
 
@@ -91,10 +93,11 @@ Switching modes always goes through `bunnify setup`'s verify-before-save flow:
 the new URL (remote) or managed server (local) must answer `/health` with
 `200 ok` before `config.toml` is updated, so a failed switch leaves the
 previous, working configuration in place rather than persisting a broken one.
-On macOS, `spotty-bunny upgrade` follows the same rule for the LaunchAgent
-itself — if the new build cannot be reloaded or does not become healthy, the
-previous LaunchAgent plist is restored and reloaded rather than left
-uninstalled; only if that restore attempt also fails is the plist removed
+On macOS, `bunnify-server upgrade` (and `bunnify upgrade`'s server-agent
+refresh) follows the same rule for the server LaunchAgent itself — if the new
+build cannot be reloaded or does not become healthy, the previous LaunchAgent
+plist is restored and reloaded rather than left uninstalled; only if that
+restore attempt also fails is the plist removed
 (and the failure is reported so you know local mode is down). Use
 `bunnify status` after any switch to confirm the configured target is
 healthy.
