@@ -558,6 +558,15 @@ def _port_from_argv(argv: Sequence[str] | None) -> int | None:
     return None
 
 
+def _pid_dir_from_argv(argv: Sequence[str] | None) -> Path | None:
+    if not argv:
+        return None
+    for index, part in enumerate(argv):
+        if part == "--pid-dir" and index + 1 < len(argv):
+            return Path(argv[index + 1])
+    return None
+
+
 def _port_served_by_pid_dir(port: int, pid_dir: Path) -> bool:
     """Return whether a Bunnify listener on ``port`` uses ``pid_dir``."""
     from app.server_cli import _listener_pids, _process_managed_by_pid_dir
@@ -640,21 +649,26 @@ def _rollback_failed_install(
         pass
     if previous_plist_bytes is not None:
         plist.write_bytes(previous_plist_bytes)
-        # The previous plist may target a different port than the failed
-        # attempt (e.g. an upgrade that also changed the port); read it back
-        # from the restored plist rather than assuming it matches *port*.
-        restored_port = _port_from_argv(_plist_program_arguments(plist)) or port
+        # The previous plist may target a different port and/or pid_dir than
+        # the failed attempt (e.g. an upgrade that also changed the data
+        # dir); read both back from the restored plist rather than assuming
+        # they match the failed attempt's *port*/*pid_dir*, since the health
+        # gate below only accepts a listener whose pid_dir matches what it's
+        # given.
+        restored_argv = _plist_program_arguments(plist)
+        restored_port = _port_from_argv(restored_argv) or port
+        restored_pid_dir = _pid_dir_from_argv(restored_argv) or pid_dir
         base_url = f"http://127.0.0.1:{restored_port}"
         if _bootstrap_agent(plist, launchctl=launchctl) and _wait_for_managed_health(
             base_url,
-            pid_dir=pid_dir,
+            pid_dir=restored_pid_dir,
             port=restored_port,
             timeout_s=restore_timeout_s,
         ):
             return True
         _bootout_agent(launchctl=launchctl)
         try:
-            stop_local_server(pid_dir, port=restored_port, port_timeout_s=5)
+            stop_local_server(restored_pid_dir, port=restored_port, port_timeout_s=5)
         except OSError, RuntimeError, ValueError:
             pass
     plist.unlink(missing_ok=True)

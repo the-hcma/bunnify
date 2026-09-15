@@ -4587,7 +4587,7 @@ class ConfigUnitTests(TestCase):
                     "app.server_agent.launchd_pid_dir",
                     return_value=Path(tmp) / "run" / "launchd",
                 ),
-                patch("app.server_agent.status_agent", return_value=0) as status_agent,
+                patch("app.server_agent.status_agent", return_value=1) as status_agent,
             ):
                 code = run_status(
                     env_path=env_path,
@@ -4595,8 +4595,15 @@ class ConfigUnitTests(TestCase):
                     print_fn=messages.append,
                 )
 
-        self.assertEqual(code, 0)
+        # The delegate's return code must be forwarded verbatim (not a fixed
+        # 0/1), and its print_fn/print_err must route through run_status's
+        # own log/warn wrapper rather than being silently dropped.
+        self.assertEqual(code, 1)
         status_agent.assert_called_once()
+        _, kwargs = status_agent.call_args
+        self.assertEqual(kwargs["print_fn"], messages.append)
+        kwargs["print_err"]("boom")
+        self.assertIn("boom", messages)
 
     def test_status_reports_no_local_server_recorded(self) -> None:
         import tempfile

@@ -293,7 +293,12 @@ class ServerAgentTests(SimpleTestCase):
             self.assertFalse(ctl.loaded)
 
     def test_install_restores_previous_plist_when_bootstrap_fails(self) -> None:
-        from app.server_agent import AGENT_LABEL, format_agent_plist, install_agent
+        from app.server_agent import (
+            AGENT_LABEL,
+            COMMAND_NAME,
+            format_agent_plist,
+            install_agent,
+        )
 
         ctl = _FakeLaunchctl()
         with TemporaryDirectory() as tmp:
@@ -342,6 +347,14 @@ class ServerAgentTests(SimpleTestCase):
             self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
             self.assertIn(
                 "restored the previous LaunchAgent configuration",
+                stderr.getvalue(),
+            )
+            # Callers surface messages[-1] as the reported failure detail, so
+            # the root-cause line must be last -- not just present anywhere.
+            self.assertTrue(
+                stderr.getvalue().endswith(
+                    f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}."
+                ),
                 stderr.getvalue(),
             )
             # _wait_for_managed_health is asserted (via side_effect) to have
@@ -409,7 +422,12 @@ class ServerAgentTests(SimpleTestCase):
             stop.assert_any_call(pid_dir, port=8000, port_timeout_s=5)
 
     def test_install_restores_previous_plist_when_health_check_fails(self) -> None:
-        from app.server_agent import AGENT_LABEL, format_agent_plist, install_agent
+        from app.server_agent import (
+            AGENT_LABEL,
+            COMMAND_NAME,
+            format_agent_plist,
+            install_agent,
+        )
 
         ctl = _FakeLaunchctl()
         with TemporaryDirectory() as tmp:
@@ -463,6 +481,13 @@ class ServerAgentTests(SimpleTestCase):
             self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
             self.assertIn(
                 "restored the previous LaunchAgent configuration",
+                stderr.getvalue(),
+            )
+            self.assertTrue(
+                stderr.getvalue().endswith(
+                    f"{COMMAND_NAME}: server at http://127.0.0.1:8123 "
+                    "did not become healthy."
+                ),
                 stderr.getvalue(),
             )
 
