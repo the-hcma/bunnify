@@ -2988,6 +2988,60 @@ class ConfigUnitTests(TestCase):
             joined = "\n".join(messages)
             self.assertIn("Stopped the previous local Bunnify server", joined)
 
+    def test_setup_switch_to_remote_falls_back_to_configured_port(self) -> None:
+        """No `.bunnify.port` file in the run dir (e.g. it was deleted, or the
+        CLI never wrote one this run) must still stop the still-running
+        server on the port recorded in `config.toml`, mirroring the fallback
+        `run_stop` applies via `preferences.local_port`.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            # Deliberately no LOCAL_PORT_FILE_NAME written under run_dir().
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch("app.server_agent.is_agent_installed", return_value=False),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Stopped the previous local Bunnify server", joined)
+
     def test_setup_switch_to_remote_stops_launchagent(self) -> None:
         import tempfile
         from pathlib import Path
