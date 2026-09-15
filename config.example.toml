@@ -1,0 +1,25 @@
+# Example ~/.config/bunnify/config.toml (or $XDG_CONFIG_HOME/bunnify/config.toml).
+#
+# This file documents every key Bunnify persists here. It is not installed or
+# read automatically -- `bunnify setup` and `bunnify spotty-bunny hotkey`
+# write your real config.toml for you; edit that file directly (or copy this
+# one) if you prefer. All values below are optional; omit keys you don't
+# need. See docs/CONFIG.md for full details.
+
+# "local" or "remote". Selects which server bunnify/spotty-bunny talk to.
+# Usually set for you by `bunnify setup`.
+mode = "local"
+
+# Bunnify server base URL. For local mode this is the managed server's
+# 127.0.0.1 URL and port; for remote mode, the URL of a centralized/home
+# server install.
+base_url = "http://127.0.0.1:8000"
+
+# TCP port for the local managed server. Only meaningful when mode = "local".
+local_port = 8000
+
+# Spotty Bunny's overlay modifier chord: "auto" (default -- Option on
+# laptops with no external keyboard attached, Control when one is present),
+# "control", "option", or "command". Change it with:
+#   bunnify spotty-bunny hotkey <auto|control|option|command>
+spotty_bunny_hotkey = "auto"

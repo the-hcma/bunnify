@@ -17,7 +17,9 @@ to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
   directly, or use `bunnify setup` / `bunnify spotty-bunny hotkey`. A legacy
   `config.env` (or the old `BUNNIFY_MODE`/`BUNNIFY_BASE_URL`/
   `BUNNIFY_LOCAL_PORT` environment variables) is migrated into `config.toml`
-  once, automatically, the first time it's read.
+  once, automatically, the first time it's read. See
+  [`config.example.toml`](../config.example.toml) at the repository root for
+  an annotated example of every key.
 - `run/` contains PID and port files for CLI-managed servers. On macOS the
   server LaunchAgent uses `run/launchd/` (see [LOCAL.md](LOCAL.md)).
 

@@ -50,7 +50,10 @@ Manual setup is more reliable across browser versions.
 
 If your server listens on a non-default host or port, adjust URLs accordingly.
 Re-run `bunnify setup` to change the saved port, or edit `base_url` in
-`~/.config/bunnify/config.toml`, then update the Chrome search-engine URL to match.
+`~/.config/bunnify/config.toml`, then update the Chrome search-engine URL to
+match. See [`config.example.toml`](config.example.toml) for an annotated
+example of every `config.toml` key, or [docs/CONFIG.md](docs/CONFIG.md) for
+full details.
 
 ## Development checkout
 
