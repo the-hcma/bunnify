@@ -2931,6 +2931,547 @@ class ConfigUnitTests(TestCase):
             self.assertEqual(preferences.mode, "remote")
             self.assertEqual(preferences.base_url, "https://broken.example")
 
+    def test_setup_switch_to_remote_stops_previous_local_server(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            run_dir,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            managed = run_dir(environ=environ)
+            managed.mkdir(parents=True, exist_ok=True)
+            (managed / LOCAL_PORT_FILE_NAME).write_text("8123\n", encoding="utf-8")
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch("app.server_agent.is_agent_installed", return_value=False),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Stopped the previous local Bunnify server", joined)
+
+    def test_setup_switch_to_remote_falls_back_to_configured_port(self) -> None:
+        """No `.bunnify.port` file in the run dir (e.g. it was deleted, or the
+        CLI never wrote one this run) must still stop the still-running
+        server on the port recorded in `config.toml`, mirroring the fallback
+        `run_stop` applies via `preferences.local_port`.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            run_dir,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            # save_preferences() persists local_port to the run-dir port file
+            # too; delete it so this test actually exercises the
+            # `preferences.local_port` fallback branch instead of passing
+            # via the run-dir file (which is what round-6 review flagged).
+            (run_dir(environ=environ) / LOCAL_PORT_FILE_NAME).unlink()
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch("app.server_agent.is_agent_installed", return_value=False),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Stopped the previous local Bunnify server", joined)
+
+    def test_setup_switch_to_remote_stops_launchagent(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            # Deliberately different from local_port=8123 above: the CLI
+            # run-dir lookup (or its config fallback) resolves the port
+            # before the LaunchAgent's own pid_dir is ever consulted, so
+            # 9123 here must never reach stop_local_server.
+            agent_pid_dir = Path(tmp) / "launchd"
+            agent_pid_dir.mkdir(parents=True, exist_ok=True)
+            (agent_pid_dir / LOCAL_PORT_FILE_NAME).write_text(
+                "9123\n", encoding="utf-8"
+            )
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch("app.cli.sys") as fake_sys,
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=agent_pid_dir,
+                ) as launchd_pid_dir,
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
+            ):
+                fake_sys.platform = "darwin"
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            bootout.assert_called_once()
+            launchd_pid_dir.assert_called_once()
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.args[0], agent_pid_dir)
+            # The config's local_port (8123) already resolved the port
+            # before the LaunchAgent branch runs, so its own port file
+            # (9123) is correctly ignored -- mirrors run_stop's precedence.
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Stopped the local Bunnify LaunchAgent", joined)
+
+    def test_setup_switch_to_remote_uses_agent_port_when_no_fallback(self) -> None:
+        """When neither the CLI run-dir port file nor config `local_port`
+        resolve a port, the LaunchAgent's own port file must be consulted --
+        this is the branch `if port is None:` (app/cli.py) guards, which the
+        other LaunchAgent test above cannot exercise once a fallback port is
+        already available.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:0",
+                    local_port=None,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            agent_pid_dir = Path(tmp) / "launchd"
+            agent_pid_dir.mkdir(parents=True, exist_ok=True)
+            (agent_pid_dir / LOCAL_PORT_FILE_NAME).write_text(
+                "9123\n", encoding="utf-8"
+            )
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch("app.cli.sys") as fake_sys,
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=agent_pid_dir,
+                ),
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
+            ):
+                fake_sys.platform = "darwin"
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            bootout.assert_called_once()
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.args[0], agent_pid_dir)
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 9123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Stopped the local Bunnify LaunchAgent", joined)
+
+    def test_setup_switch_to_remote_reports_stop_failure(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            run_dir,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            managed = run_dir(environ=environ)
+            managed.mkdir(parents=True, exist_ok=True)
+            (managed / LOCAL_PORT_FILE_NAME).write_text("8123\n", encoding="utf-8")
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=RuntimeError("stuck process"),
+                ),
+                patch("app.server_agent.is_agent_installed", return_value=False),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            # The remote switch still completes even though the stale local
+            # server could not be stopped; the operator is warned instead,
+            # with a command that actually works (`bunnify stop` itself
+            # refuses once config.toml records remote mode).
+            self.assertEqual(result, "https://bunnify.example")
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Could not stop the previous local Bunnify server", joined)
+            self.assertIn("stuck process", joined)
+            self.assertIn(f"--stop --pid-dir {managed}", joined)
+
+    def test_setup_switch_to_remote_reports_launchagent_stop_failure(self) -> None:
+        """The stop-failure warning must reference the LaunchAgent's own
+        pid_dir (where its pid/port files actually live), not the CLI run
+        dir, or the printed recovery command would find nothing to stop.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            save_preferences,
+        )
+
+        remote = _healthy_status()
+        responses = iter(["n", "remote", "https://bunnify.example"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            agent_pid_dir = Path(tmp) / "launchd"
+            agent_pid_dir.mkdir(parents=True, exist_ok=True)
+            (agent_pid_dir / LOCAL_PORT_FILE_NAME).write_text(
+                "8123\n", encoding="utf-8"
+            )
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=remote),
+                patch(
+                    "app.cli.offer_remote_build_mismatch",
+                    return_value=True,
+                ),
+                patch(
+                    "app.cli.stop_local_server",
+                    side_effect=RuntimeError("stuck process"),
+                ),
+                patch("app.cli.sys") as fake_sys,
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=agent_pid_dir,
+                ),
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
+            ):
+                fake_sys.platform = "darwin"
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://bunnify.example")
+            bootout.assert_called_once()
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Could not stop the previous local Bunnify server", joined)
+            self.assertIn("stuck process", joined)
+            self.assertIn(f"--stop --pid-dir {agent_pid_dir}", joined)
+
+    def test_setup_switch_to_unreachable_remote_still_stops_local_server(
+        self,
+    ) -> None:
+        """Confirming an unverified remote URL still tears down the old local
+        server: the config is saved regardless of reachability, so leaving
+        the previous local process running would still violate the "exactly
+        one mode active" guarantee from #417.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            run_dir,
+            save_preferences,
+        )
+
+        responses = iter(["n", "remote", "https://broken.example", "y"])
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            managed = run_dir(environ=environ)
+            managed.mkdir(parents=True, exist_ok=True)
+            (managed / LOCAL_PORT_FILE_NAME).write_text("8123\n", encoding="utf-8")
+            with (
+                patch("app.cli.check_health", return_value=False),
+                patch("app.cli.stop_local_server") as stop_server,
+                patch("app.server_agent.is_agent_installed", return_value=False),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://broken.example")
+            stop_server.assert_called_once()
+            self.assertEqual(stop_server.call_args.kwargs.get("port"), 8123)
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            joined = "\n".join(messages)
+            self.assertIn("Stopped the previous local Bunnify server", joined)
+
+    def test_setup_remote_to_remote_reconfigure_does_not_stop_local_server(
+        self,
+    ) -> None:
+        """Reconfiguring remote -> remote must not touch any local server:
+        the switch-cleanup guard is `existing.mode == "local"` only, and no
+        other existing test exercises this false branch with a populated
+        managed-port file, so a regression that drops or inverts the guard
+        would otherwise pass the rest of the suite while `bunnify setup`
+        started killing servers on ordinary remote reconfiguration.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            run_dir,
+            save_preferences,
+        )
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        responses = iter(["n", "", "https://new.example/"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://old.example",
+                    local_port=None,
+                ),
+                env_path=path,
+                environ=environ,
+            )
+            # A leftover port file would make the switch-cleanup helper stop
+            # something if its guard were ever dropped or inverted.
+            managed = run_dir(environ=environ)
+            managed.mkdir(parents=True, exist_ok=True)
+            (managed / LOCAL_PORT_FILE_NAME).write_text("8123\n", encoding="utf-8")
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+                patch("app.cli.stop_local_server") as stop_server,
+                # Defensive isolation: if the `existing.mode == "local"`
+                # guard this test targets were ever dropped or inverted, the
+                # helper would fall through to the *real* is_agent_installed
+                # / bootout_loaded_agent on a macOS dev machine or runner
+                # rather than a mock, which is exactly the isolation #417
+                # requires the test harness to never risk.
+                patch(
+                    "app.server_agent.is_agent_installed", return_value=False
+                ) as is_agent_installed,
+                patch("app.server_agent.bootout_loaded_agent") as bootout,
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertEqual(result, "https://new.example")
+            stop_server.assert_not_called()
+            is_agent_installed.assert_not_called()
+            bootout.assert_not_called()
+            preferences = load_preferences(environ={}, env_path=path)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+            self.assertEqual(preferences.base_url, "https://new.example")
+
     def test_setup_local_persists_only_after_health(self) -> None:
         import tempfile
         from pathlib import Path

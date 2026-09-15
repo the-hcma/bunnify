@@ -512,6 +512,13 @@ def run_setup(
             ):
                 raise ClientError("Setup aborted; settings were not changed")
         save_preferences(preferences, env_path=path, environ=environ)
+        if existing is not None and existing.mode == "local":
+            _stop_local_server_on_switch_to_remote(
+                environ=environ,
+                fallback_port=existing.local_port,
+                print_fn=log,
+                theme=colors,
+            )
         if reachable:
             log(colors.ok(f"✓ Configured remote Bunnify server at {base_url}"))
         else:
@@ -1192,6 +1199,70 @@ def _managed_local_port(pid_dir: Path) -> int | None:
     if not 1 <= port <= 65535:
         return None
     return port
+
+
+def _stop_local_server_on_switch_to_remote(
+    *,
+    environ: dict[str, str] | None,
+    fallback_port: int | None,
+    print_fn: Callable[[str], None],
+    theme: Theme,
+) -> None:
+    """Stop a still-running local server left behind by switching to remote.
+
+    Without this, a previously configured local server (plain managed
+    process or, on macOS, an installed LaunchAgent) keeps running and
+    listening on its port after `config.toml` is repointed at a remote URL,
+    leaving two servers active and only one of them reachable at the
+    configured `base_url`. Never raises: the remote configuration has
+    already been verified and must still be saved even if the old local
+    server cannot be stopped; failures are reported with the exact
+    `--pid-dir` command that can stop it, since `bunnify stop` itself
+    refuses once `config.toml` records remote mode (which it already does by
+    the time this runs).
+
+    `fallback_port` (the port recorded in `config.toml` for the local server
+    being switched away from) is used when the CLI run directory's port file
+    is missing or stale, mirroring the fallback `run_stop` applies.
+    """
+    pid_dir = run_dir(environ=environ)
+    port = _managed_local_port(pid_dir) or fallback_port
+    agent_pid_dir: Path | None = None
+    agent_installed = False
+    if sys.platform == "darwin":
+        from app.server_agent import is_agent_installed, launchd_pid_dir
+
+        agent_installed = is_agent_installed()
+        if agent_installed:
+            agent_pid_dir = launchd_pid_dir(environ=environ)
+            if port is None:
+                port = _managed_local_port(agent_pid_dir) or fallback_port
+    if port is None and not agent_installed:
+        return
+    stale_pid_dir = agent_pid_dir if agent_installed else pid_dir
+    try:
+        if agent_installed:
+            from app.server_agent import bootout_loaded_agent
+
+            bootout_loaded_agent()
+            stop_local_server(agent_pid_dir, port=port)
+            print_fn(theme.ok("✓ Stopped the local Bunnify LaunchAgent"))
+        else:
+            stop_local_server(pid_dir, port=port)
+            print_fn(
+                theme.ok(f"✓ Stopped the previous local Bunnify server (port {port})")
+            )
+    except (OSError, RuntimeError, ValueError) as exc:
+        manual_command = (
+            f"{sys.executable} -m app.server_cli --stop --pid-dir {stale_pid_dir}"
+        )
+        print_fn(
+            theme.warn(
+                f"⚠ Could not stop the previous local Bunnify server: {exc}. "
+                f"`bunnify stop` will refuse now that mode is remote; stop it "
+                f"manually with `{manual_command}`."
+            )
+        )
 
 
 def _offer_restart_mismatched_server(
