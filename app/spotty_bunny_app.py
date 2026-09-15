@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from functools import partial
 
 import objc
@@ -114,7 +115,7 @@ from Quartz import (
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
 from app.coherence import spotty_self_stale
-from app.config import resolve_base_url
+from app.config import load_spotty_bunny_hotkey, resolve_base_url
 from app.github_complete import (
     bootstrap_github_completion_cache,
     can_offer_gh_install,
@@ -172,21 +173,21 @@ from app.spotty_bunny_history import (
     load_history_lines,
 )
 from app.spotty_bunny_hotkey import (
-    CONTROL_LEFT_KEYCODE,
-    CONTROL_RIGHT_KEYCODE,
-    DEVICE_LEFT_CONTROL_MASK,
-    DEVICE_RIGHT_CONTROL_MASK,
+    CONTROL_CHORD_KEYS,
     ESCAPE_KEYCODE,
     PAGE_DOWN_KEYCODE,
     PAGE_UP_KEYCODE,
     TAB_KEYCODE,
+    ChordKeys,
     ChordTracker,
     apply_control_event,
     describe_key,
     page_selector_for_keycode,
+    resolve_chord_keys,
 )
 from app.spotty_bunny_icon import make_spotty_bunny_icon
 from app.spotty_bunny_io import ThreadIo
+from app.spotty_bunny_keyboard import has_external_keyboard
 from app.spotty_bunny_menu import (
     CHECK_FOR_UPDATES_STATUS,
     INSTALL_STATUS,
@@ -397,6 +398,8 @@ class SpottyBunnyController(NSObject):
         self._update_status = read_cached_update_status()
         self.callback = None
         self.chord = ChordTracker()
+        self.chord_keys = CONTROL_CHORD_KEYS
+        self.hotkey_choice = "auto"
         self.field = None
         self.logo = None
         self.panel = None
@@ -1365,6 +1368,14 @@ def _primary_screen():
     return screens[0] if screens else None
 
 
+def _print_hotkey_banner(controller: SpottyBunnyController) -> None:
+    print(
+        f"spotty-bunny: hold one {controller.chord_keys.name.capitalize()}, "
+        "press the other for the search box (Ctrl-C to quit)",
+        file=sys.stderr,
+    )
+
+
 def run_spotty_bunny_app() -> int:
     """Run NSApplication until SIGINT (Ctrl-C) or NSApp.stop_."""
     NSApplication.sharedApplication()
@@ -1373,14 +1384,17 @@ def run_spotty_bunny_app() -> int:
     _install_edit_menu()
     controller = SpottyBunnyController.alloc().init()
     logger.info("NSApplication ready (activationPolicy=accessory)")
+    # Pinned choices resolve synchronously, so the banner prints immediately;
+    # "auto" probes for an external keyboard off-thread (see
+    # _resolve_configured_chord), so the banner is deferred until that first
+    # resolution lands to avoid naming the wrong chord (e.g. printing
+    # "Control" when auto is about to resolve to Option on a laptop).
+    _resolve_configured_chord(
+        controller, on_resolved=partial(_print_hotkey_banner, controller)
+    )
     _install_event_tap(controller)
     _register_wake_observer(controller)
     _schedule_tap_health_checks(controller)
-    print(
-        "spotty-bunny: hold one Control, press the other for the search box "
-        "(Ctrl-C to quit)",
-        file=sys.stderr,
-    )
     logger.info("event loop starting (MachSignals SIGINT → NSApp.stop_)")
     # AppHelper.runEventLoop() skips Mach SIGINT when NSApp already exists.
     MachSignals.signal(signal.SIGINT, _quit_on_sigint)
@@ -1553,6 +1567,17 @@ def _control_key_down(keycode: int) -> bool:
     return bool(CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, keycode))
 
 
+_CHORD_MODIFIER_FLAG_MASK: dict[str, int] = {
+    "control": kCGEventFlagMaskControl,
+    "option": kCGEventFlagMaskAlternate,
+    "command": kCGEventFlagMaskCommand,
+}
+
+
+def _chord_modifier_flag_mask(chord_keys: ChordKeys) -> int:
+    return int(_CHORD_MODIFIER_FLAG_MASK.get(chord_keys.name, kCGEventFlagMaskControl))
+
+
 def _describe_event_key(keycode: int, flags: int) -> str:
     return describe_key(
         keycode,
@@ -1601,8 +1626,75 @@ def _event_type_name(event_type: int) -> str:
     return names.get(int(event_type), f"type:{event_type}")
 
 
+def _resolve_configured_chord(
+    controller: SpottyBunnyController,
+    *,
+    on_resolved: Callable[[], None] | None = None,
+) -> None:
+    """Refresh ``controller.chord_keys`` from the configured hotkey choice.
+
+    Pinned choices (``control``/``option``/``command``) resolve synchronously
+    with no subprocess call. ``auto`` probes connected keyboards
+    (``has_external_keyboard``, an ``ioreg`` subprocess) off the main thread
+    via ``controller._io``, so calling this periodically (see
+    :func:`_check_event_tap_health`) lets Spotty Bunny pick up an external
+    keyboard being plugged in or unplugged without a restart or blocking
+    chord delivery / panel UI on the AppKit main thread.
+
+    ``on_resolved``, when given, runs once ``controller.chord_keys`` reflects
+    this call's choice — immediately for pinned choices, or after the
+    ``auto`` probe's result lands on the main thread. Callers that need to
+    report the resolved chord (e.g. the startup banner) should use this
+    instead of reading ``controller.chord_keys`` right after calling, which
+    would still be the stale default while an ``auto`` probe is in flight.
+    """
+    try:
+        choice = load_spotty_bunny_hotkey()
+    except ValueError:
+        logger.exception("invalid spotty_bunny_hotkey config value; using auto")
+        choice = "auto"
+    controller.hotkey_choice = choice
+
+    if choice != "auto":
+        _apply_resolved_chord(controller, choice, has_external_keyboard=False)
+        if on_resolved is not None:
+            on_resolved()
+        return
+
+    def apply(result: object) -> None:
+        external = bool(result) if isinstance(result, bool) else False
+
+        def _apply_and_notify() -> None:
+            _apply_resolved_chord(controller, choice, has_external_keyboard=external)
+            if on_resolved is not None:
+                on_resolved()
+
+        _run_on_main(_apply_and_notify)
+
+    controller._io.submit(has_external_keyboard, apply)
+
+
+def _apply_resolved_chord(
+    controller: SpottyBunnyController, choice: str, *, has_external_keyboard: bool
+) -> None:
+    try:
+        chord_keys = resolve_chord_keys(
+            choice, has_external_keyboard=has_external_keyboard
+        )
+    except ValueError:
+        logger.exception("could not resolve hotkey choice %r; using Control", choice)
+        chord_keys = CONTROL_CHORD_KEYS
+    if chord_keys != controller.chord_keys:
+        logger.info(
+            "Spotty Bunny hotkey chord: %s (choice=%s)", chord_keys.name, choice
+        )
+        controller.chord = ChordTracker()
+    controller.chord_keys = chord_keys
+
+
 def _check_event_tap_health(controller: SpottyBunnyController) -> None:
     """Re-enable or reinstall the tap when macOS disables it silently."""
+    _resolve_configured_chord(controller)
     tap = controller.tap
     action = decide_tap_health_check(
         tap_is_none=tap is None,
@@ -1652,10 +1744,11 @@ def _create_event_tap_callback(
             return event
         keycode = int(CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode))
         flags = int(CGEventGetFlags(event))
-        hid_left = _control_key_down(CONTROL_LEFT_KEYCODE)
-        hid_right = _control_key_down(CONTROL_RIGHT_KEYCODE)
-        flag_left = bool(flags & DEVICE_LEFT_CONTROL_MASK)
-        flag_right = bool(flags & DEVICE_RIGHT_CONTROL_MASK)
+        chord_keys = controller.chord_keys
+        hid_left = _control_key_down(chord_keys.left_keycode)
+        hid_right = _control_key_down(chord_keys.right_keycode)
+        flag_left = bool(flags & chord_keys.left_device_mask)
+        flag_right = bool(flags & chord_keys.right_device_mask)
         key_name = _describe_event_key(keycode, flags)
         if keycode == ESCAPE_KEYCODE:
             if event_type == kCGEventKeyDown and controller.visible:
@@ -1681,8 +1774,10 @@ def _create_event_tap_callback(
             hid_right=hid_right,
             flag_left=flag_left,
             flag_right=flag_right,
-            control_flag=bool(flags & kCGEventFlagMaskControl),
+            control_flag=bool(flags & _chord_modifier_flag_mask(chord_keys)),
             flags_changed=True,
+            left_keycode=chord_keys.left_keycode,
+            right_keycode=chord_keys.right_keycode,
         )
         logger.debug(
             "tap %s %s keycode=%s flags=0x%x hid L=%s R=%s flag L=%s R=%s "

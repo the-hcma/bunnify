@@ -9,7 +9,7 @@ INSTALL_STATUS = "Installing LaunchAgent…"
 QUIT_MENU_TITLE = "Quit"
 UNINSTALL_INFORMATIVE = (
     "Removes the login LaunchAgent and stops Spotty Bunny. "
-    "Bookmarks and config.env are kept."
+    "Bookmarks and config.toml are kept."
 )
 UNINSTALL_MENU_TITLE = "Uninstall"
 UPGRADE_MENU_TITLE = "Upgrade"

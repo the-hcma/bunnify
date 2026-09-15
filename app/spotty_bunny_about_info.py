@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote, urlparse
 
-from app.client import fetch_health
+from app.client import DEFAULT_BASE_URL, fetch_health
 from app.coherence import builds_match, format_build_label, spotty_self_stale
 from app.config import (
     default_bookmarks_path,
@@ -25,6 +26,8 @@ ABOUT_LICENSE_URL = "https://github.com/the-hcma/bunnify/blob/main/LICENSE"
 PYPI_PROJECT_URL = "https://pypi.org/project/bunnify"
 SPOTTY_BUNNY_REPO_DISPLAY = "github.com/the-hcma/bunnify"
 SPOTTY_BUNNY_REPO_URL = "https://github.com/the-hcma/bunnify"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -188,18 +191,35 @@ def load_about_runtime_info(
     github_display = None
     if github_url is not None:
         github_display = github_url.removeprefix("https://")
-    prefs = load_preferences(environ=environ)
+    prefs = None
+    try:
+        prefs = load_preferences(environ=environ)
+    except ValueError as exc:
+        # A corrupt/unreadable config.toml now raises loudly from
+        # load_preferences (ConfigParseError, a ValueError subclass) instead
+        # of the legacy config.env reader's silent "treat as absent". This
+        # is reached from the AppKit main thread on a left-click of the
+        # menu-bar bunny, so report it as a degraded "remote, unknown URL"
+        # row rather than letting the exception kill the About panel open.
+        logger.warning("could not load server preferences for About panel: %s", exc)
     mode: Literal["local", "remote"] | None = None
     base_url = ""
     if prefs is not None:
         mode = prefs.mode
         base_url = prefs.base_url
     if not base_url:
-        base_url = resolve_base_url(
-            environ=environ,
-            persist=False,
-            allow_prompt=False,
-        )
+        try:
+            base_url = resolve_base_url(
+                environ=environ,
+                persist=False,
+                allow_prompt=False,
+            )
+        except ValueError as exc:
+            # Same corrupt/unreadable config.toml can also surface here
+            # (get_config_value -> read_toml_document), so guard this
+            # fallback too instead of only the load_preferences call above.
+            logger.warning("could not resolve server base_url for About panel: %s", exc)
+            base_url = DEFAULT_BASE_URL
     if mode is None:
         mode = "local" if _is_loopback_url(base_url) else "remote"
     label = "Local server" if mode == "local" else "Remote server"

@@ -20,7 +20,7 @@ from app.version import build_version
 COMMAND_NAME = "spotty-bunny"
 
 EVENT_TAP_FAILED_MESSAGE = f"""\
-{COMMAND_NAME}: could not listen for the Control chord.
+{COMMAND_NAME}: could not listen for the hotkey chord.
 
 Grant Accessibility and Input Monitoring to this Python interpreter
 (or Terminal) in System Settings → Privacy & Security, then re-run.
@@ -56,9 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=COMMAND_NAME,
         description=(
-            "Spotty Bunny: macOS Spotlight-style search box. Hold one Control, "
-            "press the other to show it. Subcommands: install, uninstall, "
-            "status, upgrade (login LaunchAgent). Bare invocation is foreground."
+            "Spotty Bunny: macOS Spotlight-style search box. Hold one modifier "
+            "key, press the other on the same side to show it (auto by "
+            "default: Control with an external keyboard attached, Option on "
+            "laptops with no second Control key; run `spotty-bunny hotkey` "
+            "to view/change). Subcommands: hotkey, install, uninstall, "
+            "status, upgrade (login LaunchAgent). Bare invocation is "
+            "foreground."
         ),
     )
     # Stamped by the launcher so `ps` identifies this process and its build.

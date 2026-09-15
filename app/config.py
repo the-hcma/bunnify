@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import click
+import tomlkit
 
 from app.client import DEFAULT_BASE_URL
 
@@ -19,14 +20,28 @@ BOOKMARKS_ENV_VAR = "BUNNIFY_BOOKMARKS"
 BOOKMARKS_FILE_NAME = "bookmarks.json"
 COMPLETION_SCRIPT_NAME = "bunnify-completion"
 DATA_DIR_ENV_VAR = "BUNNIFY_DATA_DIR"
-ENV_FILE_NAME = "config.env"
-ENV_VAR = "BUNNIFY_BASE_URL"
+CONFIG_FILE_NAME = "config.toml"
 EXAMPLE_BOOKMARKS_NAME = "bunnify.json.example"
 PACKAGED_EXAMPLE_BOOKMARKS_NAME = "bookmarks.example.json"
+EXAMPLE_CONFIG_NAME = "config.example.toml"
+PACKAGED_EXAMPLE_CONFIG_NAME = "config.example.toml"
 LEGACY_ENV_FILE_NAME = "bunnify.env"
 LEGACY_BOOKMARKS_PATH = Path.home() / "work" / "bunnify" / "bunnify.json"
-LOCAL_PORT_ENV_VAR = "BUNNIFY_LOCAL_PORT"
-MODE_ENV_VAR = "BUNNIFY_MODE"
+
+# Pre-TOML per-user config file. Read once (never written) to migrate
+# existing installs onto ``config.toml``; superseded entirely once migrated.
+LEGACY_CONFIG_ENV_FILE_NAME = "config.env"
+_LEGACY_MODE_ENV_KEY = "BUNNIFY_MODE"
+_LEGACY_BASE_URL_ENV_KEY = "BUNNIFY_BASE_URL"
+_LEGACY_LOCAL_PORT_ENV_KEY = "BUNNIFY_LOCAL_PORT"
+
+# ``config.toml`` keys.
+MODE_KEY = "mode"
+BASE_URL_KEY = "base_url"
+LOCAL_PORT_KEY = "local_port"
+SPOTTY_BUNNY_HOTKEY_KEY = "spotty_bunny_hotkey"
+DEFAULT_SPOTTY_BUNNY_HOTKEY = "auto"
+SPOTTY_BUNNY_HOTKEY_CHOICES = ("auto", "control", "option", "command")
 
 
 @dataclass(frozen=True)
@@ -89,8 +104,13 @@ def data_dir(*, environ: dict[str, str] | None = None) -> Path:
 
 
 def env_file_path(*, environ: dict[str, str] | None = None) -> Path:
-    """User config env file under the XDG bunnify directory."""
-    return config_dir(environ=environ) / ENV_FILE_NAME
+    """User config file (``config.toml``) under the XDG bunnify directory."""
+    return config_dir(environ=environ) / CONFIG_FILE_NAME
+
+
+def legacy_config_env_file_path(*, environ: dict[str, str] | None = None) -> Path:
+    """Pre-TOML per-user ``config.env`` (dotenv), migrated once then ignored."""
+    return config_dir(environ=environ) / LEGACY_CONFIG_ENV_FILE_NAME
 
 
 def legacy_env_file_path(*, root: Path | None = None) -> Path:
@@ -116,24 +136,28 @@ def load_preferences(
     environ: dict[str, str] | None = None,
     env_path: Path | None = None,
 ) -> ServerPreferences | None:
-    """Load server preferences from the process environment and XDG config."""
+    """Load server preferences from ``config.toml`` (no environment overrides).
+
+    On first read, if ``config.toml`` is absent, a legacy ``config.env`` (or
+    process environment, for very old installs) is migrated into it once.
+    """
     env = environ if environ is not None else os.environ
     path = env_path if env_path is not None else env_file_path(environ=env)
+    if path == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(path, environ=env)
+    document = read_toml_document(path)
 
-    def value(key: str) -> str | None:
-        from_environment = (env.get(key) or "").strip()
-        return from_environment or read_env_value(path, key)
-
-    mode_raw = value(MODE_ENV_VAR)
-    base_url_raw = value(ENV_VAR)
-    local_port_raw = value(LOCAL_PORT_ENV_VAR)
+    mode_raw = str(document.get(MODE_KEY, "") or "").strip()
+    base_url_raw = str(document.get(BASE_URL_KEY, "") or "").strip()
+    local_port_value = document.get(LOCAL_PORT_KEY)
+    local_port_raw = "" if local_port_value is None else str(local_port_value).strip()
     if not any((mode_raw, base_url_raw, local_port_raw)):
         return None
 
     if mode_raw:
         mode = mode_raw.lower()
         if mode not in {"local", "remote"}:
-            raise ValueError(f"{MODE_ENV_VAR} must be 'local' or 'remote'")
+            raise ValueError(f"{MODE_KEY} must be 'local' or 'remote'")
     else:
         mode = "local" if local_port_raw else "remote"
 
@@ -142,9 +166,9 @@ def load_preferences(
         try:
             local_port = int(local_port_raw)
         except ValueError as exc:
-            raise ValueError(f"{LOCAL_PORT_ENV_VAR} must be an integer") from exc
+            raise ValueError(f"{LOCAL_PORT_KEY} must be an integer") from exc
         if not 1 <= local_port <= 65535:
-            raise ValueError(f"{LOCAL_PORT_ENV_VAR} must be between 1 and 65535")
+            raise ValueError(f"{LOCAL_PORT_KEY} must be between 1 and 65535")
 
     base_url = normalize_base_url(base_url_raw or "")
     if base_url:
@@ -161,6 +185,191 @@ def load_preferences(
 
 def normalize_base_url(value: str) -> str:
     return value.strip().rstrip("/")
+
+
+class ConfigParseError(ValueError, RuntimeError):
+    """``config.toml`` exists but could not be parsed as TOML.
+
+    Raised instead of silently treating a corrupt/truncated file as "no
+    config" — that would make the next write clobber every other saved key
+    (mode, base_url, local_port, spotty_bunny_hotkey) with an empty document.
+
+    Subclasses both ``ValueError`` and ``RuntimeError`` so callers that only
+    guard one or the other (``_resolve_configured_chord``/``hotkey_command``
+    catch ``ValueError``; ``app/cli.py`` catches ``RuntimeError``) all treat a
+    corrupt file the same way instead of letting it propagate uncaught.
+    """
+
+
+def read_toml_document(path: Path) -> tomlkit.TOMLDocument:
+    """Return a parsed TOML document from ``path`` (empty when missing).
+
+    Raises :class:`ConfigParseError` when *path* exists but is not valid TOML
+    or cannot be read (e.g. a permissions problem left by a stray ``sudo``
+    invocation), so callers never mistake a corrupt/unreadable file for an
+    absent one — and so writers never read it as empty and clobber every
+    other saved key.
+    """
+    if not path.is_file():
+        return tomlkit.document()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigParseError(
+            f"{path} could not be read ({exc}). Fix its permissions or "
+            "remove it, then retry."
+        ) from exc
+    try:
+        return tomlkit.parse(text)
+    except tomlkit.exceptions.ParseError as exc:
+        raise ConfigParseError(
+            f"{path} is not valid TOML ({exc}). Fix or remove it, then retry."
+        ) from exc
+
+
+def write_toml_document(path: Path, document: tomlkit.TOMLDocument) -> None:
+    """Persist ``document`` to ``path`` (parent directories created)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tomlkit.dumps(document), encoding="utf-8")
+
+
+def set_config_value(
+    key: str,
+    value: str | int,
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> None:
+    """Create or update one ``config.toml`` value, preserving other keys."""
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    if path == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(path, environ=env)
+    document = read_toml_document(path)
+    document[key] = value
+    write_toml_document(path, document)
+
+
+def get_config_value(
+    key: str,
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> str | None:
+    """Return one ``config.toml`` value, or ``None`` when missing/empty."""
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    value = read_toml_document(path).get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def load_spotty_bunny_hotkey(
+    *,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+) -> str:
+    """Return the configured Spotty Bunny hotkey choice, defaulting to ``auto``."""
+    value = get_config_value(
+        SPOTTY_BUNNY_HOTKEY_KEY, env_path=env_path, environ=environ
+    )
+    if value is None:
+        return DEFAULT_SPOTTY_BUNNY_HOTKEY
+    normalized = value.strip().lower()
+    if normalized not in SPOTTY_BUNNY_HOTKEY_CHOICES:
+        raise ValueError(
+            f"{SPOTTY_BUNNY_HOTKEY_KEY} must be one of "
+            f"{', '.join(SPOTTY_BUNNY_HOTKEY_CHOICES)} (got {value!r})"
+        )
+    return normalized
+
+
+def save_spotty_bunny_hotkey(
+    choice: str,
+    *,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+) -> None:
+    """Persist the Spotty Bunny hotkey choice to ``config.toml``."""
+    normalized = choice.strip().lower()
+    if normalized not in SPOTTY_BUNNY_HOTKEY_CHOICES:
+        raise ValueError(
+            f"hotkey choice must be one of {', '.join(SPOTTY_BUNNY_HOTKEY_CHOICES)} "
+            f"(got {choice!r})"
+        )
+    set_config_value(
+        SPOTTY_BUNNY_HOTKEY_KEY, normalized, env_path=env_path, environ=environ
+    )
+
+
+def _migrate_legacy_config_if_needed(
+    path: Path, *, environ: dict[str, str] | None = None
+) -> None:
+    """One-time migration of legacy ``config.env`` (or old process env vars) into
+    ``config.toml`` at *path*, when *path* does not exist yet.
+    """
+    if path.is_file():
+        return
+    env = environ if environ is not None else os.environ
+    legacy_path = legacy_config_env_file_path(environ=env)
+
+    def legacy_value(key: str) -> str | None:
+        # Prefer the persisted config.env over a same-named process env var:
+        # config.env is what `bunnify setup` actually saved, while the env
+        # var may just be a transient per-invocation override (e.g. from an
+        # old shell profile) that would otherwise get silently frozen into
+        # config.toml ahead of the user's real saved settings.
+        from_file = read_env_value(legacy_path, key)
+        if from_file:
+            return from_file
+        return (env.get(key) or "").strip() or None
+
+    mode = legacy_value(_LEGACY_MODE_ENV_KEY)
+    base_url = legacy_value(_LEGACY_BASE_URL_ENV_KEY)
+    local_port = legacy_value(_LEGACY_LOCAL_PORT_ENV_KEY)
+    if not any((mode, base_url, local_port)):
+        return
+
+    document = tomlkit.document()
+    if mode:
+        normalized_mode = mode.strip().lower()
+        if normalized_mode not in {"local", "remote"}:
+            raise ConfigParseError(
+                f"{legacy_path} has {_LEGACY_MODE_ENV_KEY}={mode!r}, which "
+                "must be 'local' or 'remote'. Fix or remove it, then retry."
+            )
+        document[MODE_KEY] = normalized_mode
+    if base_url:
+        document[BASE_URL_KEY] = normalize_base_url(base_url)
+    if local_port:
+        try:
+            local_port_int = int(local_port)
+        except ValueError as exc:
+            # Report the broken legacy value instead of silently dropping it:
+            # config.env is never read again once config.toml exists, so a
+            # silent skip here would permanently lose the user's saved port
+            # with no diagnostic (base_url would still name the old port).
+            raise ConfigParseError(
+                f"{legacy_path} has a non-integer "
+                f"{_LEGACY_LOCAL_PORT_ENV_KEY}={local_port!r}. Fix or remove "
+                "it, then retry."
+            ) from exc
+        if not 1 <= local_port_int <= 65535:
+            # Same reasoning: without this, a migrated out-of-range port
+            # gets written to config.toml, load_preferences immediately
+            # rejects it, and the legacy config.env -- which the error
+            # message would otherwise still point at -- is never consulted
+            # again to fix it (migration only runs while config.toml is
+            # absent).
+            raise ConfigParseError(
+                f"{legacy_path} has "
+                f"{_LEGACY_LOCAL_PORT_ENV_KEY}={local_port!r}, which must be "
+                "between 1 and 65535. Fix or remove it, then retry."
+            )
+        document[LOCAL_PORT_KEY] = local_port_int
+    write_toml_document(path, document)
 
 
 def read_env_value(path: Path, key: str) -> str | None:
@@ -189,7 +398,7 @@ MIN_LOCAL_PORT = 1024
 
 
 def read_persisted_local_port(*, environ: dict[str, str] | None = None) -> int | None:
-    """Return a saved local port from config.env or the run-directory port file."""
+    """Return a saved local port from config.toml or the run-directory port file."""
     preferences = load_preferences(environ=environ)
     if preferences is not None and preferences.local_port is not None:
         return preferences.local_port
@@ -218,21 +427,44 @@ def save_preferences(
     env_path: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> None:
-    """Persist a complete, verified server preference set."""
-    path = env_path if env_path is not None else env_file_path()
-    write_env_value(path, ENV_VAR, normalize_base_url(preferences.base_url))
-    write_env_value(
-        path,
-        LOCAL_PORT_ENV_VAR,
-        str(preferences.local_port) if preferences.local_port is not None else "",
-    )
-    write_env_value(path, MODE_ENV_VAR, preferences.mode)
+    """Persist a complete, verified server preference set to ``config.toml``."""
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    if path == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(path, environ=env)
+    document = read_toml_document(path)
+    document[BASE_URL_KEY] = normalize_base_url(preferences.base_url)
+    if preferences.local_port is not None:
+        document[LOCAL_PORT_KEY] = preferences.local_port
+    elif LOCAL_PORT_KEY in document:
+        del document[LOCAL_PORT_KEY]
+    document[MODE_KEY] = preferences.mode
+    write_toml_document(path, document)
     if preferences.mode == "local" and preferences.local_port is not None:
         persist_local_port(preferences.local_port, environ=environ)
 
 
+def read_base_url_from_env_file(path: Path) -> str | None:
+    """Return the base URL from a legacy dotenv file (e.g. ``bunnify.env``)."""
+    value = read_env_value(path, _LEGACY_BASE_URL_ENV_KEY)
+    return normalize_base_url(value) if value else None
+
+
+def write_base_url_to_env_file(path: Path, base_url: str) -> None:
+    """Create or update ``BUNNIFY_BASE_URL`` in a legacy dotenv file *path*."""
+    normalized = normalize_base_url(base_url)
+    if not normalized:
+        raise ValueError(f"{_LEGACY_BASE_URL_ENV_KEY} cannot be empty")
+    write_env_value(path, _LEGACY_BASE_URL_ENV_KEY, normalized)
+
+
 def write_env_value(path: Path, key: str, value: str) -> None:
-    """Create or update one env value while preserving all other lines."""
+    """Create or update one dotenv value while preserving all other lines.
+
+    Used only for the legacy ``bunnify.env`` / ``config.env`` dotenv files
+    (read fallback and tests); current settings are persisted to
+    ``config.toml`` via :func:`set_config_value`.
+    """
     if "\n" in key or "=" in key or not key.strip():
         raise ValueError("Environment key must be a non-empty single name")
     if "\n" in value:
@@ -253,27 +485,9 @@ def write_env_value(path: Path, key: str, value: str) -> None:
                 text += "\n"
             text += line
     else:
-        text = (
-            "# Bunnify user settings (not committed).\n"
-            f"# Default location: ~/.config/bunnify/{ENV_FILE_NAME}\n"
-            f"{line}"
-        )
+        text = f"# Bunnify legacy dotenv settings.\n{line}"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-
-
-def read_base_url_from_env_file(path: Path) -> str | None:
-    """Return ``BUNNIFY_BASE_URL`` from ``path``, or ``None`` if unset/missing."""
-    value = read_env_value(path, ENV_VAR)
-    return normalize_base_url(value) if value else None
-
-
-def write_base_url_to_env_file(path: Path, base_url: str) -> None:
-    """Create or update ``BUNNIFY_BASE_URL`` in ``path`` (preserves other lines)."""
-    normalized = normalize_base_url(base_url)
-    if not normalized:
-        raise ValueError(f"{ENV_VAR} cannot be empty")
-    write_env_value(path, ENV_VAR, normalized)
 
 
 def example_bookmarks_bytes() -> bytes | None:
@@ -302,6 +516,34 @@ def example_bookmarks_bytes() -> bytes | None:
 def example_bookmarks_path(*, root: Path | None = None) -> Path:
     """Return the canonical example bookmarks file in a repository checkout."""
     return (root if root is not None else repo_root()) / EXAMPLE_BOOKMARKS_NAME
+
+
+def example_config_bytes() -> bytes | None:
+    """Load the annotated example config.toml from the packaged resource or repo."""
+    try:
+        packaged = resources.files("app").joinpath(
+            "data",
+            PACKAGED_EXAMPLE_CONFIG_NAME,
+        )
+        return packaged.read_bytes()
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        AttributeError,
+    ):
+        pass
+
+    repo_example = example_config_path()
+    if repo_example.is_file():
+        return repo_example.read_bytes()
+    return None
+
+
+def example_config_path(*, root: Path | None = None) -> Path:
+    """Return the canonical example config.toml file in a repository checkout."""
+    return (root if root is not None else repo_root()) / EXAMPLE_CONFIG_NAME
 
 
 def completion_script_bytes() -> bytes | None:
@@ -342,6 +584,33 @@ def seed_bookmarks_from_example(dest: Path) -> Path:
         raise FileNotFoundError(
             f"No bookmarks example found (expected packaged "
             f"{EXAMPLE_BOOKMARKS_NAME} or {example_bookmarks_path()})"
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(payload)
+    return dest
+
+
+def seed_config_from_example(dest: Path) -> Path:
+    """Copy the annotated example config.toml to ``dest`` (parent dirs created).
+
+    Unlike bookmarks, the copied file is not meant to be used verbatim --
+    callers (``bunnify setup``) still overwrite ``mode``/``base_url``/
+    ``local_port`` with real, verified values afterward. Because those
+    writes go through ``read_toml_document``/``write_toml_document``
+    (tomlkit), which preserve comments and formatting on mutation, seeding
+    this file first means the operator keeps the annotated example as their
+    real config.toml, updated in place rather than replaced.
+
+    Raises ``FileExistsError`` if ``dest`` already exists, and
+    ``FileNotFoundError`` if no example template can be found.
+    """
+    if dest.exists():
+        raise FileExistsError(str(dest))
+    payload = example_config_bytes()
+    if payload is None:
+        raise FileNotFoundError(
+            f"No config example found (expected packaged "
+            f"{EXAMPLE_CONFIG_NAME} or {example_config_path()})"
         )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(payload)
@@ -421,27 +690,26 @@ def resolve_base_url(
     """
     Resolve the Bunnify server base URL.
 
-    Precedence: explicit CLI value → process env → user XDG ``config.env`` →
-    legacy repo ``bunnify.env`` → interactive prompt (persisted to the XDG
-    config file when ``persist`` is true). When prompting is not allowed
-    (non-TTY / ``allow_prompt=False``) or the prompt is cancelled via EOF,
-    fall back to ``default_suggestion`` without writing the config file.
+    Precedence: explicit CLI value → user XDG ``config.toml`` → legacy repo
+    ``bunnify.env`` → interactive prompt (persisted to ``config.toml`` when
+    ``persist`` is true). No process environment variables are consulted.
+    When prompting is not allowed (non-TTY / ``allow_prompt=False``) or the
+    prompt is cancelled via EOF, fall back to ``default_suggestion`` without
+    writing the config file.
     """
     if cli_value is not None and cli_value.strip():
         return _ensure_http_scheme(normalize_base_url(cli_value))
 
     env = environ if environ is not None else os.environ
-    from_env = (env.get(ENV_VAR) or "").strip()
-    if from_env:
-        return _ensure_http_scheme(normalize_base_url(from_env))
-
     primary = env_path if env_path is not None else env_file_path(environ=env)
-    from_file = read_base_url_from_env_file(primary)
+    if primary == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(primary, environ=env)
+    from_file = get_config_value(BASE_URL_KEY, env_path=primary, environ=env)
     if from_file:
-        return _ensure_http_scheme(from_file)
+        return _ensure_http_scheme(normalize_base_url(from_file))
 
     # Fall back to legacy checkout env file (read-only unless user re-prompts).
-    if env_path is None:
+    if primary == env_file_path(environ=env):
         legacy = read_base_url_from_env_file(legacy_env_file_path())
         if legacy:
             return _ensure_http_scheme(legacy)
@@ -464,9 +732,9 @@ def resolve_base_url(
         else suggestion
     )
     if not chosen:
-        raise ValueError(f"{ENV_VAR} cannot be empty")
+        raise ValueError(f"{BASE_URL_KEY} cannot be empty")
     if persist:
-        write_base_url_to_env_file(primary, chosen)
+        set_config_value(BASE_URL_KEY, chosen, env_path=primary, environ=env)
     return chosen
 
 

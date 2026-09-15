@@ -1,0 +1,48 @@
+# Example ~/.config/bunnify/config.toml (or $XDG_CONFIG_HOME/bunnify/config.toml).
+#
+# This file documents every key Bunnify persists here. It is not installed or
+# read automatically -- `bunnify setup` and `bunnify spotty-bunny hotkey`
+# write your real config.toml for you; edit that file directly (or copy this
+# one) if you prefer. All values below are optional; omit keys you don't
+# need. See docs/CONFIG.md for full details.
+
+# "local" or "remote". Selects which server bunnify/spotty-bunny talk to.
+# Usually set for you by `bunnify setup`.
+mode = "local"
+
+# Bunnify server base URL. For local mode this is the managed server's
+# 127.0.0.1 URL and port; for remote mode, the URL of a centralized/home
+# server install.
+base_url = "http://127.0.0.1:8000"
+
+# TCP port for the local managed server. Only meaningful when mode = "local".
+# Keep this in sync with the port in base_url above -- TOML has no string
+# interpolation, so these two 8000s are the same port written twice, not
+# derived from one another. `bunnify setup` keeps them consistent for you;
+# if you hand-edit one, update the other to match.
+local_port = 8000
+
+# Spotty Bunny's overlay modifier chord: "auto" (default), "control",
+# "option", or "command". There is no separate keycode/combo syntax here --
+# this value only *selects a modifier key*; the gesture is always the same
+# "hold one side, tap the other side of that modifier" chord (no function
+# keys or multi-modifier combinations are supported). Exact keys pressed:
+#   - "control": hold left Control, tap right Control (or the reverse)
+#   - "option":  hold left Option,  tap right Option  (or the reverse)
+#   - "command": hold left Command, tap right Command (or the reverse)
+# "auto" picks between Option and Control for you, re-checked on every
+# periodic tap health check (so plugging in/out an external keyboard
+# switches the chord live, without a restart):
+#   - Option, on a built-in-only keyboard (no external keyboard attached)
+#   - Control, when an external (USB/Bluetooth) keyboard is present
+#
+# Uncomment one of these to pin a specific chord instead of auto-detecting
+# (useful on an external keyboard missing a second Option/Command key, or
+# if you just prefer one chord everywhere):
+#   spotty_bunny_hotkey = "control"
+#   spotty_bunny_hotkey = "option"
+#   spotty_bunny_hotkey = "command"
+#
+# Change it live with:
+#   bunnify spotty-bunny hotkey <auto|control|option|command>
+spotty_bunny_hotkey = "auto"

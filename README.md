@@ -53,7 +53,7 @@ Summary of what it covers:
    [bunnify.json.example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
 2. **`bunnify setup`** — local on a laptop; remote for a home/always-on host  
    [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md)
-3. **Chrome / Edge** — match `BUNNIFY_BASE_URL` from `config.env`  
+3. **Chrome / Edge** — match `base_url` from `config.toml`  
    [CHROME_SETUP.md](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
 4. **Try it:** `bunnify gh` or address-bar keyword (e.g. `b gh`)
 5. **macOS Spotty Bunny** (optional) — `pipx install 'bunnify[macos]'` then
@@ -80,7 +80,7 @@ LaunchAgents when their plists are present (or run `bunnify-server upgrade` /
 shows a checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv`.
 After `pipx ensurepath`, `command -v bunnify` should be `~/.local/bin/bunnify`.
 
-Bookmarks and `~/.config/bunnify/config.env` are user data — upgrades do not
+Bookmarks and `~/.config/bunnify/config.toml` are user data — upgrades do not
 overwrite them. After a major server change, re-run `bunnify setup` only if
 docs or release notes say so. Setup will offer to stop a different local
 Bunnify build and start this CLI's build when the port is already in use.
@@ -114,9 +114,9 @@ bunnify setup
 
 **Laptop / daily machine:** choose **local** (default). On **macOS**, setup
 installs the **server LaunchAgent** (`com.thehcma.bunnify`), verifies
-`/health`, records the port, and saves settings to `~/.config/bunnify/config.env`.
+`/health`, records the port, and saves settings to `~/.config/bunnify/config.toml`.
 Elsewhere it starts a managed background server the same way as before. Point
-Chrome or Edge at the same `BUNNIFY_BASE_URL`
+Chrome or Edge at the same `base_url`
 ([Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)).
 
 **Home server / always-on host:** choose **remote** on client devices and enter
@@ -162,7 +162,8 @@ at completion time, so Tab-completing shortcuts needs the server running.
 ## Features
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
-- **Spotty Bunny** — dual-Control search box (`spotty-bunny`; extra `macos`;
+- **Spotty Bunny** — configurable-chord search box (`spotty-bunny`; auto
+  Control/Option by default, `spotty-bunny hotkey` to change; extra `macos`;
   login LaunchAgent via `install` / `upgrade` / `uninstall`)
 - **macOS server LaunchAgent** — local setup installs `bunnify-server` under
   launchd (`bunnify-server install|status|upgrade|uninstall`)
@@ -174,8 +175,41 @@ at completion time, so Tab-completing shortcuts needs the server running.
 
 ## Spotty Bunny (macOS)
 
-Optional Spotlight-style search box. Hold one Control and tap the other to
-type a shortcut. Needs the `macos` extra (PyObjC).
+Optional Spotlight-style search box. Hold the left (or right) copy of the
+chord's modifier key, then tap the other copy of the *same* modifier — for
+example, hold left Control and tap right Control. By default (`auto`) the
+modifier is chosen automatically from which keyboard is attached — see below
+to pin it or change it. Needs the `macos` extra (PyObjC).
+
+### Hotkey chord
+
+Standard MacBook keyboards have only one physical Control key, so the
+dual-Control chord doesn't work on laptop-only setups — the default `auto`
+choice already accounts for that by using Option instead. Configure the
+chord in `~/.config/bunnify/config.toml` (`spotty_bunny_hotkey`), or via:
+
+```bash
+bunnify spotty-bunny hotkey            # show the current choice
+bunnify spotty-bunny hotkey auto       # Option on laptops with no external
+                                        # keyboard, Control when one is attached
+bunnify spotty-bunny hotkey control    # dual-Control (needs two Control keys)
+bunnify spotty-bunny hotkey option     # dual-Option
+bunnify spotty-bunny hotkey command    # dual-Command
+```
+
+**Default (`auto`) keystrokes by keyboard:**
+
+| Keyboard attached | Chord used | Keystroke |
+|---|---|---|
+| Built-in only (no external keyboard) | Option | Hold left **Option**, tap right **Option** (or the reverse) |
+| External keyboard present (USB/Bluetooth) | Control | Hold left **Control**, tap right **Control** (or the reverse) |
+
+`auto` is re-checked on every periodic tap health check, so plugging in or
+unplugging an external keyboard switches the chord without restarting Spotty
+Bunny. Pinning a choice (`control` / `option` / `command`) always uses both
+copies of that modifier, regardless of what's attached — useful on an
+external keyboard that lacks a second Option or Command key, or if you just
+prefer one chord everywhere.
 
 ### Install
 
@@ -210,7 +244,7 @@ bunnify spotty-bunny uninstall
 ```
 
 That boots the agent out, removes the plist, and stops a leftover overlay
-process. Bookmarks and `config.env` are unchanged. Right-click the bunny icon
+process. Bookmarks and `config.toml` are unchanged. Right-click the bunny icon
 for **Check for Updates** (forces an immediate PyPI check, skipping the daily
 cache), **Install** (when the LaunchAgent is missing), **Quit**, **Uninstall**,
 and (when installed and either a newer PyPI release is out or this running
@@ -351,7 +385,7 @@ ls -l ~/.config/bunnify/bookmarks.json
 
 ```bash
 bunnify setup
-curl -sf "$(grep BUNNIFY_BASE_URL ~/.config/bunnify/config.env | cut -d= -f2-)/health"
+curl -sf "$(grep '^base_url' ~/.config/bunnify/config.toml | sed -E 's/^base_url = "(.*)"$/\1/')/health"
 ```
 
 **Stale managed process**

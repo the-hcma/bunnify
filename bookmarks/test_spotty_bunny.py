@@ -27,9 +27,19 @@ from app.spotty_bunny_history import (
     load_history_lines,
 )
 from app.spotty_bunny_hotkey import (
+    COMMAND_LEFT_KEYCODE,
+    COMMAND_RIGHT_KEYCODE,
     CONTROL_LEFT_KEYCODE,
     CONTROL_RIGHT_KEYCODE,
+    DEVICE_LEFT_COMMAND_MASK,
+    DEVICE_LEFT_CONTROL_MASK,
+    DEVICE_LEFT_OPTION_MASK,
+    DEVICE_RIGHT_COMMAND_MASK,
+    DEVICE_RIGHT_CONTROL_MASK,
+    DEVICE_RIGHT_OPTION_MASK,
     ESCAPE_KEYCODE,
+    OPTION_LEFT_KEYCODE,
+    OPTION_RIGHT_KEYCODE,
     PAGE_DOWN_KEYCODE,
     PAGE_UP_KEYCODE,
     TAB_KEYCODE,
@@ -38,6 +48,7 @@ from app.spotty_bunny_hotkey import (
     apply_hid_snapshot,
     describe_key,
     page_selector_for_keycode,
+    resolve_chord_keys,
     resolve_control_snapshot,
 )
 from app.spotty_bunny_quit import (
@@ -526,6 +537,35 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             self.assertEqual(info.server_mode, "remote")
             self.assertEqual(info.server_url, "https://bun.example.com")
 
+    def test_load_about_runtime_info_survives_corrupt_config_toml(self) -> None:
+        # A hand-edited/truncated config.toml must not kill the About panel
+        # (reached from the AppKit main thread on a left-click of the
+        # menu-bar bunny) -- load_preferences/resolve_base_url now raise
+        # ConfigParseError instead of silently treating it as absent, so
+        # load_about_runtime_info must catch that and degrade gracefully.
+        from app.client import DEFAULT_BASE_URL
+        from app.spotty_bunny_about_info import load_about_runtime_info
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bookmarks = root / "bookmarks.json"
+            bookmarks.write_text("{}", encoding="utf-8")
+            config_home = root / "cfg"
+            config_toml = config_home / "bunnify" / "config.toml"
+            config_toml.parent.mkdir(parents=True, exist_ok=True)
+            config_toml.write_text("mode = local\n", encoding="utf-8")  # invalid
+            env = {
+                "BUNNIFY_BOOKMARKS": str(bookmarks),
+                "XDG_CONFIG_HOME": str(config_home),
+            }
+
+            info = load_about_runtime_info(
+                environ=env,
+                origin_url_for=lambda _workdir: None,
+            )
+
+            self.assertEqual(info.server_url, DEFAULT_BASE_URL)
+
     def test_about_details_text_and_links(self) -> None:
         from app.spotty_bunny_about_info import (
             AboutRuntimeInfo,
@@ -828,6 +868,84 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         ctl.loaded = False
         self.assertFalse(bootout_loaded_agent(launchctl=ctl))
         self.assertFalse(any(call[1] == "bootout" for call in ctl.calls))
+
+    def test_hotkey_command_prints_current_choice(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        with (
+            patch("app.config.load_spotty_bunny_hotkey", return_value="auto") as load,
+            patch("app.spotty_bunny_agent.print") as printed,
+        ):
+            self.assertEqual(hotkey_command(()), 0)
+            load.assert_called_once_with()
+        printed.assert_called_once_with("auto")
+
+    def test_hotkey_command_saves_valid_choice(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        with patch("app.config.save_spotty_bunny_hotkey") as save:
+            self.assertEqual(hotkey_command(("Option",)), 0)
+        save.assert_called_once_with("option")
+
+    def test_hotkey_command_rejects_unknown_choice(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        with patch("app.config.save_spotty_bunny_hotkey", side_effect=ValueError):
+            self.assertEqual(hotkey_command(("bogus",)), 2)
+
+    def test_hotkey_command_show_reports_corrupt_config_cleanly(self) -> None:
+        # ConfigParseError (raised when config.toml exists but fails to
+        # parse) is a ValueError subclass, so the existing `except
+        # ValueError:` guard around the show path must catch it too and
+        # print a clean message + exit 2, instead of an uncaught traceback.
+        from app.config import ConfigParseError
+        from app.spotty_bunny_agent import hotkey_command
+
+        with (
+            patch(
+                "app.config.load_spotty_bunny_hotkey",
+                side_effect=ConfigParseError("config.toml is not valid TOML"),
+            ),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(hotkey_command(()), 2)
+        printed.assert_called_once()
+        self.assertIn("config.toml is not valid TOML", printed.call_args.args[0])
+
+    def test_hotkey_command_set_reports_corrupt_config_distinctly(self) -> None:
+        # save_spotty_bunny_hotkey can also raise ConfigParseError (a
+        # ValueError subclass) for a corrupt config.toml. That must be
+        # reported as a parse failure, not folded into the generic "is not
+        # one of: auto, control, option, command" invalid-choice message,
+        # or a user with a perfectly valid choice gets told their choice is
+        # wrong and never learns the file itself is unparsable.
+        from app.config import ConfigParseError
+        from app.spotty_bunny_agent import hotkey_command
+
+        with (
+            patch(
+                "app.config.save_spotty_bunny_hotkey",
+                side_effect=ConfigParseError("config.toml is not valid TOML"),
+            ),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(hotkey_command(("option",)), 2)
+        printed.assert_called_once()
+        message = printed.call_args.args[0]
+        self.assertIn("config.toml is not valid TOML", message)
+        self.assertNotIn("is not one of", message)
+
+    def test_hotkey_command_rejects_extra_arguments(self) -> None:
+        from app.spotty_bunny_agent import hotkey_command
+
+        self.assertEqual(hotkey_command(("option", "extra")), 2)
+
+    def test_run_agent_command_dispatches_hotkey(self) -> None:
+        from app.spotty_bunny_agent import run_agent_command
+
+        with patch("app.spotty_bunny_agent.hotkey_command", return_value=0) as cmd:
+            self.assertEqual(run_agent_command("hotkey", ("option",)), 0)
+        cmd.assert_called_once_with(("option",))
 
     def test_format_agent_plist_matches_example_placeholders(self) -> None:
         from app.spotty_bunny_agent import (
@@ -2787,6 +2905,120 @@ class SpottyBunnyHotkeyTests(SimpleTestCase):
         self.assertEqual((left, right), (True, True))
 
 
+class SpottyBunnyConfigurableChordTests(SimpleTestCase):
+    """Option/Command chord support (bunnify#414)."""
+
+    def test_resolve_chord_keys_control(self) -> None:
+        keys = resolve_chord_keys("control")
+        self.assertEqual(keys.name, "control")
+        self.assertEqual(keys.left_keycode, CONTROL_LEFT_KEYCODE)
+        self.assertEqual(keys.right_keycode, CONTROL_RIGHT_KEYCODE)
+        self.assertEqual(keys.left_device_mask, DEVICE_LEFT_CONTROL_MASK)
+        self.assertEqual(keys.right_device_mask, DEVICE_RIGHT_CONTROL_MASK)
+
+    def test_resolve_chord_keys_option(self) -> None:
+        keys = resolve_chord_keys("option")
+        self.assertEqual(keys.name, "option")
+        self.assertEqual(keys.left_keycode, OPTION_LEFT_KEYCODE)
+        self.assertEqual(keys.right_keycode, OPTION_RIGHT_KEYCODE)
+        self.assertEqual(keys.left_device_mask, DEVICE_LEFT_OPTION_MASK)
+        self.assertEqual(keys.right_device_mask, DEVICE_RIGHT_OPTION_MASK)
+
+    def test_resolve_chord_keys_command(self) -> None:
+        keys = resolve_chord_keys("command")
+        self.assertEqual(keys.name, "command")
+        self.assertEqual(keys.left_keycode, COMMAND_LEFT_KEYCODE)
+        self.assertEqual(keys.right_keycode, COMMAND_RIGHT_KEYCODE)
+        self.assertEqual(keys.left_device_mask, DEVICE_LEFT_COMMAND_MASK)
+        self.assertEqual(keys.right_device_mask, DEVICE_RIGHT_COMMAND_MASK)
+
+    def test_resolve_chord_keys_is_case_insensitive(self) -> None:
+        self.assertEqual(resolve_chord_keys("OPTION").name, "option")
+
+    def test_resolve_chord_keys_unknown_choice_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_chord_keys("shift")
+
+    def test_resolve_chord_keys_auto_without_external_keyboard_is_option(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolve_chord_keys("auto", has_external_keyboard=False).name, "option"
+        )
+
+    def test_resolve_chord_keys_auto_with_external_keyboard_is_control(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolve_chord_keys("auto", has_external_keyboard=True).name, "control"
+        )
+
+    def test_option_chord_fires_like_control_chord(self) -> None:
+        tracker = ChordTracker()
+        self.assertFalse(
+            apply_control_event(
+                tracker,
+                keycode=OPTION_LEFT_KEYCODE,
+                hid_left=True,
+                hid_right=False,
+                flag_left=True,
+                flag_right=False,
+                control_flag=True,
+                flags_changed=True,
+                left_keycode=OPTION_LEFT_KEYCODE,
+                right_keycode=OPTION_RIGHT_KEYCODE,
+            )
+        )
+        self.assertTrue(
+            apply_control_event(
+                tracker,
+                keycode=OPTION_RIGHT_KEYCODE,
+                hid_left=True,
+                hid_right=True,
+                flag_left=True,
+                flag_right=True,
+                control_flag=True,
+                flags_changed=True,
+                left_keycode=OPTION_LEFT_KEYCODE,
+                right_keycode=OPTION_RIGHT_KEYCODE,
+            )
+        )
+
+    def test_option_chord_ignores_control_keycodes(self) -> None:
+        """A configured Option chord must not fire on Control key events."""
+        tracker = ChordTracker()
+        apply_control_event(
+            tracker,
+            keycode=CONTROL_LEFT_KEYCODE,
+            hid_left=False,
+            hid_right=False,
+            flag_left=False,
+            flag_right=False,
+            control_flag=False,
+            flags_changed=True,
+            left_keycode=OPTION_LEFT_KEYCODE,
+            right_keycode=OPTION_RIGHT_KEYCODE,
+        )
+        self.assertFalse(tracker.held_left)
+        self.assertFalse(tracker.held_right)
+
+    def test_command_chord_snapshot_resolution(self) -> None:
+        left, right = resolve_control_snapshot(
+            keycode=COMMAND_RIGHT_KEYCODE,
+            hid_left=True,
+            hid_right=True,
+            flag_left=True,
+            flag_right=True,
+            held_left=True,
+            held_right=False,
+            control_flag=True,
+            flags_changed=True,
+            left_keycode=COMMAND_LEFT_KEYCODE,
+            right_keycode=COMMAND_RIGHT_KEYCODE,
+        )
+        self.assertEqual((left, right), (True, True))
+
+
 class SpottyBunnyQuitTests(SimpleTestCase):
     def test_post_application_wake_event_posts_at_start(self) -> None:
         ns_app = MagicMock()
@@ -3547,6 +3779,91 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         )
         pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "Henrique Andrade"', pyproject)
+
+    def test_resolve_configured_chord_skips_ioreg_for_pinned_choices(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # Pinned control/option/command choices must resolve synchronously,
+        # with no ioreg subprocess call — only "auto" probes hardware, and it
+        # does so off the AppKit main thread via controller._io.submit.
+        self.assertIn(
+            'if choice != "auto":\n'
+            "        _apply_resolved_chord"
+            "(controller, choice, has_external_keyboard=False)\n"
+            "        if on_resolved is not None:\n"
+            "            on_resolved()\n"
+            "        return",
+            source,
+        )
+        self.assertIn("controller._io.submit(has_external_keyboard, apply)", source)
+
+    def test_startup_banner_waits_for_resolved_chord(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # The startup banner must not read controller.chord_keys immediately
+        # after _resolve_configured_chord — for "auto" that call only
+        # kicks off an async probe, so the chord is still the stale default
+        # until on_resolved fires. Printing early would tell a laptop user
+        # to hold Control when auto is about to resolve to Option.
+        self.assertIn(
+            "_resolve_configured_chord(\n"
+            "        controller, "
+            "on_resolved=partial(_print_hotkey_banner, controller)\n"
+            "    )",
+            source,
+        )
+        start = source.index("def run_spotty_bunny_app(")
+        end = source.index("\ndef ", start + 1)
+        run_spotty_bunny_app_body = source[start:end]
+        self.assertNotIn(
+            'print(\n        f"spotty-bunny: hold one '
+            '{controller.chord_keys.name.capitalize()}, "',
+            run_spotty_bunny_app_body,
+        )
+
+    def test_live_tap_callback_uses_resolved_chord_and_flag_masks(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # The live event-tap callback must key off controller.chord_keys
+        # (the resolved chord) rather than any hardcoded Control constant,
+        # and _chord_modifier_flag_mask must map each chord name to its own
+        # Quartz modifier flag — otherwise a non-Control chord would be
+        # wired up but never actually fire at runtime.
+        self.assertIn("chord_keys = controller.chord_keys", source)
+        self.assertIn("hid_left = _control_key_down(chord_keys.left_keycode)", source)
+        self.assertIn("hid_right = _control_key_down(chord_keys.right_keycode)", source)
+        self.assertIn("flag_left = bool(flags & chord_keys.left_device_mask)", source)
+        self.assertIn("flag_right = bool(flags & chord_keys.right_device_mask)", source)
+        self.assertIn(
+            "_CHORD_MODIFIER_FLAG_MASK: dict[str, int] = {\n"
+            '    "control": kCGEventFlagMaskControl,\n'
+            '    "option": kCGEventFlagMaskAlternate,\n'
+            '    "command": kCGEventFlagMaskCommand,\n'
+            "}",
+            source,
+        )
+        self.assertIn(
+            "control_flag=bool(flags & _chord_modifier_flag_mask(chord_keys))",
+            source,
+        )
+
+    def test_check_event_tap_health_re_resolves_configured_chord(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app" / "spotty_bunny_app.py"
+        ).read_text(encoding="utf-8")
+        # Plugging/unplugging an external keyboard while spotty-bunny is
+        # running (in "auto" mode) must be picked up without a restart --
+        # _check_event_tap_health (the periodic tap-health timer) is the
+        # only place that re-probes and re-applies the configured chord.
+        start = source.index("def _check_event_tap_health(")
+        end = source.index("\ndef ", start + 1)
+        check_event_tap_health_body = source[start:end]
+        self.assertIn(
+            "_resolve_configured_chord(controller)", check_event_tap_health_body
+        )
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):

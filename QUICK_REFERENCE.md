@@ -4,8 +4,8 @@ Assumes `pipx install bunnify`, `pipx ensurepath` (so `~/.local/bin` is on
 `PATH`), bookmarks at `~/.config/bunnify/bookmarks.json` (install via
 `bunnify setup` or from `bunnify.json.example`), and a completed
 `bunnify setup`. Prefer **local** mode on a laptop; use **remote** for a
-home-server install. Your base URL is in `~/.config/bunnify/config.env` as
-`BUNNIFY_BASE_URL` — Chrome must use the same URL.
+home-server install. Your base URL is in `~/.config/bunnify/config.toml` as
+`base_url` — Chrome must use the same URL.
 
 ## Bookmarks file
 
@@ -71,7 +71,7 @@ bunnify-server --help
 bunnify-server --foreground --noninteractive --port 8000   # foreground (debug)
 bunnify-server --port 8000 --noninteractive --pid-dir ~/.local/share/bunnify/run
 bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
-curl -sf "$(grep '^BUNNIFY_BASE_URL=' ~/.config/bunnify/config.env | cut -d= -f2-)/health"
+curl -sf "$(grep '^base_url' ~/.config/bunnify/config.toml | sed -E 's/^base_url = "(.*)"$/\1/')/health"
 ```
 
 On macOS, **local** `bunnify setup` installs the server LaunchAgent; Linux and
@@ -82,10 +82,10 @@ Development checkout: prefix with `./scripts/` (e.g. `./scripts/bunnify-server`)
 
 ## Chrome
 
-Use `BUNNIFY_BASE_URL` from `~/.config/bunnify/config.env` (set by `bunnify setup`):
+Use `base_url` from `~/.config/bunnify/config.toml` (set by `bunnify setup`):
 
-1. Server running → visit `<BUNNIFY_BASE_URL>/` (OpenSearch auto-detect)
-2. Or add manually: keyword `b`, URL `<BUNNIFY_BASE_URL>/search/?q=%s`
+1. Server running → visit `<base_url>/` (OpenSearch auto-detect)
+2. Or add manually: keyword `b`, URL `<base_url>/search/?q=%s`
 
 Full guide: [CHROME_SETUP.md](CHROME_SETUP.md)
 
@@ -103,7 +103,7 @@ Full guide: [CHROME_SETUP.md](CHROME_SETUP.md)
 | File | Purpose |
 |------|---------|
 | `~/.config/bunnify/bookmarks.json` | Shortcuts |
-| `~/.config/bunnify/config.env` | Mode, base URL, port |
+| `~/.config/bunnify/config.toml` | Mode, base URL, port |
 | `~/.local/share/bunnify/` | DB, logs, managed run state (`run/`, `run/launchd/` on macOS LaunchAgent) |
 
 More: [docs/CONFIG.md](docs/CONFIG.md), [docs/LOCAL.md](docs/LOCAL.md)

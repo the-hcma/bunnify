@@ -2,8 +2,6 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 
-[options]
-
 [[package]]
 name = "asgiref"
 version = "3.12.1"
@@ -37,6 +35,7 @@ dependencies = [
     { name = "prompt-toolkit" },
     { name = "rpds-py" },
     { name = "sqlparse" },
+    { name = "tomlkit" },
     { name = "typing-extensions" },
 ]
 
@@ -70,6 +69,7 @@ requires-dist = [
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin' and extra == 'macos'", specifier = ">=12.2.2" },
     { name = "rpds-py", specifier = ">=2026.6.3" },
     { name = "sqlparse", specifier = ">=0.6.0" },
+    { name = "tomlkit", specifier = ">=0.15.1" },
     { name = "typing-extensions", specifier = "==4.16.0" },
 ]
 provides-extras = ["macos"]
@@ -380,6 +380,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5f/d3/3f06a1006f2261d1342aefb3c71eed02f5d4ca5bdbecd86ebc12ad38306e/sqlparse-0.6.0.tar.gz", hash = "sha256:113c35c75365ab9cc9c7231d68c6428fb11c085fc8e9eb1ad659b7ddbf6cd2b9", size = 178477, upload-time = "2026-08-13T19:16:06.396Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/50/f00935da0ec7cbf325f8dc4f772ae46fbc7b672dd62876e73f0a94adda57/sqlparse-0.6.0-py3-none-any.whl", hash = "sha256:b861c0288ce2fa56209a9a6412d2e066ac664b3873b89c26c9d8415e8e32996f", size = 50070, upload-time = "2026-08-13T19:16:04.062Z" },
+]
+
+[[package]]
+name = "tomlkit"
+version = "0.15.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/96/e07752635b98536177fa1f37671c8f3cdde2e724c6bcf6034b2cfb571565/tomlkit-0.15.1.tar.gz", hash = "sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97", size = 180129, upload-time = "2026-07-17T01:48:04.562Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/bc/8c13eb66537dce1d2bd3a57132902f38d0e7f5bb46fa9f4daed9fe9d76ee/tomlkit-0.15.1-py3-none-any.whl", hash = "sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304", size = 49449, upload-time = "2026-07-17T01:48:05.728Z" },
 ]
 
 [[package]]

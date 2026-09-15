@@ -8,7 +8,7 @@
 | Always-on home lab or shared household host | **remote** — one centralized server; other devices point at its URL |
 
 On a laptop, prefer **local**. Chrome OpenSearch and the CLI both talk to the same
-base URL from `~/.config/bunnify/config.env`. If that URL is a remote host and
+base URL from `~/.config/bunnify/config.toml`. If that URL is a remote host and
 the host is unreachable, both the CLI and the browser fail — there is no
 automatic fallback to a local server. Re-run `bunnify setup` and choose local
 (or restore the remote) when that happens.
@@ -28,7 +28,7 @@ In a development checkout, `./scripts/bunnify` and
 they fall back to the checkout ``.venv`` (same entry points systemd uses).
 
 Setup defaults to **local** mode when no preferences are saved yet. When
-`config.env` already has a mode/URL, setup **shows that configuration** and
+`config.toml` already has a mode/URL, setup **shows that configuration** and
 asks `Keep this configuration? [Y/n]` first—Enter keeps it. Declining
 re-enters the prompts with the **previously configured mode** as the bracket
 default (not an unconditional `local`). `bunnify upgrade` and interactive
@@ -42,18 +42,18 @@ prompts for a free non-privileged listening port
 a **different** Bunnify build, setup asks whether to stop it and start this
 CLI's build (even when the process was started with a different run directory). It then
 starts a managed server, verifies `/health`, and records the selected port in
-`config.env` and under `$BUNNIFY_DATA_DIR/run/` (for example
+`config.toml` and under `$BUNNIFY_DATA_DIR/run/` (for example
 `~/scratch/bunnify/run` on service hosts).
 Remote mode prompts for a URL and saves it only after its `/health` response is
 HTTP 200 with body `ok`.
 
-Verified settings are stored in `~/.config/bunnify/config.env` (or
-`$XDG_CONFIG_HOME/bunnify/config.env`):
+Verified settings are stored in `~/.config/bunnify/config.toml` (or
+`$XDG_CONFIG_HOME/bunnify/config.toml`):
 
-```dotenv
-BUNNIFY_MODE=local
-BUNNIFY_BASE_URL=http://127.0.0.1:8000
-BUNNIFY_LOCAL_PORT=8000
+```toml
+mode = "local"
+base_url = "http://127.0.0.1:8000"
+local_port = 8000
 ```
 
 `setup` is a reserved CLI shortcut name. Use `--base-url URL` for a one-time
@@ -214,7 +214,9 @@ the bunny icon shows a small up-arrow badge and About includes
 
 ### Using the overlay
 
-Hold **one** Control, then press the **other** to show the search box. Esc
+Hold **one** modifier key, then press the **other** on the same side to show
+the search box (auto by default; `bunnify spotty-bunny hotkey` shows or
+changes the chord — see `spotty_bunny_hotkey` in `docs/CONFIG.md`). Esc
 (or the same chord again) hides it. Up/down walks the CLI REPL history file
 (`platformdirs` cache `bunnify/repl_history`). Tab uses the same completers as
 the CLI (`FirstTokenFuzzyCompleter` / `ShortcutCompleter`) and lists matches
@@ -234,7 +236,7 @@ About card: version, commit, license, Bunnify source, a hyperlink to your
 bookmarks file (`BUNNIFY_BOOKMARKS` or `~/.config/bunnify/bookmarks.json`), the
 GitHub repo when that file lives in a git checkout whose `origin` is GitHub,
 whether Spotty Bunny is using a **local** or **remote** server (with its
-URL from `config.env`), and an **Update available** line when PyPI is newer.
+URL from `config.toml`), and an **Update available** line when PyPI is newer.
 An up-arrow badge on the bunny also marks an outdated install. **Right-click**
 the icon for **Quit**, **Uninstall**, and (when outdated) **Upgrade**.
 
@@ -313,4 +315,4 @@ Confirm that the chosen port is free unless you override `--port`.
   a remote URL or installing Spotty Bunny. The CLI does not switch to local
   automatically. Fix the network/server or run `bunnify setup` and choose
   **local** (laptop) or a healthy remote URL. Update Chrome’s search engine to
-  the same `BUNNIFY_BASE_URL` (see [CHROME_SETUP](../CHROME_SETUP.md)).
+  the same `base_url` (see [CHROME_SETUP](../CHROME_SETUP.md)).

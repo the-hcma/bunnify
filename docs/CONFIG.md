@@ -11,8 +11,15 @@ Bunnify stores user configuration under `$XDG_CONFIG_HOME/bunnify`, defaulting
 to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
 
 - `bookmarks.json` contains personal shortcuts (required before server start).
-- `config.env` contains persistent CLI server preferences:
-  `BUNNIFY_MODE`, `BUNNIFY_BASE_URL`, and `BUNNIFY_LOCAL_PORT`.
+- `config.toml` contains persistent CLI/server preferences (`mode`,
+  `base_url`, `local_port`) and the Spotty Bunny hotkey chord
+  (`spotty_bunny_hotkey`). Not environment variables — edit the file
+  directly, or use `bunnify setup` / `bunnify spotty-bunny hotkey`. A legacy
+  `config.env` (or the old `BUNNIFY_MODE`/`BUNNIFY_BASE_URL`/
+  `BUNNIFY_LOCAL_PORT` environment variables) is migrated into `config.toml`
+  once, automatically, the first time it's read. See
+  [`config.example.toml`](../config.example.toml) at the repository root for
+  an annotated example of every key.
 - `run/` contains PID and port files for CLI-managed servers. On macOS the
   server LaunchAgent uses `run/launchd/` (see [LOCAL.md](LOCAL.md)).
 
@@ -50,9 +57,6 @@ remain supported; they are interpreted as remote mode.
 
 - `XDG_CONFIG_HOME` changes the configuration root.
 - `BUNNIFY_BOOKMARKS` overrides the bookmarks file path.
-- `BUNNIFY_BASE_URL` overrides the server URL.
-- `BUNNIFY_LOCAL_PORT` remembers the managed local server's listening port.
-- `BUNNIFY_MODE` selects `local` or `remote`.
 - `BUNNIFY_EDIT_MODE` selects `vim` or `emacs` CLI editing keys.
 - `BUNNIFY_LOG_LEVEL`, `BUNNIFY_LOG_CONSOLE`, and `BUNNIFY_LOG_FILE` configure
   server logging.
@@ -60,6 +64,37 @@ remain supported; they are interpreted as remote mode.
   `$BUNNIFY_DATA_DIR/spotty-bunny.log`, or `~/.local/share/bunnify/spotty-bunny.log`).
   `spotty-bunny --log-file` also sets it. Rotation matches the server
   (10 MiB, 5 backups).
+
+`BUNNIFY_MODE`, `BUNNIFY_BASE_URL`, and `BUNNIFY_LOCAL_PORT` are **not** read
+at runtime anymore — set `mode` / `base_url` / `local_port` in
+`config.toml` instead (`bunnify setup` writes it for you). Those variables
+are still recognized once, read-only, to migrate an old `config.env` (or
+bare environment variables from very old installs) into `config.toml`.
+
+## Spotty Bunny hotkey chord
+
+`spotty_bunny_hotkey` in `config.toml` selects the modifier chord that shows
+the overlay: `auto` (default — Option on laptops with no external keyboard
+attached, Control when one is), `control`, `option`, or `command`. View or
+change it with:
+
+```bash
+bunnify spotty-bunny hotkey
+bunnify spotty-bunny hotkey option
+```
+
+Each chord is held-left-tap-right (or the reverse) of the *same* modifier —
+e.g. hold left Control, tap right Control. Default (`auto`) keystrokes:
+
+| Keyboard attached | Chord used | Keystroke |
+|---|---|---|
+| Built-in only (no external keyboard) | Option | Hold left Option, tap right Option (or the reverse) |
+| External keyboard present (USB/Bluetooth) | Control | Hold left Control, tap right Control (or the reverse) |
+
+Auto-detection is re-checked on each periodic tap health check, so plugging
+in (or unplugging) an external keyboard is picked up without a restart.
+Pinning a choice (`control` / `option` / `command`) always uses both copies
+of that modifier regardless of what's attached.
 
 ## Bookmark schema
 

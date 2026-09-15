@@ -126,7 +126,7 @@ def format_onboarding_text(
         step += 1
     lines.extend(
         [
-            f"{step}. Configure Chrome or Edge using BUNNIFY_BASE_URL from:",
+            f"{step}. Configure Chrome or Edge using base_url from:",
             f"     {config}",
             "   Guide: https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md",
             "",
@@ -146,7 +146,7 @@ def format_onboarding_text(
         [
             "Upgrade later (preferred):",
             "     bunnify upgrade   # shows from/to versions, then pipx upgrade",
-            "   Bookmarks and config.env are kept across upgrades.",
+            "   Bookmarks and config.toml are kept across upgrades.",
             "   If --version still shows a checkout SHA, PATH is using",
             "   ./scripts/bunnify or a repo .venv — the pipx app lives in",
             "   ~/.local/bin/bunnify.",
@@ -292,7 +292,7 @@ def run_onboard(
             log(colors.warn("Skipping Spotty Bunny install (server not confirmed)."))
         else:
             prompt = (
-                "Install or refresh Spotty Bunny (LaunchAgent + Control chord test)? "
+                "Install or refresh Spotty Bunny (LaunchAgent + hotkey chord test)? "
                 "[y/N]: "
             )
             if not state.spotty_agent_installed or yes(ask, colors.brand(prompt)):
@@ -304,7 +304,7 @@ def run_onboard(
                 if code == 0:
                     log(
                         colors.ok(
-                            "✓ Spotty Bunny is installed and the Control chord works."
+                            "✓ Spotty Bunny is installed and the hotkey chord works."
                         )
                     )
                     state = detect_install_state(read_executable_build=reader)

@@ -760,6 +760,16 @@ class ConfigUnitTests(TestCase):
         }
         self._environ_patch = patch.dict(os.environ, self._xdg_defaults, clear=False)
         self._environ_patch.start()
+        # Tests assert legacy-migration values read from config.env; a
+        # BUNNIFY_MODE/BASE_URL/LOCAL_PORT left in the real shell environment
+        # (e.g. an old per-invocation override in .zshrc) would otherwise
+        # take precedence and make those assertions machine-dependent.
+        for _legacy_env_key in (
+            "BUNNIFY_MODE",
+            "BUNNIFY_BASE_URL",
+            "BUNNIFY_LOCAL_PORT",
+        ):
+            os.environ.pop(_legacy_env_key, None)
         real_persist = config_mod.persist_local_port
 
         def _persist_local_port_isolated(
@@ -808,21 +818,19 @@ class ConfigUnitTests(TestCase):
                 Path(tmp) / "bunnify",
             )
 
-    def test_default_env_file_under_xdg_resolves_base_url(self) -> None:
+    def test_default_config_file_under_xdg_resolves_base_url(self) -> None:
         import tempfile
         from pathlib import Path
 
-        from app.config import (
-            env_file_path,
-            resolve_base_url,
-            write_base_url_to_env_file,
-        )
+        from app.config import env_file_path, resolve_base_url, set_config_value
 
         with tempfile.TemporaryDirectory() as tmp:
             environ = {"XDG_CONFIG_HOME": tmp}
-            path = Path(tmp) / "bunnify" / "config.env"
+            path = Path(tmp) / "bunnify" / "config.toml"
             self.assertEqual(env_file_path(environ=environ), path)
-            write_base_url_to_env_file(path, "http://from-xdg:9000")
+            set_config_value(
+                "base_url", "http://from-xdg:9000", env_path=path, environ=environ
+            )
             self.assertEqual(
                 resolve_base_url(environ=environ, persist=False),
                 "http://from-xdg:9000",
@@ -853,9 +861,387 @@ class ConfigUnitTests(TestCase):
                 expected,
             )
             text = path.read_text(encoding="utf-8")
-            self.assertIn("BUNNIFY_MODE=local", text)
-            self.assertIn("BUNNIFY_BASE_URL=http://127.0.0.1:8765", text)
-            self.assertIn("BUNNIFY_LOCAL_PORT=8765", text)
+            self.assertIn('mode = "local"', text)
+            self.assertIn('base_url = "http://127.0.0.1:8765"', text)
+            self.assertIn("local_port = 8765", text)
+
+    def test_spotty_bunny_hotkey_defaults_to_auto(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import load_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "auto")
+
+    def test_spotty_bunny_hotkey_round_trip(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import load_spotty_bunny_hotkey, save_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            save_spotty_bunny_hotkey("Option", env_path=path)
+            self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "option")
+            text = path.read_text(encoding="utf-8")
+            self.assertIn('spotty_bunny_hotkey = "option"', text)
+
+    def test_spotty_bunny_hotkey_save_rejects_unknown_choice(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import save_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            with self.assertRaises(ValueError):
+                save_spotty_bunny_hotkey("shift", env_path=path)
+
+    def test_spotty_bunny_hotkey_load_rejects_unknown_choice(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            set_config_value("spotty_bunny_hotkey", "shift", env_path=path)
+            from app.config import load_spotty_bunny_hotkey
+
+            with self.assertRaises(ValueError):
+                load_spotty_bunny_hotkey(env_path=path)
+
+    def test_spotty_bunny_hotkey_preserved_when_saving_server_preferences(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import (
+            ServerPreferences,
+            load_spotty_bunny_hotkey,
+            save_preferences,
+            save_spotty_bunny_hotkey,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            save_spotty_bunny_hotkey("command", env_path=path)
+            save_preferences(
+                ServerPreferences(
+                    mode="local", base_url="http://127.0.0.1:8765", local_port=8765
+                ),
+                env_path=path,
+            )
+            self.assertEqual(load_spotty_bunny_hotkey(env_path=path), "command")
+
+    def test_save_preferences_drops_local_port_when_switching_to_remote(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ServerPreferences, load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="local", base_url="http://127.0.0.1:8123", local_port=8123
+                ),
+                env_path=path,
+            )
+            save_preferences(
+                ServerPreferences(
+                    mode="remote", base_url="https://remote.example", local_port=None
+                ),
+                env_path=path,
+            )
+
+            self.assertNotIn("local_port", path.read_text(encoding="utf-8"))
+            preferences = load_preferences(env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertIsNone(preferences.local_port)
+
+    def test_load_preferences_migrates_legacy_config_env(self) -> None:
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=local\n"
+            "BUNNIFY_BASE_URL=http://127.0.0.1:8765\n"
+            "BUNNIFY_LOCAL_PORT=8765\n",
+            encoding="utf-8",
+        )
+
+        preferences = config_mod.load_preferences()
+
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "local")
+        self.assertEqual(preferences.base_url, "http://127.0.0.1:8765")
+        self.assertEqual(preferences.local_port, 8765)
+
+        toml_path = config_mod.env_file_path()
+        self.assertTrue(toml_path.is_file())
+        text = toml_path.read_text(encoding="utf-8")
+        self.assertIn('mode = "local"', text)
+        self.assertIn('base_url = "http://127.0.0.1:8765"', text)
+        self.assertIn("local_port = 8765", text)
+
+    def test_load_preferences_raises_on_out_of_range_legacy_local_port(
+        self,
+    ) -> None:
+        # Mirrors the non-integer case: an out-of-range legacy port must be
+        # reported during migration, not silently written to config.toml
+        # where load_preferences would then immediately reject it with no
+        # path back to fixing the (no-longer-consulted) config.env.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=local\nBUNNIFY_LOCAL_PORT=70000\n", encoding="utf-8"
+        )
+
+        with self.assertRaises(config_mod.ConfigParseError):
+            config_mod.load_preferences()
+
+        self.assertFalse(config_mod.env_file_path().is_file())
+
+    def test_load_preferences_raises_on_invalid_legacy_mode(self) -> None:
+        # Mirrors the local_port cases: an invalid legacy BUNNIFY_MODE must
+        # be reported during migration rather than silently written to
+        # config.toml, where load_preferences would then immediately reject
+        # it with no path back to fixing the (no-longer-consulted)
+        # config.env.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text("BUNNIFY_MODE=remte\n", encoding="utf-8")
+
+        with self.assertRaises(config_mod.ConfigParseError):
+            config_mod.load_preferences()
+
+        self.assertFalse(config_mod.env_file_path().is_file())
+
+    def test_load_preferences_raises_on_non_integer_legacy_local_port(self) -> None:
+        # config.env is never read again once config.toml exists, so a
+        # non-integer BUNNIFY_LOCAL_PORT must be reported during migration
+        # rather than silently dropped -- a silent skip would permanently
+        # lose the user's saved port with no diagnostic.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=local\nBUNNIFY_LOCAL_PORT=abc\n", encoding="utf-8"
+        )
+
+        with self.assertRaises(config_mod.ConfigParseError):
+            config_mod.load_preferences()
+
+        # And the failed migration must not have left a partial config.toml
+        # that would then be treated as "already migrated" on retry.
+        self.assertFalse(config_mod.env_file_path().is_file())
+
+    def test_load_preferences_migrates_when_caller_passes_resolved_default_path(
+        self,
+    ) -> None:
+        # app/cli.py's run_setup/run_stop resolve the default config path
+        # themselves (`path = env_path if env_path is not None else
+        # env_file_path(...)`) and pass that concrete path to
+        # load_preferences, rather than leaving env_path=None. Migration
+        # must still fire in that case (matching the resolved path against
+        # the canonical default), or an upgraded install that only has
+        # config.env never gets migrated by `bunnify setup` / `bunnify stop`.
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            "BUNNIFY_MODE=remote\nBUNNIFY_BASE_URL=http://127.0.0.1:9\n",
+            encoding="utf-8",
+        )
+
+        resolved_path = config_mod.env_file_path()
+        preferences = config_mod.load_preferences(env_path=resolved_path)
+
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "remote")
+        self.assertEqual(preferences.base_url, "http://127.0.0.1:9")
+        self.assertTrue(resolved_path.is_file())
+
+    def test_load_preferences_does_not_reimport_over_existing_config_toml(
+        self,
+    ) -> None:
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text("BUNNIFY_MODE=remote\n", encoding="utf-8")
+
+        toml_path = config_mod.env_file_path()
+        toml_path.parent.mkdir(parents=True, exist_ok=True)
+        config_mod.set_config_value("mode", "local", env_path=toml_path)
+        config_mod.set_config_value("local_port", 9999, env_path=toml_path)
+
+        preferences = config_mod.load_preferences()
+
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "local")
+        self.assertEqual(preferences.local_port, 9999)
+
+    def test_save_spotty_bunny_hotkey_migrates_legacy_config_env_first(
+        self,
+    ) -> None:
+        """A pinned hotkey choice must not create config.toml ahead of migration."""
+        import app.config as config_mod
+
+        legacy_path = config_mod.legacy_config_env_file_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text("BUNNIFY_MODE=remote\n", encoding="utf-8")
+
+        config_mod.save_spotty_bunny_hotkey("option")
+
+        self.assertEqual(config_mod.load_spotty_bunny_hotkey(), "option")
+        preferences = config_mod.load_preferences()
+        self.assertIsNotNone(preferences)
+        assert preferences is not None
+        self.assertEqual(preferences.mode, "remote")
+
+    def test_read_toml_document_raises_on_corrupt_file(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, read_toml_document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = local\n", encoding="utf-8")  # unquoted: invalid
+            with self.assertRaises(ConfigParseError):
+                read_toml_document(path)
+
+    def test_read_toml_document_raises_on_unreadable_file(self) -> None:
+        # A file that exists but can't be read (e.g. permissions left by a
+        # stray `sudo bunnify`) must be treated the same as a corrupt one --
+        # not silently returned as an empty document, which would both hide
+        # the saved settings and let the next write clobber them.
+        import pathlib
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, read_toml_document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('mode = "local"\n', encoding="utf-8")
+            original_read_text = pathlib.Path.read_text
+
+            def fake_read_text(self: pathlib.Path, *args: object, **kwargs: object):
+                if self == path:
+                    raise PermissionError("Permission denied")
+                return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+            with patch.object(pathlib.Path, "read_text", fake_read_text):
+                with self.assertRaises(ConfigParseError):
+                    read_toml_document(path)
+
+    def test_read_toml_document_raises_on_invalid_utf8(self) -> None:
+        # A file that isn't valid UTF-8 (e.g. truncated mid-multibyte
+        # character by an interrupted, non-atomic write_toml_document, or
+        # saved as Latin-1) raises UnicodeDecodeError from read_text, which
+        # is a ValueError -- not an OSError. It must still be treated as a
+        # corrupt config, not silently swallowed by a bare `except OSError`.
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, read_toml_document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_bytes(b'mode = "local\xff"\n')
+            with self.assertRaises(ConfigParseError):
+                read_toml_document(path)
+
+    def test_set_config_value_does_not_clobber_unreadable_config_toml(self) -> None:
+        # Mirrors test_set_config_value_does_not_clobber_corrupt_config_toml
+        # but for a read failure rather than a parse failure -- the write
+        # path must refuse rather than treat the unreadable file as empty.
+        import pathlib
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('mode = "local"\n', encoding="utf-8")
+            original_read_text = pathlib.Path.read_text
+
+            def fake_read_text(self: pathlib.Path, *args: object, **kwargs: object):
+                if self == path:
+                    raise PermissionError("Permission denied")
+                return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+            with patch.object(pathlib.Path, "read_text", fake_read_text):
+                with self.assertRaises(ConfigParseError):
+                    set_config_value("spotty_bunny_hotkey", "option", env_path=path)
+            self.assertEqual(path.read_text(encoding="utf-8"), 'mode = "local"\n')
+
+    def test_set_config_value_does_not_clobber_corrupt_config_toml(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = local\n", encoding="utf-8")  # unquoted: invalid
+            with self.assertRaises(ConfigParseError):
+                set_config_value("spotty_bunny_hotkey", "option", env_path=path)
+            # The corrupt file must survive untouched for the user to fix.
+            self.assertEqual(path.read_text(encoding="utf-8"), "mode = local\n")
+
+    def test_config_parse_error_is_a_value_error(self) -> None:
+        # app/spotty_bunny_app.py's _resolve_configured_chord and
+        # app/spotty_bunny_agent.py's hotkey_command only catch ValueError
+        # around load_spotty_bunny_hotkey(); ConfigParseError must be a
+        # ValueError (in addition to RuntimeError, for app/cli.py's catch)
+        # or a corrupt config.toml crashes the tap-health timer / CLI
+        # instead of falling back / printing a clean error.
+        from app.config import ConfigParseError
+
+        self.assertTrue(issubclass(ConfigParseError, ValueError))
+        self.assertTrue(issubclass(ConfigParseError, RuntimeError))
+
+    def test_load_spotty_bunny_hotkey_raises_config_parse_error_on_corrupt_file(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import ConfigParseError, load_spotty_bunny_hotkey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = local\n", encoding="utf-8")  # unquoted: invalid
+            with self.assertRaises(ConfigParseError):
+                load_spotty_bunny_hotkey(env_path=path)
+            # And since ConfigParseError is-a ValueError, a bare `except
+            # ValueError:` (as used by both non-CLI callers) catches it too.
+            try:
+                load_spotty_bunny_hotkey(env_path=path)
+                self.fail("expected ConfigParseError")
+            except ValueError:
+                pass
 
     def test_ensure_ready_base_url_ensures_local_bookmarks(self) -> None:
         import tempfile
@@ -865,7 +1251,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -920,7 +1306,7 @@ class ConfigUnitTests(TestCase):
             health_ok["value"] = False
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -979,7 +1365,7 @@ class ConfigUnitTests(TestCase):
             raise RuntimeError("failed to start")
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1023,7 +1409,7 @@ class ConfigUnitTests(TestCase):
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
         messages: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1072,7 +1458,7 @@ class ConfigUnitTests(TestCase):
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1121,7 +1507,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1155,7 +1541,7 @@ class ConfigUnitTests(TestCase):
 
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1194,7 +1580,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1232,7 +1618,7 @@ class ConfigUnitTests(TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1534,32 +1920,165 @@ class ConfigUnitTests(TestCase):
                 '{"personal": true}\n',
             )
 
-    def test_resolve_prefers_cli_then_env_then_file(self) -> None:
+    def test_seed_config_does_not_overwrite(self) -> None:
         import tempfile
         from pathlib import Path
 
-        from app.config import ENV_VAR, resolve_base_url, write_base_url_to_env_file
+        from app.config import seed_config_from_example
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "bunnify.env"
-            write_base_url_to_env_file(path, "http://from-file:9000")
+            target = Path(tmp) / "config.toml"
+            target.write_text('mode = "remote"\n', encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                seed_config_from_example(target)
+
+            self.assertEqual(
+                target.read_text(encoding="utf-8"),
+                'mode = "remote"\n',
+            )
+
+    def test_seed_config_from_example_writes_packaged_content(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import example_config_bytes, seed_config_from_example
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "nested" / "config.toml"
+
+            result = seed_config_from_example(target)
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.read_bytes(), example_config_bytes())
+
+    def test_seed_config_from_example_raises_when_example_missing(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import seed_config_from_example
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config.toml"
+            with patch("app.config.example_config_bytes", return_value=None):
+                with self.assertRaises(FileNotFoundError) as context:
+                    seed_config_from_example(target)
+
+            self.assertIn("No config example found", str(context.exception))
+            self.assertFalse(target.exists())
+
+    def test_offer_and_seed_example_config_accepts(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import _offer_and_seed_example_config
+        from app.config import example_config_bytes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            messages: list[str] = []
+
+            seeded = _offer_and_seed_example_config(
+                path, ask=lambda _message: "y", print_fn=messages.append
+            )
+
+            self.assertTrue(seeded)
+            self.assertEqual(path.read_bytes(), example_config_bytes())
+            joined = "\n".join(messages)
+            self.assertIn("No config.toml found", joined)
+            self.assertIn("Installed the annotated example config", joined)
+
+    def test_offer_and_seed_example_config_declines(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import _offer_and_seed_example_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+
+            seeded = _offer_and_seed_example_config(
+                path, ask=lambda _message: "n", print_fn=lambda _message: None
+            )
+
+            self.assertFalse(seeded)
+            self.assertFalse(path.exists())
+
+    def test_offer_and_seed_example_config_declines_on_abort(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import click
+
+        from app.cli import _offer_and_seed_example_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+
+            def abort_prompt(_message: str) -> str:
+                raise click.Abort()
+
+            seeded = _offer_and_seed_example_config(
+                path, ask=abort_prompt, print_fn=lambda _message: None
+            )
+
+            self.assertFalse(seeded)
+            self.assertFalse(path.exists())
+
+    def test_offer_and_seed_example_config_falls_back_when_example_missing(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _offer_and_seed_example_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            with patch("app.config.example_config_bytes", return_value=None):
+                seeded = _offer_and_seed_example_config(
+                    path, ask=lambda _message: "y", print_fn=lambda _message: None
+                )
+
+            self.assertFalse(seeded)
+            self.assertFalse(path.exists())
+
+    def test_backup_unreadable_config_renames_aside(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import _backup_unreadable_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("not = valid = toml\n", encoding="utf-8")
+
+            backup = _backup_unreadable_config(path)
+
+            self.assertFalse(path.exists())
+            self.assertTrue(backup.is_file())
+            self.assertTrue(backup.name.startswith("config.toml.bak-"))
+            self.assertEqual(backup.read_text(encoding="utf-8"), "not = valid = toml\n")
+
+    def test_resolve_prefers_cli_then_file(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import resolve_base_url, set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            set_config_value("base_url", "http://from-file:9000", env_path=path)
             self.assertEqual(
                 resolve_base_url(
                     cli_value="http://from-cli:1",
-                    environ={ENV_VAR: "http://from-env:2"},
+                    environ={},
                     env_path=path,
                     persist=False,
                 ),
                 "http://from-cli:1",
-            )
-            self.assertEqual(
-                resolve_base_url(
-                    cli_value=None,
-                    environ={ENV_VAR: "http://from-env:2"},
-                    env_path=path,
-                    persist=False,
-                ),
-                "http://from-env:2",
             )
             self.assertEqual(
                 resolve_base_url(
@@ -1594,14 +2113,14 @@ class ConfigUnitTests(TestCase):
                     "http://from-legacy:9000",
                 )
 
-    def test_prompt_persists_env_file(self) -> None:
+    def test_prompt_persists_config_file(self) -> None:
         import tempfile
         from pathlib import Path
 
-        from app.config import read_base_url_from_env_file, resolve_base_url
+        from app.config import get_config_value, resolve_base_url
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "bunnify.env"
+            path = Path(tmp) / "config.toml"
             url = resolve_base_url(
                 cli_value=None,
                 environ={},
@@ -1611,7 +2130,30 @@ class ConfigUnitTests(TestCase):
                 prompt_fn=lambda _msg: "http://prompted:8000/",
             )
             self.assertEqual(url, "http://prompted:8000")
-            self.assertEqual(read_base_url_from_env_file(path), "http://prompted:8000")
+            self.assertEqual(
+                get_config_value("base_url", env_path=path),
+                "http://prompted:8000",
+            )
+
+    def test_process_env_vars_do_not_override_config_file(self) -> None:
+        """Process environment variables must never override config.toml."""
+        import tempfile
+        from pathlib import Path
+
+        from app.config import resolve_base_url, set_config_value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            set_config_value("base_url", "http://from-file:9000", env_path=path)
+            self.assertEqual(
+                resolve_base_url(
+                    cli_value=None,
+                    environ={"BUNNIFY_BASE_URL": "http://from-env:2"},
+                    env_path=path,
+                    persist=False,
+                ),
+                "http://from-file:9000",
+            )
 
     def test_env_file_strips_inline_comments(self) -> None:
         import tempfile
@@ -1639,7 +2181,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://working.example",
@@ -1668,7 +2210,7 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://working.example",
@@ -1709,7 +2251,7 @@ class ConfigUnitTests(TestCase):
 
         mismatched = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://working.example",
@@ -1742,7 +2284,7 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -1783,7 +2325,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1829,7 +2371,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -1881,7 +2423,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://broken.example",
@@ -1914,7 +2456,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             original = ServerPreferences(
                 mode="remote",
                 base_url="https://broken.example",
@@ -1940,7 +2482,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -2079,7 +2621,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -2129,7 +2671,7 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",
@@ -2163,6 +2705,208 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.base_url, "https://new.example")
 
+    def test_setup_seeds_example_config_when_accepted(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import example_config_bytes, load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["y", "", "9999"])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:9999", 9999),
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:9999")
+            joined = "\n".join(messages)
+            self.assertIn("No config.toml found", joined)
+            self.assertIn("Installed the annotated example config", joined)
+            self.assertNotIn("Current configuration", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "local")
+            # The seeded example's annotations must survive the in-place update.
+            self.assertNotEqual(path.read_bytes(), example_config_bytes())
+            self.assertIn(b"#", path.read_bytes())
+
+    def test_setup_declines_seeding_example_config_and_proceeds_blank(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["n", "local", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            joined = "\n".join(messages)
+            self.assertIn("No config.toml found", joined)
+            self.assertNotIn("Installed the annotated example config", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "local")
+
+    def test_setup_recreates_corrupt_config_when_confirmed(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = = broken\n", encoding="utf-8")
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["y", "n", "local", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            joined = "\n".join(messages)
+            self.assertIn("could not be loaded", joined)
+            self.assertIn("Backed up the unreadable file", joined)
+            backups = list(Path(tmp).glob("config.toml.bak-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(
+                backups[0].read_text(encoding="utf-8"), "mode = = broken\n"
+            )
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "local")
+
+    def test_setup_aborts_when_corrupt_config_recreate_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.client import ClientError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = = broken\n", encoding="utf-8")
+            responses = iter(["n"])
+
+            with self.assertRaises(ClientError) as ctx:
+                run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertIn("Setup aborted", str(ctx.exception))
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_text(encoding="utf-8"), "mode = = broken\n")
+
+    def test_setup_recovers_when_legacy_migration_fails_before_config_exists(
+        self,
+    ) -> None:
+        # A bad legacy config.env value makes _migrate_legacy_config_if_needed
+        # raise ConfigParseError before config.toml is ever written, so there
+        # is no file for the corrupt-config recovery branch to back up.
+        # Accepting the "recreate" prompt must not crash trying to rename a
+        # nonexistent config.toml -- it should fall straight through to the
+        # seed-example offer instead.
+        import tempfile
+        from pathlib import Path
+
+        import app.config as config_mod
+        from app.cli import run_setup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            legacy_path = config_mod.legacy_config_env_file_path(environ=environ)
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.write_text("BUNNIFY_MODE=remte\n", encoding="utf-8")
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["y", "n", "remote", "https://remote.example/"])
+
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch("app.cli.check_health", return_value=True),
+                patch(
+                    "app.cli.fetch_health",
+                    return_value=_healthy_status(),
+                ),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.3.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://remote.example")
+            joined = "\n".join(messages)
+            self.assertIn("could not be loaded", joined)
+            self.assertIn("Backed up the unreadable legacy file", joined)
+            legacy_backups = list(legacy_path.parent.glob("config.env.bak-*"))
+            self.assertEqual(len(legacy_backups), 1)
+            path = config_mod.env_file_path(environ=environ)
+            preferences = config_mod.load_preferences(environ=environ, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+
     def test_setup_remote_unreachable_continues_when_confirmed(self) -> None:
         import tempfile
         from pathlib import Path
@@ -2171,8 +2915,8 @@ class ConfigUnitTests(TestCase):
         from app.config import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
-            responses = iter(["remote", "https://broken.example", "y"])
+            path = Path(tmp) / "config.toml"
+            responses = iter(["n", "remote", "https://broken.example", "y"])
             with patch("app.cli.check_health", return_value=False):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
@@ -2197,7 +2941,7 @@ class ConfigUnitTests(TestCase):
 
         healthy = HealthStatus(ok=True, version="0.3.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             messages: list[str] = []
             with (
@@ -2248,7 +2992,7 @@ class ConfigUnitTests(TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -2298,9 +3042,9 @@ class ConfigUnitTests(TestCase):
         from app.config import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
-            responses = iter(["local", "8765"])
+            responses = iter(["n", "local", "8765"])
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -2333,9 +3077,9 @@ class ConfigUnitTests(TestCase):
         from app.cli import run_setup
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
-            responses = iter(["local", ""])
+            responses = iter(["n", "local", ""])
             messages: list[str] = []
 
             def port_free(port: int) -> bool:
@@ -2382,9 +3126,9 @@ class ConfigUnitTests(TestCase):
         from app.cli import run_setup
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
-            responses = iter(["local", ""])
+            responses = iter(["n", "local", ""])
             messages: list[str] = []
 
             def port_free(port: int) -> bool:
@@ -2428,7 +3172,7 @@ class ConfigUnitTests(TestCase):
 
         healthy = _healthy_status()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             messages: list[str] = []
             with (
@@ -2468,10 +3212,10 @@ class ConfigUnitTests(TestCase):
         from app.config import LOCAL_PORT_FILE_NAME, run_dir
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])  # explicit y to restart
+        responses = iter(["n", "local", "", "y"])  # explicit y to restart
         messages: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             managed = run_dir(environ=environ)
@@ -2524,7 +3268,7 @@ class ConfigUnitTests(TestCase):
         from app.config import LOCAL_PORT_FILE_NAME, run_dir
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])
+        responses = iter(["n", "local", "", "y"])
         messages: list[str] = []
 
         def prompt(_message: str) -> str:
@@ -2534,7 +3278,7 @@ class ConfigUnitTests(TestCase):
                 raise EOFError from exc
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             managed = run_dir(environ=environ)
@@ -2575,7 +3319,7 @@ class ConfigUnitTests(TestCase):
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
         messages: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
@@ -2611,7 +3355,7 @@ class ConfigUnitTests(TestCase):
         from app.cli import run_setup
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])
+        responses = iter(["n", "local", "", "y"])
         messages: list[str] = []
         port_state = {"free": False}
 
@@ -2619,7 +3363,7 @@ class ConfigUnitTests(TestCase):
             return port_state["free"]
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
@@ -2664,7 +3408,7 @@ class ConfigUnitTests(TestCase):
         from app.config import LOCAL_PORT_FILE_NAME, run_dir
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])
+        responses = iter(["n", "local", "", "y"])
         messages: list[str] = []
         port_state = {"free": False}
 
@@ -2672,7 +3416,7 @@ class ConfigUnitTests(TestCase):
             return port_state["free"]
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
             managed = run_dir(environ=environ)
@@ -2714,7 +3458,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
             save_preferences(
                 ServerPreferences(
@@ -2763,7 +3507,7 @@ class ConfigUnitTests(TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
-            path = Path(tmp) / "bunnify" / "config.env"
+            path = Path(tmp) / "bunnify" / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="local",
@@ -2791,8 +3535,8 @@ class ConfigUnitTests(TestCase):
 
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
-            responses = iter(["remote", "https://remote.example/"])
+            path = Path(tmp) / "config.toml"
+            responses = iter(["n", "remote", "https://remote.example/"])
             with (
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.fetch_health", return_value=matching),
@@ -2824,8 +3568,8 @@ class ConfigUnitTests(TestCase):
 
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
-            responses = iter(["remote", "https://remote.example/", ""])
+            path = Path(tmp) / "config.toml"
+            responses = iter(["n", "remote", "https://remote.example/", ""])
             with (
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.fetch_health", return_value=remote),
@@ -2854,8 +3598,8 @@ class ConfigUnitTests(TestCase):
 
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
-            responses = iter(["remote", "https://remote.example/", "y"])
+            path = Path(tmp) / "config.toml"
+            responses = iter(["n", "remote", "https://remote.example/", "y"])
             with (
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.fetch_health", return_value=remote),
@@ -3504,7 +4248,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_home = Path(tmp) / "config"
             data_home = Path(tmp) / "data"
-            env_path = config_home / "bunnify" / "config.env"
+            env_path = config_home / "bunnify" / "config.toml"
             env_path.parent.mkdir(parents=True)
             isolated = {
                 "XDG_CONFIG_HOME": str(config_home),
@@ -3550,7 +4294,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_home = Path(tmp) / "config"
             data_home = Path(tmp) / "data"
-            env_path = config_home / "bunnify" / "config.env"
+            env_path = config_home / "bunnify" / "config.toml"
             env_path.parent.mkdir(parents=True)
             isolated = {
                 "XDG_CONFIG_HOME": str(config_home),
@@ -3592,7 +4336,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_home = Path(tmp) / "config"
             data_home = Path(tmp) / "data"
-            env_path = config_home / "bunnify" / "config.env"
+            env_path = config_home / "bunnify" / "config.toml"
             env_path.parent.mkdir(parents=True)
             isolated = {
                 "XDG_CONFIG_HOME": str(config_home),
@@ -3634,7 +4378,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.env"
+            path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="local",
@@ -3689,7 +4433,7 @@ class ConfigUnitTests(TestCase):
         from app.config import ServerPreferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
-            env_path = Path(tmp) / "config.env"
+            env_path = Path(tmp) / "config.toml"
             save_preferences(
                 ServerPreferences(
                     mode="remote",

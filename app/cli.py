@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import time
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -37,20 +38,22 @@ from app.coherence import (
     running_spotty_commit,
 )
 from app.config import (
-    ENV_VAR,
     LOCAL_PORT_FILE_NAME,
     MIN_LOCAL_PORT,
+    ConfigParseError,
     ServerPreferences,
     completion_script_bytes,
     ensure_user_bookmarks,
     env_file_path,
     format_server_preferences_summary,
+    legacy_config_env_file_path,
     legacy_env_file_path,
     load_preferences,
     read_base_url_from_env_file,
     resolve_base_url,
     run_dir,
     save_preferences,
+    seed_config_from_example,
 )
 from app.github_complete import (
     bootstrap_github_completion_cache,
@@ -137,7 +140,7 @@ def ensure_ready_base_url(
 
     if preferences.mode == "remote":
         if not preferences.base_url:
-            raise ClientError("Remote mode requires BUNNIFY_BASE_URL")
+            raise ClientError("Remote mode requires base_url in config.toml")
         base_url = _wait_for_healthy_remote(
             preferences.base_url,
             prompt_fn=ask,
@@ -305,13 +308,45 @@ def run_setup(
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
     path = env_path if env_path is not None else env_file_path(environ=environ)
-    existing = load_preferences(environ=environ, env_path=path)
 
     log(colors.header(_command_banner("setup")))
     log(colors.dim(f"running from {running_command_path()}"))
     log(colors.dim("Press Enter to accept the value in [brackets]."))
 
-    if existing is not None and existing.base_url:
+    try:
+        existing = load_preferences(environ=environ, env_path=path)
+    except ConfigParseError as exc:
+        log(colors.warn(f"{path} could not be loaded: {exc}"))
+        if not _retry_requested(
+            ask,
+            "Recreate config.toml from a fresh, documented example? [Y/n]: ",
+        ):
+            raise ClientError(
+                f"Setup aborted; fix or remove {path}, then retry."
+            ) from exc
+        if path.is_file():
+            backup = _backup_unreadable_config(path)
+            log(f"Backed up the unreadable file to {backup}.")
+        else:
+            # The error came from a broken legacy config.env instead (path
+            # itself was never written). Quarantine it too, otherwise the
+            # next write to config.toml re-runs the same failing migration.
+            legacy_path = legacy_config_env_file_path(environ=environ)
+            if legacy_path.is_file():
+                legacy_backup = _backup_unreadable_config(legacy_path)
+                log(f"Backed up the unreadable legacy file to {legacy_backup}.")
+        existing = None
+
+    seeded_example = False
+    if existing is None and not path.is_file():
+        seeded_example = _offer_and_seed_example_config(path, ask=ask, print_fn=log)
+        if seeded_example:
+            try:
+                existing = load_preferences(environ=environ, env_path=path)
+            except ConfigParseError:
+                existing = None
+
+    if not seeded_example and existing is not None and existing.base_url:
         log("")
         log(colors.header("Current configuration"))
         for line in format_server_preferences_summary(existing):
@@ -1328,6 +1363,49 @@ def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
     return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
 
 
+def _offer_and_seed_example_config(
+    path: Path,
+    *,
+    ask: Callable[[str], str],
+    print_fn: Callable[[str], None],
+) -> bool:
+    """Offer to install the annotated example config.toml when none exists yet.
+
+    Mirrors ``ensure_user_bookmarks``' offer-to-seed pattern. The interactive
+    Q&A that follows still overwrites ``mode``/``base_url``/``local_port``
+    with real, verified values -- but those writes go through tomlkit, which
+    preserves comments/formatting on mutation, so accepting this keeps the
+    documented example as the operator's real config.toml, updated in place
+    rather than replaced.
+    """
+    print_fn(f"No config.toml found at {path}.")
+    try:
+        answer = ask("Install the documented example as a starting point? [Y/n]: ")
+    except EOFError, click.Abort:
+        return False
+    normalized = answer.strip().lower()
+    if normalized not in {"y", "yes"} and not (normalized == "" and sys.stdin.isatty()):
+        return False
+    try:
+        seeded = seed_config_from_example(path)
+    except FileExistsError:
+        # Another process created config.toml while we were prompting.
+        return False
+    except FileNotFoundError:
+        # Packaged/repo example missing; fall through to a blank Q&A.
+        return False
+    print_fn(f"Installed the annotated example config at {seeded}.")
+    print_fn("Your answers below will update it in place, keeping its comments.")
+    return True
+
+
+def _backup_unreadable_config(path: Path) -> Path:
+    """Rename an unreadable/corrupt config file aside so setup can recreate it."""
+    backup = path.with_name(f"{path.name}.bak-{int(time.time())}")
+    path.rename(backup)
+    return backup
+
+
 def _restart_local_server_if_build_mismatch(
     *,
     base_url: str,
@@ -1541,7 +1619,8 @@ def _run_repl(
         if ensure_spotty_bunny_running(restart=offer_restart):
             click.echo(
                 theme.dim(
-                    "Spotty Bunny overlay ready (hold one Control, tap the other)"
+                    "Spotty Bunny overlay ready (hold one modifier key, tap "
+                    "the other — see `spotty-bunny hotkey` for the choice)"
                 )
             )
     click.echo(
@@ -1925,8 +2004,8 @@ def _print_completion_script(
     default=None,
     help=(
         "Base URL of the local Bunnify server. "
-        f"Falls back to {ENV_VAR}, ~/.config/bunnify/config.env, then legacy "
-        "bunnify.env; prompts and persists to the XDG config if unset."
+        "Falls back to ~/.config/bunnify/config.toml, then legacy "
+        "bunnify.env; prompts and persists to config.toml if unset."
     ),
 )
 @click.option(
@@ -2000,8 +2079,9 @@ def _print_completion_script(
     type=click.Path(path_type=Path),
     default=None,
     help=(
-        "Path to the environment file (default: ~/.config/bunnify/config.env, "
-        "XDG-aware; legacy repo-root bunnify.env is a fallback)."
+        "Path to the config file (default: ~/.config/bunnify/config.toml, "
+        "XDG-aware; a legacy per-user config.env or repo-root bunnify.env is "
+        "migrated into it once, then ignored)."
     ),
 )
 @click.option(
