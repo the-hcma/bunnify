@@ -1212,8 +1212,10 @@ def _stop_local_server_on_switch_to_remote(
     leaving two servers active and only one of them reachable at the
     configured `base_url`. Never raises: the remote configuration has
     already been verified and must still be saved even if the old local
-    server cannot be stopped; failures are reported so the operator can stop
-    it manually with `bunnify stop`.
+    server cannot be stopped; failures are reported with the exact
+    `--pid-dir` command that can stop it, since `bunnify stop` itself
+    refuses once `config.toml` records remote mode (which it already does by
+    the time this runs).
     """
     pid_dir = run_dir(environ=environ)
     port = _managed_local_port(pid_dir)
@@ -1229,6 +1231,7 @@ def _stop_local_server_on_switch_to_remote(
                 port = _managed_local_port(agent_pid_dir)
     if port is None and not agent_installed:
         return
+    stale_pid_dir = agent_pid_dir if agent_installed else pid_dir
     try:
         if agent_installed:
             from app.server_agent import bootout_loaded_agent
@@ -1242,10 +1245,14 @@ def _stop_local_server_on_switch_to_remote(
                 theme.ok(f"✓ Stopped the previous local Bunnify server (port {port})")
             )
     except (OSError, RuntimeError, ValueError) as exc:
+        manual_command = (
+            f"{sys.executable} -m app.server_cli --stop --pid-dir {stale_pid_dir}"
+        )
         print_fn(
             theme.warn(
                 f"⚠ Could not stop the previous local Bunnify server: {exc}. "
-                "Stop it manually with `bunnify stop`."
+                f"`bunnify stop` will refuse now that mode is remote; stop it "
+                f"manually with `{manual_command}`."
             )
         )
 
