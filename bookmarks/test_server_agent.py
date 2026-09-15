@@ -375,7 +375,15 @@ class ServerAgentTests(SimpleTestCase):
                 pid_dir_calls, [call(pid_dir, port=8123, port_timeout_s=5)]
             )
 
-    def test_install_removes_plist_when_restore_also_fails(self) -> None:
+    def test_install_preserves_previous_plist_when_restore_also_fails(self) -> None:
+        """A restore whose retry never becomes healthy must not delete the
+        last-known-good plist -- it stays on disk (unloaded) so a later
+        `install` can retry against it instead of leaving local mode with
+        nothing to fall back to. Regression test for the bug fixed alongside
+        `_rollback_outcome_message`: `_rollback_failed_install` used to call
+        `plist.unlink(missing_ok=True)` unconditionally, even after a restore
+        attempt, silently deleting a previously-working configuration.
+        """
         from app.server_agent import AGENT_LABEL, format_agent_plist, install_agent
 
         ctl = _FakeLaunchctl()
@@ -387,21 +395,19 @@ class ServerAgentTests(SimpleTestCase):
             restored_pid_dir = home / "run" / "launchd-previous"
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
-            plist.write_text(
-                format_agent_plist(
-                    home=home,
-                    program_arguments=[
-                        str(program),
-                        "--foreground",
-                        "--noninteractive",
-                        "--port",
-                        "8000",
-                        "--pid-dir",
-                        str(restored_pid_dir),
-                    ],
-                ),
-                encoding="utf-8",
+            previous_plist_text = format_agent_plist(
+                home=home,
+                program_arguments=[
+                    str(program),
+                    "--foreground",
+                    "--noninteractive",
+                    "--port",
+                    "8000",
+                    "--pid-dir",
+                    str(restored_pid_dir),
+                ],
             )
+            plist.write_text(previous_plist_text, encoding="utf-8")
             stderr = StringIO()
             with (
                 patch("app.server_agent.stop_local_server") as stop,
@@ -419,7 +425,15 @@ class ServerAgentTests(SimpleTestCase):
                     program=program,
                 )
             self.assertEqual(code, 1)
-            self.assertFalse(plist.exists())
+            self.assertTrue(plist.is_file())
+            self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            # "Kept on disk" must mean unloaded, not just present -- otherwise
+            # the "(unloaded) ... local mode is now down" message would lie.
+            self.assertFalse(ctl.loaded)
+            self.assertIn(
+                "kept the previous LaunchAgent configuration on disk",
+                stderr.getvalue(),
+            )
             self.assertIn(
                 "local mode is now down",
                 stderr.getvalue(),
@@ -428,6 +442,42 @@ class ServerAgentTests(SimpleTestCase):
             # plist's port (8000) and pid_dir (restored_pid_dir, distinct
             # from the failed attempt's pid_dir), not the failed attempt's.
             stop.assert_any_call(restored_pid_dir, port=8000, port_timeout_s=5)
+
+    def test_install_removes_plist_when_fresh_install_never_becomes_healthy(
+        self,
+    ) -> None:
+        """With no previous configuration to restore (fresh install), a
+        failed rollback still removes the non-functional plist."""
+        from app.server_agent import AGENT_LABEL, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch("app.server_agent._reload_agent", return_value=False),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                )
+            self.assertEqual(code, 1)
+            self.assertFalse(plist.exists())
+            self.assertIn(
+                "removed the non-functional LaunchAgent configuration",
+                stderr.getvalue(),
+            )
 
     def test_install_restores_previous_plist_when_health_check_fails(self) -> None:
         from app.server_agent import (

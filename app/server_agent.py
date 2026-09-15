@@ -153,15 +153,7 @@ def install_agent(
         # Callers (e.g. app.cli's setup/restart-on-mismatch flows) surface the
         # *last* captured message as the reported error, so keep the root
         # cause last and the restore/removal note first.
-        err(
-            f"{COMMAND_NAME}: "
-            + (
-                "restored the previous LaunchAgent configuration."
-                if restored
-                else "removed the non-functional LaunchAgent configuration; "
-                f"local mode is now down. Run: {COMMAND_NAME} install"
-            )
-        )
+        err(f"{COMMAND_NAME}: {_rollback_outcome_message(restored, plist)}")
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
     if not _wait_for_managed_health(
@@ -177,15 +169,7 @@ def install_agent(
             port=port,
             previous_plist_bytes=previous_plist_bytes,
         )
-        err(
-            f"{COMMAND_NAME}: "
-            + (
-                "restored the previous LaunchAgent configuration."
-                if restored
-                else "removed the non-functional LaunchAgent configuration; "
-                f"local mode is now down. Run: {COMMAND_NAME} install"
-            )
-        )
+        err(f"{COMMAND_NAME}: {_rollback_outcome_message(restored, plist)}")
         err(f"{COMMAND_NAME}: server at {base_url} did not become healthy.")
         return 1
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
@@ -608,6 +592,27 @@ def _reload_agent(
     return _bootstrap_agent(plist, launchctl=launchctl)
 
 
+def _rollback_outcome_message(restored: bool, plist: Path) -> str:
+    """Describe what `_rollback_failed_install` left behind on disk.
+
+    *restored* means the previous configuration was re-bootstrapped and
+    became healthy. Otherwise, the plist may still be present (preserved for
+    a retry when there was a previous known-good config to restore) or fully
+    removed (fresh install, nothing to fall back to).
+    """
+    if restored:
+        return "restored the previous LaunchAgent configuration."
+    if plist.is_file():
+        return (
+            "kept the previous LaunchAgent configuration on disk (unloaded) "
+            f"for retry; local mode is now down. Run: {COMMAND_NAME} install"
+        )
+    return (
+        "removed the non-functional LaunchAgent configuration; "
+        f"local mode is now down. Run: {COMMAND_NAME} install"
+    )
+
+
 def _resolve_program_arguments(
     program: Path | Sequence[str] | None,
 ) -> list[str] | None:
@@ -632,9 +637,12 @@ def _rollback_failed_install(
     If *previous_plist_bytes* names a previously-working configuration (the
     upgrade case), restore and re-bootstrap it so local mode is left running
     on the last-known-good plist rather than fully uninstalled. Returns True
-    when that restore succeeded, False when the plist was removed instead
-    (fresh install with nothing to restore, or the restore attempt itself
-    failed to become healthy).
+    when that restore succeeded. Returns False otherwise: when there was
+    nothing to restore (fresh install), the plist is removed; when a restore
+    was attempted but the retry itself didn't become healthy in time, the
+    restored plist is left on disk (unloaded) so a subsequent `install` can
+    retry against it instead of silently deleting local mode's last-known-good
+    config.
     """
     _bootout_agent(launchctl=launchctl)
     try:
@@ -671,6 +679,13 @@ def _rollback_failed_install(
             stop_local_server(restored_pid_dir, port=restored_port, port_timeout_s=5)
         except OSError, RuntimeError, ValueError:
             pass
+        # The restored bytes are a previously-verified-good configuration --
+        # a failed re-bootstrap here means the *retry* didn't become healthy
+        # in time (e.g. a slow reload), not that the configuration itself is
+        # bad. Leave the plist on disk (unloaded) so `bunnify-server
+        # install`/setup can retry against it instead of silently deleting
+        # local mode's last-known-good config.
+        return False
     plist.unlink(missing_ok=True)
     return False
 
