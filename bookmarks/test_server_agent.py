@@ -347,12 +347,13 @@ class ServerAgentTests(SimpleTestCase):
             # _wait_for_managed_health is asserted (via side_effect) to have
             # been probed on the *restored* plist's port (8000), proving
             # install_agent re-derives the port from the restored plist
-            # rather than reusing the failed attempt's port (8123). The
-            # defensive cleanup of the failed attempt's port runs twice
-            # (initial rollback stop + post-restore safety net).
+            # rather than reusing the failed attempt's port (8123). Only one
+            # stop against this pid_dir (the initial rollback stop, before
+            # the restore) should run; a second one here would target the
+            # just-restored (healthy) server instead.
+            pid_dir_calls = [c for c in stop.call_args_list if c.args[0] == pid_dir]
             self.assertEqual(
-                stop.call_args_list.count(call(pid_dir, port=8123, port_timeout_s=5)),
-                2,
+                pid_dir_calls, [call(pid_dir, port=8123, port_timeout_s=5)]
             )
 
     def test_install_removes_plist_when_restore_also_fails(self) -> None:
@@ -406,6 +407,64 @@ class ServerAgentTests(SimpleTestCase):
             # Cleanup after a failed restore must target the *restored*
             # plist's port (8000), not the failed attempt's port (8123).
             stop.assert_any_call(pid_dir, port=8000, port_timeout_s=5)
+
+    def test_install_restores_previous_plist_when_health_check_fails(self) -> None:
+        from app.server_agent import AGENT_LABEL, format_agent_plist, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            previous_plist_text = format_agent_plist(
+                home=home,
+                program_arguments=[
+                    str(program),
+                    "--foreground",
+                    "--noninteractive",
+                    "--port",
+                    "8000",
+                    "--pid-dir",
+                    str(pid_dir),
+                ],
+            )
+            plist.write_text(previous_plist_text, encoding="utf-8")
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch(
+                    "app.server_agent._wait_for_managed_health",
+                    side_effect=lambda base_url, *, pid_dir, port, timeout_s: (
+                        port == 8000
+                    ),
+                ),
+            ):
+                # `_reload_agent` is left un-mocked here (unlike the
+                # bootstrap-failure test above) so this exercises the
+                # *second* `_rollback_failed_install` call site -- the one
+                # reached when the new plist loads but its server never
+                # becomes healthy, which is the more common upgrade failure.
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                    timeout_s=0.2,
+                )
+            self.assertEqual(code, 1)
+            self.assertTrue(plist.is_file())
+            self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            self.assertIn(
+                "restored the previous LaunchAgent configuration",
+                stderr.getvalue(),
+            )
 
     def test_install_rejects_foreign_server_on_port(self) -> None:
         from app.server_agent import AGENT_LABEL, install_agent

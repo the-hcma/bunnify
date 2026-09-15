@@ -629,6 +629,12 @@ def _rollback_failed_install(
     """
     _bootout_agent(launchctl=launchctl)
     try:
+        # This blocks until *port* can be bound again (or times out), so the
+        # failed attempt's server is confirmed stopped before anything else
+        # in this pid_dir is touched -- no extra cleanup call is safe here:
+        # once the restored plist's server starts, it reuses the same
+        # pid_dir's PID/port files, so a later stop_local_server(pid_dir, ...)
+        # would target the just-restored (healthy) server instead.
         stop_local_server(pid_dir, port=port, port_timeout_s=5)
     except OSError, RuntimeError, ValueError:
         pass
@@ -645,16 +651,6 @@ def _rollback_failed_install(
             port=restored_port,
             timeout_s=restore_timeout_s,
         ):
-            if restored_port != port:
-                # The failed attempt's own stop (above) targeted *port*, but
-                # bootout is asynchronous; make a second, defensive attempt
-                # now that the restored (different-port) server is confirmed
-                # healthy, so a surviving failed-build process doesn't keep
-                # holding *port*.
-                try:
-                    stop_local_server(pid_dir, port=port, port_timeout_s=5)
-                except OSError, RuntimeError, ValueError:
-                    pass
             return True
         _bootout_agent(launchctl=launchctl)
         try:
