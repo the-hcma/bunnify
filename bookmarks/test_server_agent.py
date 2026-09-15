@@ -427,6 +427,9 @@ class ServerAgentTests(SimpleTestCase):
             self.assertEqual(code, 1)
             self.assertTrue(plist.is_file())
             self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            # "Kept on disk" must mean unloaded, not just present -- otherwise
+            # the "(unloaded) ... local mode is now down" message would lie.
+            self.assertFalse(ctl.loaded)
             self.assertIn(
                 "kept the previous LaunchAgent configuration on disk",
                 stderr.getvalue(),

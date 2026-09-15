@@ -113,8 +113,11 @@ On macOS, `bunnify-server upgrade` (and `bunnify upgrade`'s server-agent
 refresh) follows the verify-before-replace rule for the server LaunchAgent
 itself — if the new build cannot be reloaded or does not become healthy, the
 previous LaunchAgent plist is restored and reloaded rather than left
-uninstalled; only if that restore attempt also fails is the plist removed
-(and the failure is reported so you know local mode is down). Use
+uninstalled; if that restore attempt also fails to become healthy, the
+restored plist is left on disk (unloaded) so a later `bunnify install` can
+retry it, rather than being deleted — the plist is only removed outright when
+there was no previous configuration to fall back to (a fresh install). Either
+way the failure is reported so you know local mode is down. Use
 `bunnify status` after any switch to confirm the configured target is
 healthy.
 
