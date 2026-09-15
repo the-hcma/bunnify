@@ -292,6 +292,103 @@ class ServerAgentTests(SimpleTestCase):
             self.assertFalse(plist.exists())
             self.assertFalse(ctl.loaded)
 
+    def test_install_restores_previous_plist_when_bootstrap_fails(self) -> None:
+        from app.server_agent import AGENT_LABEL, format_agent_plist, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            previous_plist_text = format_agent_plist(
+                home=home,
+                program_arguments=[
+                    str(program),
+                    "--foreground",
+                    "--noninteractive",
+                    "--port",
+                    "8000",
+                    "--pid-dir",
+                    str(pid_dir),
+                ],
+            )
+            plist.write_text(previous_plist_text, encoding="utf-8")
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch("app.server_agent._reload_agent", return_value=False),
+                patch("app.server_agent._wait_for_managed_health", return_value=True),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                )
+            self.assertEqual(code, 1)
+            self.assertTrue(plist.is_file())
+            self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            self.assertIn(
+                "restored the previous LaunchAgent configuration",
+                stderr.getvalue(),
+            )
+
+    def test_install_removes_plist_when_restore_also_fails(self) -> None:
+        from app.server_agent import AGENT_LABEL, format_agent_plist, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[
+                        str(program),
+                        "--foreground",
+                        "--noninteractive",
+                        "--port",
+                        "8000",
+                        "--pid-dir",
+                        str(pid_dir),
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch("app.server_agent._reload_agent", return_value=False),
+                patch("app.server_agent._wait_for_managed_health", return_value=False),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                )
+            self.assertEqual(code, 1)
+            self.assertFalse(plist.exists())
+            self.assertIn(
+                "local mode is now down",
+                stderr.getvalue(),
+            )
+
     def test_install_rejects_foreign_server_on_port(self) -> None:
         from app.server_agent import AGENT_LABEL, install_agent
 

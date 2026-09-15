@@ -137,12 +137,29 @@ def install_agent(
         except OSError, RuntimeError, ValueError:
             pass
     plist = agent_plist_path(home=root)
+    # Preserve a previously-working plist (upgrade case) so a failed
+    # reload/health-wait can restore it instead of leaving the agent fully
+    # uninstalled -- see _rollback_failed_install.
+    previous_plist_bytes = plist.read_bytes() if plist.is_file() else None
     _write_plist(plist, home=root, program_arguments=argv)
     if not _reload_agent(plist, launchctl=launchctl, pid_dir=agent_pid_dir):
-        _rollback_failed_install(
-            plist, launchctl=launchctl, pid_dir=agent_pid_dir, port=port
+        restored = _rollback_failed_install(
+            plist,
+            launchctl=launchctl,
+            pid_dir=agent_pid_dir,
+            port=port,
+            previous_plist_bytes=previous_plist_bytes,
         )
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
+        err(
+            f"{COMMAND_NAME}: "
+            + (
+                "restored the previous LaunchAgent configuration."
+                if restored
+                else "removed the non-functional LaunchAgent configuration; "
+                f"local mode is now down. Run: {COMMAND_NAME} install"
+            )
+        )
         return 1
     if not _wait_for_managed_health(
         base_url,
@@ -150,10 +167,23 @@ def install_agent(
         port=port,
         timeout_s=timeout_s,
     ):
-        _rollback_failed_install(
-            plist, launchctl=launchctl, pid_dir=agent_pid_dir, port=port
+        restored = _rollback_failed_install(
+            plist,
+            launchctl=launchctl,
+            pid_dir=agent_pid_dir,
+            port=port,
+            previous_plist_bytes=previous_plist_bytes,
         )
         err(f"{COMMAND_NAME}: server at {base_url} did not become healthy.")
+        err(
+            f"{COMMAND_NAME}: "
+            + (
+                "restored the previous LaunchAgent configuration."
+                if restored
+                else "removed the non-functional LaunchAgent configuration; "
+                f"local mode is now down. Run: {COMMAND_NAME} install"
+            )
+        )
         return 1
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: plist {plist}")
@@ -582,14 +612,44 @@ def _rollback_failed_install(
     launchctl: LaunchctlFn | None,
     pid_dir: Path,
     port: int,
-) -> None:
-    """Boot out and remove a plist that never became healthy."""
+    previous_plist_bytes: bytes | None = None,
+    restore_timeout_s: float = 15.0,
+) -> bool:
+    """Boot out a plist that never became healthy.
+
+    If *previous_plist_bytes* names a previously-working configuration (the
+    upgrade case), restore and re-bootstrap it so local mode is left running
+    on the last-known-good plist rather than fully uninstalled. Returns True
+    when that restore succeeded, False when the plist was removed instead
+    (fresh install with nothing to restore, or the restore attempt itself
+    failed to become healthy).
+    """
     _bootout_agent(launchctl=launchctl)
-    plist.unlink(missing_ok=True)
     try:
         stop_local_server(pid_dir, port=port, port_timeout_s=5)
     except OSError, RuntimeError, ValueError:
         pass
+    if previous_plist_bytes is not None:
+        plist.write_bytes(previous_plist_bytes)
+        # The previous plist may target a different port than the failed
+        # attempt (e.g. an upgrade that also changed the port); read it back
+        # from the restored plist rather than assuming it matches *port*.
+        restored_port = _port_from_argv(_plist_program_arguments(plist)) or port
+        base_url = f"http://127.0.0.1:{restored_port}"
+        if _bootstrap_agent(plist, launchctl=launchctl) and _wait_for_managed_health(
+            base_url,
+            pid_dir=pid_dir,
+            port=restored_port,
+            timeout_s=restore_timeout_s,
+        ):
+            return True
+        _bootout_agent(launchctl=launchctl)
+        try:
+            stop_local_server(pid_dir, port=restored_port, port_timeout_s=5)
+        except OSError, RuntimeError, ValueError:
+            pass
+    plist.unlink(missing_ok=True)
+    return False
 
 
 def _wait_for_managed_health(
