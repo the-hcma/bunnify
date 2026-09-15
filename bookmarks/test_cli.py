@@ -2998,7 +2998,13 @@ class ConfigUnitTests(TestCase):
         from pathlib import Path
 
         from app.cli import run_setup
-        from app.config import ServerPreferences, load_preferences, save_preferences
+        from app.config import (
+            LOCAL_PORT_FILE_NAME,
+            ServerPreferences,
+            load_preferences,
+            run_dir,
+            save_preferences,
+        )
 
         remote = _healthy_status()
         responses = iter(["n", "remote", "https://bunnify.example"])
@@ -3015,7 +3021,11 @@ class ConfigUnitTests(TestCase):
                 env_path=path,
                 environ=environ,
             )
-            # Deliberately no LOCAL_PORT_FILE_NAME written under run_dir().
+            # save_preferences() persists local_port to the run-dir port file
+            # too; delete it so this test actually exercises the
+            # `preferences.local_port` fallback branch instead of passing
+            # via the run-dir file (which is what round-6 review flagged).
+            (run_dir(environ=environ) / LOCAL_PORT_FILE_NAME).unlink()
             with (
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.fetch_health", return_value=remote),
