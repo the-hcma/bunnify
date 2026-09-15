@@ -1920,6 +1920,148 @@ class ConfigUnitTests(TestCase):
                 '{"personal": true}\n',
             )
 
+    def test_seed_config_does_not_overwrite(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import seed_config_from_example
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config.toml"
+            target.write_text('mode = "remote"\n', encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                seed_config_from_example(target)
+
+            self.assertEqual(
+                target.read_text(encoding="utf-8"),
+                'mode = "remote"\n',
+            )
+
+    def test_seed_config_from_example_writes_packaged_content(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.config import example_config_bytes, seed_config_from_example
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "nested" / "config.toml"
+
+            result = seed_config_from_example(target)
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.read_bytes(), example_config_bytes())
+
+    def test_seed_config_from_example_raises_when_example_missing(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.config import seed_config_from_example
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config.toml"
+            with patch("app.config.example_config_bytes", return_value=None):
+                with self.assertRaises(FileNotFoundError) as context:
+                    seed_config_from_example(target)
+
+            self.assertIn("No config example found", str(context.exception))
+            self.assertFalse(target.exists())
+
+    def test_offer_and_seed_example_config_accepts(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import _offer_and_seed_example_config
+        from app.config import example_config_bytes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            messages: list[str] = []
+
+            seeded = _offer_and_seed_example_config(
+                path, ask=lambda _message: "y", print_fn=messages.append
+            )
+
+            self.assertTrue(seeded)
+            self.assertEqual(path.read_bytes(), example_config_bytes())
+            joined = "\n".join(messages)
+            self.assertIn("No config.toml found", joined)
+            self.assertIn("Installed the annotated example config", joined)
+
+    def test_offer_and_seed_example_config_declines(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import _offer_and_seed_example_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+
+            seeded = _offer_and_seed_example_config(
+                path, ask=lambda _message: "n", print_fn=lambda _message: None
+            )
+
+            self.assertFalse(seeded)
+            self.assertFalse(path.exists())
+
+    def test_offer_and_seed_example_config_declines_on_abort(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import click
+
+        from app.cli import _offer_and_seed_example_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+
+            def abort_prompt(_message: str) -> str:
+                raise click.Abort()
+
+            seeded = _offer_and_seed_example_config(
+                path, ask=abort_prompt, print_fn=lambda _message: None
+            )
+
+            self.assertFalse(seeded)
+            self.assertFalse(path.exists())
+
+    def test_offer_and_seed_example_config_falls_back_when_example_missing(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _offer_and_seed_example_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            with patch("app.config.example_config_bytes", return_value=None):
+                seeded = _offer_and_seed_example_config(
+                    path, ask=lambda _message: "y", print_fn=lambda _message: None
+                )
+
+            self.assertFalse(seeded)
+            self.assertFalse(path.exists())
+
+    def test_backup_unreadable_config_renames_aside(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import _backup_unreadable_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("not = valid = toml\n", encoding="utf-8")
+
+            backup = _backup_unreadable_config(path)
+
+            self.assertFalse(path.exists())
+            self.assertTrue(backup.is_file())
+            self.assertTrue(backup.name.startswith("config.toml.bak-"))
+            self.assertEqual(backup.read_text(encoding="utf-8"), "not = valid = toml\n")
+
     def test_resolve_prefers_cli_then_file(self) -> None:
         import tempfile
         from pathlib import Path
@@ -2563,6 +2705,154 @@ class ConfigUnitTests(TestCase):
             assert preferences is not None
             self.assertEqual(preferences.base_url, "https://new.example")
 
+    def test_setup_seeds_example_config_when_accepted(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import example_config_bytes, load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["y", "", "9999"])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:9999", 9999),
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:9999")
+            joined = "\n".join(messages)
+            self.assertIn("No config.toml found", joined)
+            self.assertIn("Installed the annotated example config", joined)
+            self.assertNotIn("Current configuration", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "local")
+            # The seeded example's annotations must survive the in-place update.
+            self.assertNotEqual(path.read_bytes(), example_config_bytes())
+            self.assertIn(b"#", path.read_bytes())
+
+    def test_setup_declines_seeding_example_config_and_proceeds_blank(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["n", "local", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            joined = "\n".join(messages)
+            self.assertIn("No config.toml found", joined)
+            self.assertNotIn("Installed the annotated example config", joined)
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "local")
+
+    def test_setup_recreates_corrupt_config_when_confirmed(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.config import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = = broken\n", encoding="utf-8")
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["y", "n", "local", ""])
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch(
+                    "app.cli._ensure_local_server_for_setup",
+                    return_value=("http://127.0.0.1:8000", 8000),
+                ),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.port_is_free", return_value=True),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "http://127.0.0.1:8000")
+            joined = "\n".join(messages)
+            self.assertIn("could not be loaded", joined)
+            self.assertIn("Backed up the unreadable file", joined)
+            backups = list(Path(tmp).glob("config.toml.bak-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(
+                backups[0].read_text(encoding="utf-8"), "mode = = broken\n"
+            )
+            preferences = load_preferences(environ={}, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "local")
+
+    def test_setup_aborts_when_corrupt_config_recreate_declined(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_setup
+        from app.client import ClientError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("mode = = broken\n", encoding="utf-8")
+            responses = iter(["n"])
+
+            with self.assertRaises(ClientError) as ctx:
+                run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+
+            self.assertIn("Setup aborted", str(ctx.exception))
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_text(encoding="utf-8"), "mode = = broken\n")
+
     def test_setup_remote_unreachable_continues_when_confirmed(self) -> None:
         import tempfile
         from pathlib import Path
@@ -2572,7 +2862,7 @@ class ConfigUnitTests(TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
-            responses = iter(["remote", "https://broken.example", "y"])
+            responses = iter(["n", "remote", "https://broken.example", "y"])
             with patch("app.cli.check_health", return_value=False):
                 result = run_setup(
                     prompt_fn=lambda _message: next(responses),
@@ -2700,7 +2990,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
-            responses = iter(["local", "8765"])
+            responses = iter(["n", "local", "8765"])
             with (
                 patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
                 patch(
@@ -2735,7 +3025,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
-            responses = iter(["local", ""])
+            responses = iter(["n", "local", ""])
             messages: list[str] = []
 
             def port_free(port: int) -> bool:
@@ -2784,7 +3074,7 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
             bookmarks = Path(tmp) / "bookmarks.json"
-            responses = iter(["local", ""])
+            responses = iter(["n", "local", ""])
             messages: list[str] = []
 
             def port_free(port: int) -> bool:
@@ -2868,7 +3158,7 @@ class ConfigUnitTests(TestCase):
         from app.config import LOCAL_PORT_FILE_NAME, run_dir
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])  # explicit y to restart
+        responses = iter(["n", "local", "", "y"])  # explicit y to restart
         messages: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
@@ -2924,7 +3214,7 @@ class ConfigUnitTests(TestCase):
         from app.config import LOCAL_PORT_FILE_NAME, run_dir
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])
+        responses = iter(["n", "local", "", "y"])
         messages: list[str] = []
 
         def prompt(_message: str) -> str:
@@ -3011,7 +3301,7 @@ class ConfigUnitTests(TestCase):
         from app.cli import run_setup
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])
+        responses = iter(["n", "local", "", "y"])
         messages: list[str] = []
         port_state = {"free": False}
 
@@ -3064,7 +3354,7 @@ class ConfigUnitTests(TestCase):
         from app.config import LOCAL_PORT_FILE_NAME, run_dir
 
         remote = _healthy_status(version="0.2.0", commit="oldoldoldold")
-        responses = iter(["local", "", "y"])
+        responses = iter(["n", "local", "", "y"])
         messages: list[str] = []
         port_state = {"free": False}
 
@@ -3192,7 +3482,7 @@ class ConfigUnitTests(TestCase):
         matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
-            responses = iter(["remote", "https://remote.example/"])
+            responses = iter(["n", "remote", "https://remote.example/"])
             with (
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.fetch_health", return_value=matching),
@@ -3225,7 +3515,7 @@ class ConfigUnitTests(TestCase):
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
-            responses = iter(["remote", "https://remote.example/", ""])
+            responses = iter(["n", "remote", "https://remote.example/", ""])
             with (
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.fetch_health", return_value=remote),
@@ -3255,7 +3545,7 @@ class ConfigUnitTests(TestCase):
         remote = HealthStatus(ok=True, version="0.9.0", commit="oldoldoldold")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
-            responses = iter(["remote", "https://remote.example/", "y"])
+            responses = iter(["n", "remote", "https://remote.example/", "y"])
             with (
                 patch("app.cli.check_health", return_value=True),
                 patch("app.cli.fetch_health", return_value=remote),

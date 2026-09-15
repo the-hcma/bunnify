@@ -23,6 +23,8 @@ DATA_DIR_ENV_VAR = "BUNNIFY_DATA_DIR"
 CONFIG_FILE_NAME = "config.toml"
 EXAMPLE_BOOKMARKS_NAME = "bunnify.json.example"
 PACKAGED_EXAMPLE_BOOKMARKS_NAME = "bookmarks.example.json"
+EXAMPLE_CONFIG_NAME = "config.example.toml"
+PACKAGED_EXAMPLE_CONFIG_NAME = "config.example.toml"
 LEGACY_ENV_FILE_NAME = "bunnify.env"
 LEGACY_BOOKMARKS_PATH = Path.home() / "work" / "bunnify" / "bunnify.json"
 
@@ -516,6 +518,34 @@ def example_bookmarks_path(*, root: Path | None = None) -> Path:
     return (root if root is not None else repo_root()) / EXAMPLE_BOOKMARKS_NAME
 
 
+def example_config_bytes() -> bytes | None:
+    """Load the annotated example config.toml from the packaged resource or repo."""
+    try:
+        packaged = resources.files("app").joinpath(
+            "data",
+            PACKAGED_EXAMPLE_CONFIG_NAME,
+        )
+        return packaged.read_bytes()
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        AttributeError,
+    ):
+        pass
+
+    repo_example = example_config_path()
+    if repo_example.is_file():
+        return repo_example.read_bytes()
+    return None
+
+
+def example_config_path(*, root: Path | None = None) -> Path:
+    """Return the canonical example config.toml file in a repository checkout."""
+    return (root if root is not None else repo_root()) / EXAMPLE_CONFIG_NAME
+
+
 def completion_script_bytes() -> bytes | None:
     """Load the bash completion script from the packaged resource or repo etc/."""
     try:
@@ -554,6 +584,33 @@ def seed_bookmarks_from_example(dest: Path) -> Path:
         raise FileNotFoundError(
             f"No bookmarks example found (expected packaged "
             f"{EXAMPLE_BOOKMARKS_NAME} or {example_bookmarks_path()})"
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(payload)
+    return dest
+
+
+def seed_config_from_example(dest: Path) -> Path:
+    """Copy the annotated example config.toml to ``dest`` (parent dirs created).
+
+    Unlike bookmarks, the copied file is not meant to be used verbatim --
+    callers (``bunnify setup``) still overwrite ``mode``/``base_url``/
+    ``local_port`` with real, verified values afterward. Because those
+    writes go through ``read_toml_document``/``write_toml_document``
+    (tomlkit), which preserve comments and formatting on mutation, seeding
+    this file first means the operator keeps the annotated example as their
+    real config.toml, updated in place rather than replaced.
+
+    Raises ``FileExistsError`` if ``dest`` already exists, and
+    ``FileNotFoundError`` if no example template can be found.
+    """
+    if dest.exists():
+        raise FileExistsError(str(dest))
+    payload = example_config_bytes()
+    if payload is None:
+        raise FileNotFoundError(
+            f"No config example found (expected packaged "
+            f"{EXAMPLE_CONFIG_NAME} or {example_config_path()})"
         )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(payload)

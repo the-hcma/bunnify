@@ -58,6 +58,7 @@ packages = ["app", "bookmarks"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "bunnify.json.example" = "app/data/bookmarks.example.json"
+"config.example.toml" = "app/data/config.example.toml"
 "etc/bunnify-completion" = "app/data/bunnify-completion"
 
 [tool.hatch.build.targets.sdist]
@@ -67,6 +68,7 @@ packages = ["app", "bookmarks"]
 # still resolve the wheel force-include source paths above.
 [tool.hatch.build.targets.sdist.force-include]
 "bunnify.json.example" = "bunnify.json.example"
+"config.example.toml" = "config.example.toml"
 "etc/bunnify-completion" = "etc/bunnify-completion"
 
 [dependency-groups]

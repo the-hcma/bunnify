@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import time
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -39,6 +40,7 @@ from app.coherence import (
 from app.config import (
     LOCAL_PORT_FILE_NAME,
     MIN_LOCAL_PORT,
+    ConfigParseError,
     ServerPreferences,
     completion_script_bytes,
     ensure_user_bookmarks,
@@ -50,6 +52,7 @@ from app.config import (
     resolve_base_url,
     run_dir,
     save_preferences,
+    seed_config_from_example,
 )
 from app.github_complete import (
     bootstrap_github_completion_cache,
@@ -304,13 +307,36 @@ def run_setup(
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
     path = env_path if env_path is not None else env_file_path(environ=environ)
-    existing = load_preferences(environ=environ, env_path=path)
 
     log(colors.header(_command_banner("setup")))
     log(colors.dim(f"running from {running_command_path()}"))
     log(colors.dim("Press Enter to accept the value in [brackets]."))
 
-    if existing is not None and existing.base_url:
+    try:
+        existing = load_preferences(environ=environ, env_path=path)
+    except ConfigParseError as exc:
+        log(colors.warn(f"{path} could not be loaded: {exc}"))
+        if not _retry_requested(
+            ask,
+            "Recreate config.toml from a fresh, documented example? [Y/n]: ",
+        ):
+            raise ClientError(
+                f"Setup aborted; fix or remove {path}, then retry."
+            ) from exc
+        backup = _backup_unreadable_config(path)
+        log(f"Backed up the unreadable file to {backup}.")
+        existing = None
+
+    seeded_example = False
+    if existing is None and not path.is_file():
+        seeded_example = _offer_and_seed_example_config(path, ask=ask, print_fn=log)
+        if seeded_example:
+            try:
+                existing = load_preferences(environ=environ, env_path=path)
+            except ConfigParseError:
+                existing = None
+
+    if not seeded_example and existing is not None and existing.base_url:
         log("")
         log(colors.header("Current configuration"))
         for line in format_server_preferences_summary(existing):
@@ -1325,6 +1351,49 @@ def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:
     except EOFError:
         return False
     return answer.strip().lower() not in {"abort", "n", "no", "q", "quit"}
+
+
+def _offer_and_seed_example_config(
+    path: Path,
+    *,
+    ask: Callable[[str], str],
+    print_fn: Callable[[str], None],
+) -> bool:
+    """Offer to install the annotated example config.toml when none exists yet.
+
+    Mirrors ``ensure_user_bookmarks``' offer-to-seed pattern. The interactive
+    Q&A that follows still overwrites ``mode``/``base_url``/``local_port``
+    with real, verified values -- but those writes go through tomlkit, which
+    preserves comments/formatting on mutation, so accepting this keeps the
+    documented example as the operator's real config.toml, updated in place
+    rather than replaced.
+    """
+    print_fn(f"No config.toml found at {path}.")
+    try:
+        answer = ask("Install the documented example as a starting point? [Y/n]: ")
+    except EOFError, click.Abort:
+        return False
+    normalized = answer.strip().lower()
+    if normalized not in {"y", "yes"} and not (normalized == "" and sys.stdin.isatty()):
+        return False
+    try:
+        seeded = seed_config_from_example(path)
+    except FileExistsError:
+        # Another process created config.toml while we were prompting.
+        return False
+    except FileNotFoundError:
+        # Packaged/repo example missing; fall through to a blank Q&A.
+        return False
+    print_fn(f"Installed the annotated example config at {seeded}.")
+    print_fn("Your answers below will update it in place, keeping its comments.")
+    return True
+
+
+def _backup_unreadable_config(path: Path) -> Path:
+    """Rename an unreadable/corrupt config.toml aside so setup can recreate it."""
+    backup = path.with_name(f"{path.name}.bak-{int(time.time())}")
+    path.rename(backup)
+    return backup
 
 
 def _restart_local_server_if_build_mismatch(

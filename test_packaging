@@ -96,6 +96,41 @@ if packaged != canonical:
     )
 PY
 
+echo "📦 Verifying sdist keeps config.example.toml at repo-root path..."
+uv run python - "$repo_root/config.example.toml" "$sdist_path" <<'PY'
+import sys
+import tarfile
+from pathlib import Path
+
+canonical = Path(sys.argv[1]).read_bytes()
+with tarfile.open(sys.argv[2], "r:gz") as sdist:
+    members = [
+        name
+        for name in sdist.getnames()
+        if name.endswith("/config.example.toml") or name == "config.example.toml"
+    ]
+    if len(members) != 1:
+        raise SystemExit(f"Expected one config.example.toml in sdist, got {members!r}")
+    packaged = sdist.extractfile(members[0]).read()
+if packaged != canonical:
+    raise SystemExit("Sdist config.example.toml does not match repo file")
+PY
+
+echo "📦 Verifying wheel bundles config.example.toml..."
+uv run python - "$repo_root/config.example.toml" "$wheel_path" <<'PY'
+import sys
+import zipfile
+from pathlib import Path
+
+canonical = Path(sys.argv[1]).read_bytes()
+with zipfile.ZipFile(sys.argv[2]) as wheel:
+    packaged = wheel.read("app/data/config.example.toml")
+if packaged != canonical:
+    raise SystemExit(
+        "Wheel app/data/config.example.toml does not match config.example.toml"
+    )
+PY
+
 echo "📦 Verifying sdist keeps etc/bunnify-completion at repo-root path..."
 uv run python - "$repo_root/etc/bunnify-completion" "$sdist_path" <<'PY'
 import sys
@@ -154,6 +189,22 @@ from app.config import seed_bookmarks_from_example
 dest = Path(os.environ["XDG_CONFIG_HOME"]) / "bunnify" / "bookmarks.json"
 seed_bookmarks_from_example(dest)
 PY
+
+echo "📦 Verifying installed wheel resolves the packaged config.example.toml..."
+config_example_file="$XDG_CONFIG_HOME/bunnify/config.example.toml"
+"$venv_dir/bin/python" - <<'PY'
+import os
+from pathlib import Path
+
+from app.config import seed_config_from_example
+
+dest = Path(os.environ["XDG_CONFIG_HOME"]) / "bunnify" / "config.example.toml"
+seed_config_from_example(dest)
+PY
+if [[ ! -s "$config_example_file" ]]; then
+    echo "Installed wheel could not seed config.example.toml at $config_example_file" >&2
+    exit 1
+fi
 
 installed_env() {
     # Installed-wheel smoke runs inside GitHub Actions where GITHUB_SHA is the
