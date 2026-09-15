@@ -346,6 +346,10 @@ class ServerAgentTests(SimpleTestCase):
             self.assertEqual(code, 1)
             self.assertTrue(plist.is_file())
             self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            # The restored plist must actually be re-bootstrapped into
+            # launchd, not just written to disk -- otherwise local mode is
+            # left uninstalled despite the "restored" message below.
+            self.assertTrue(ctl.loaded)
             self.assertIn(
                 "restored the previous LaunchAgent configuration",
                 stderr.getvalue(),
@@ -484,6 +488,10 @@ class ServerAgentTests(SimpleTestCase):
             self.assertEqual(code, 1)
             self.assertTrue(plist.is_file())
             self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            # The restored plist must actually be re-bootstrapped into
+            # launchd, not just written to disk -- otherwise local mode is
+            # left uninstalled despite the "restored" message below.
+            self.assertTrue(ctl.loaded)
             self.assertIn(
                 "restored the previous LaunchAgent configuration",
                 stderr.getvalue(),
