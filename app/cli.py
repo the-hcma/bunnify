@@ -602,6 +602,79 @@ def run_stop(
     log(colors.ok(f"Stopped local Bunnify at {base_url}"))
 
 
+def run_status(
+    *,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+    print_fn: Callable[[str], None] | None = None,
+    theme: Theme | None = None,
+) -> int:
+    """Report configured mode, target URL, and reachability in one shot.
+
+    Returns 0 when the configured target is reachable and healthy, 1
+    otherwise (including when Bunnify has never been configured).
+    """
+    log = print_fn or click.echo
+    colors = theme if theme is not None else Theme(enabled=False)
+    path = env_path if env_path is not None else env_file_path(environ=environ)
+    preferences = load_preferences(environ=environ, env_path=path)
+    if preferences is None:
+        log("mode: unconfigured")
+        log("url: none")
+        log(colors.dim("Run `bunnify setup` to configure a local or remote server."))
+        return 1
+
+    if preferences.mode == "remote":
+        log("mode: remote")
+        base_url = preferences.base_url or "none"
+        log(f"url: {base_url}")
+        if not preferences.base_url:
+            log(colors.warn("Remote mode is configured without a base_url."))
+            return 1
+        health = fetch_health(base_url)
+        log(f"healthy: {'yes' if health.ok else 'no'}")
+        if health.ok:
+            log(f"build: {format_build_label(health)}")
+            log(colors.ok(f"Remote Bunnify is reachable at {base_url}"))
+            return 0
+        log(colors.warn(f"Remote Bunnify at {base_url} is not reachable."))
+        return 1
+
+    log("mode: local")
+    pid_dir = run_dir(environ=environ)
+    port = _managed_local_port(pid_dir) or preferences.local_port
+    if sys.platform == "darwin":
+        from app.server_agent import is_agent_installed, launchd_pid_dir
+        from app.server_agent import status_agent as _status_agent
+
+        agent_pid_dir = launchd_pid_dir(environ=environ)
+        if is_agent_installed():
+            return _status_agent(
+                print_fn=log,
+                print_err=lambda message: log(colors.warn(message)),
+            )
+        if port is None:
+            port = _managed_local_port(agent_pid_dir)
+    if port is None:
+        log("url: none")
+        log(
+            colors.dim(
+                "No local Bunnify server is recorded. Start one with `bunnify setup`."
+            )
+        )
+        return 1
+    base_url = f"http://127.0.0.1:{port}"
+    log(f"url: {base_url}")
+    health = fetch_health(base_url)
+    log(f"healthy: {'yes' if health.ok else 'no'}")
+    if health.ok:
+        log(f"build: {format_build_label(health)}")
+        log(colors.ok(f"Local Bunnify is reachable at {base_url}"))
+        return 0
+    log(colors.warn(f"Local Bunnify at {base_url} is not reachable."))
+    return 1
+
+
 def run_upgrade(
     *,
     print_fn: Callable[[str], None] | None = None,
@@ -2103,6 +2176,12 @@ def _print_completion_script(
     help="Stop the managed local server (also: `bunnify stop`).",
 )
 @click.option(
+    "--status",
+    "status_requested",
+    is_flag=True,
+    help="Show configured mode, target URL, and reachability (also: `bunnify status`).",
+)
+@click.option(
     "--upgrade",
     "upgrade_requested",
     is_flag=True,
@@ -2125,6 +2204,7 @@ def main(
     onboard_requested: bool,
     setup_requested: bool,
     stop_requested: bool,
+    status_requested: bool,
     upgrade_requested: bool,
 ) -> None:
     """
@@ -2163,6 +2243,11 @@ def main(
     Stop the local managed server (`stop` is a reserved shortcut name):
       bunnify stop
       bunnify --stop
+
+    \b
+    Show configured mode, URL, and reachability (`status` is reserved):
+      bunnify status
+      bunnify --status
 
     \b
     Build identity (`version` is a reserved shortcut name):
@@ -2218,6 +2303,10 @@ def main(
         if upgrade_requested or shortcut_args == ("upgrade",):
             run_upgrade(print_fn=click.echo, theme=theme)
             return
+        if status_requested or shortcut_args == ("status",):
+            raise SystemExit(
+                run_status(env_path=env_file, print_fn=click.echo, theme=theme)
+            )
         if setup_requested or shortcut_args == ("setup",):
             run_setup(
                 prompt_fn=prompt_fn,

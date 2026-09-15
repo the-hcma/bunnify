@@ -6,7 +6,7 @@ import subprocess
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.test import SimpleTestCase
 
@@ -291,6 +291,218 @@ class ServerAgentTests(SimpleTestCase):
             self.assertEqual(code, 1)
             self.assertFalse(plist.exists())
             self.assertFalse(ctl.loaded)
+
+    def test_install_restores_previous_plist_when_bootstrap_fails(self) -> None:
+        from app.server_agent import (
+            AGENT_LABEL,
+            COMMAND_NAME,
+            format_agent_plist,
+            install_agent,
+        )
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            restored_pid_dir = home / "run" / "launchd-previous"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            previous_plist_text = format_agent_plist(
+                home=home,
+                program_arguments=[
+                    str(program),
+                    "--foreground",
+                    "--noninteractive",
+                    "--port",
+                    "8000",
+                    "--pid-dir",
+                    str(restored_pid_dir),
+                ],
+            )
+            plist.write_text(previous_plist_text, encoding="utf-8")
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server") as stop,
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch("app.server_agent._reload_agent", return_value=False),
+                patch(
+                    "app.server_agent._wait_for_managed_health",
+                    side_effect=lambda base_url, *, pid_dir, port, timeout_s: (
+                        port == 8000 and pid_dir == restored_pid_dir
+                    ),
+                ),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                )
+            self.assertEqual(code, 1)
+            self.assertTrue(plist.is_file())
+            self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            # The restored plist must actually be re-bootstrapped into
+            # launchd, not just written to disk -- otherwise local mode is
+            # left uninstalled despite the "restored" message below.
+            self.assertTrue(ctl.loaded)
+            self.assertIn(
+                "restored the previous LaunchAgent configuration",
+                stderr.getvalue(),
+            )
+            # Callers surface messages[-1] as the reported failure detail, so
+            # the root-cause line must be last -- not just present anywhere.
+            self.assertTrue(
+                stderr.getvalue().endswith(
+                    f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}."
+                ),
+                stderr.getvalue(),
+            )
+            # _wait_for_managed_health is asserted (via side_effect) to have
+            # been probed on the *restored* plist's port (8000) and pid_dir
+            # (restored_pid_dir, distinct from the failed attempt's pid_dir),
+            # proving install_agent re-derives both from the restored plist
+            # rather than reusing the failed attempt's. Only one stop against
+            # this pid_dir (the initial rollback stop, before the restore)
+            # should run; a second one here would target the
+            # just-restored (healthy) server instead.
+            pid_dir_calls = [c for c in stop.call_args_list if c.args[0] == pid_dir]
+            self.assertEqual(
+                pid_dir_calls, [call(pid_dir, port=8123, port_timeout_s=5)]
+            )
+
+    def test_install_removes_plist_when_restore_also_fails(self) -> None:
+        from app.server_agent import AGENT_LABEL, format_agent_plist, install_agent
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            restored_pid_dir = home / "run" / "launchd-previous"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_text(
+                format_agent_plist(
+                    home=home,
+                    program_arguments=[
+                        str(program),
+                        "--foreground",
+                        "--noninteractive",
+                        "--port",
+                        "8000",
+                        "--pid-dir",
+                        str(restored_pid_dir),
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server") as stop,
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch("app.server_agent._reload_agent", return_value=False),
+                patch("app.server_agent._wait_for_managed_health", return_value=False),
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                )
+            self.assertEqual(code, 1)
+            self.assertFalse(plist.exists())
+            self.assertIn(
+                "local mode is now down",
+                stderr.getvalue(),
+            )
+            # Cleanup after a failed restore must target the *restored*
+            # plist's port (8000) and pid_dir (restored_pid_dir, distinct
+            # from the failed attempt's pid_dir), not the failed attempt's.
+            stop.assert_any_call(restored_pid_dir, port=8000, port_timeout_s=5)
+
+    def test_install_restores_previous_plist_when_health_check_fails(self) -> None:
+        from app.server_agent import (
+            AGENT_LABEL,
+            COMMAND_NAME,
+            format_agent_plist,
+            install_agent,
+        )
+
+        ctl = _FakeLaunchctl()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "bin" / "bunnify-server"
+            _write_executable(program)
+            pid_dir = home / "run" / "launchd"
+            restored_pid_dir = home / "run" / "launchd-previous"
+            plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            previous_plist_text = format_agent_plist(
+                home=home,
+                program_arguments=[
+                    str(program),
+                    "--foreground",
+                    "--noninteractive",
+                    "--port",
+                    "8000",
+                    "--pid-dir",
+                    str(restored_pid_dir),
+                ],
+            )
+            plist.write_text(previous_plist_text, encoding="utf-8")
+            stderr = StringIO()
+            with (
+                patch("app.server_agent.stop_local_server"),
+                patch("app.server_agent.port_is_free", return_value=True),
+                patch(
+                    "app.server_agent._wait_for_managed_health",
+                    side_effect=lambda base_url, *, pid_dir, port, timeout_s: (
+                        port == 8000 and pid_dir == restored_pid_dir
+                    ),
+                ),
+            ):
+                # `_reload_agent` is left un-mocked here (unlike the
+                # bootstrap-failure test above) so this exercises the
+                # *second* `_rollback_failed_install` call site -- the one
+                # reached when the new plist loads but its server never
+                # becomes healthy, which is the more common upgrade failure.
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    pid_dir=pid_dir,
+                    platform="darwin",
+                    port=8123,
+                    print_err=stderr.write,
+                    program=program,
+                    timeout_s=0.2,
+                )
+            self.assertEqual(code, 1)
+            self.assertTrue(plist.is_file())
+            self.assertEqual(plist.read_text(encoding="utf-8"), previous_plist_text)
+            # The restored plist must actually be re-bootstrapped into
+            # launchd, not just written to disk -- otherwise local mode is
+            # left uninstalled despite the "restored" message below.
+            self.assertTrue(ctl.loaded)
+            self.assertIn(
+                "restored the previous LaunchAgent configuration",
+                stderr.getvalue(),
+            )
+            self.assertTrue(
+                stderr.getvalue().endswith(
+                    f"{COMMAND_NAME}: server at http://127.0.0.1:8123 "
+                    "did not become healthy."
+                ),
+                stderr.getvalue(),
+            )
 
     def test_install_rejects_foreign_server_on_port(self) -> None:
         from app.server_agent import AGENT_LABEL, install_agent

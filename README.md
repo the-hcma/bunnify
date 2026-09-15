@@ -284,8 +284,14 @@ platforms start a managed background server). Stop with:
 bunnify stop    # macOS: boot out server LaunchAgent; else stop managed server
 ```
 
-That prints the URL and runtime directory before stopping. Details:
-[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
+That prints the URL and runtime directory before stopping. Check the current
+mode, target URL, and reachability at any time:
+
+```bash
+bunnify status
+```
+
+Details: [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 **Linux production:**
 [systemd user service](https://github.com/the-hcma/bunnify/blob/main/docs/SYSTEMD.md)

@@ -4447,6 +4447,220 @@ class ConfigUnitTests(TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("remote", result.output.lower())
 
+    def test_status_reports_unconfigured(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.toml"
+            messages: list[str] = []
+            code = run_status(
+                env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                print_fn=messages.append,
+            )
+
+        self.assertEqual(code, 1)
+        self.assertIn("mode: unconfigured", messages)
+        self.assertTrue(any("bunnify setup" in line for line in messages))
+
+    def test_status_reports_healthy_remote(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_status
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://bunnify.example",
+                    local_port=None,
+                ),
+                env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            messages: list[str] = []
+            with patch("app.cli.fetch_health", return_value=_healthy_status()):
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
+
+        self.assertEqual(code, 0)
+        self.assertIn("mode: remote", messages)
+        self.assertIn("url: https://bunnify.example", messages)
+        self.assertIn("healthy: yes", messages)
+
+    def test_status_reports_unreachable_remote(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_status
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://bunnify.example",
+                    local_port=None,
+                ),
+                env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            messages: list[str] = []
+            with patch("app.cli.fetch_health", return_value=_healthy_status(ok=False)):
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
+
+        self.assertEqual(code, 1)
+        self.assertIn("healthy: no", messages)
+        self.assertTrue(any("not reachable" in line for line in messages))
+
+    def test_status_reports_local_server(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_status
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            messages: list[str] = []
+            with (
+                patch("app.cli.sys.platform", "linux"),
+                patch("app.cli.fetch_health", return_value=_healthy_status()),
+            ):
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
+
+        self.assertEqual(code, 0)
+        self.assertIn("mode: local", messages)
+        self.assertIn("url: http://127.0.0.1:8123", messages)
+        self.assertIn("healthy: yes", messages)
+
+    def test_status_delegates_to_launch_agent_on_darwin(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_status
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=8123,
+                ),
+                env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            messages: list[str] = []
+            with (
+                patch("app.cli.sys.platform", "darwin"),
+                patch("app.server_agent.is_agent_installed", return_value=True),
+                patch(
+                    "app.server_agent.launchd_pid_dir",
+                    return_value=Path(tmp) / "run" / "launchd",
+                ),
+                patch("app.server_agent.status_agent", return_value=1) as status_agent,
+            ):
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
+
+        # The delegate's return code must be forwarded verbatim (not a fixed
+        # 0/1), and its print_fn/print_err must route through run_status's
+        # own log/warn wrapper rather than being silently dropped.
+        self.assertEqual(code, 1)
+        status_agent.assert_called_once()
+        _, kwargs = status_agent.call_args
+        self.assertEqual(kwargs["print_fn"], messages.append)
+        kwargs["print_err"]("boom")
+        self.assertIn("boom", messages)
+
+    def test_status_reports_no_local_server_recorded(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import run_status
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="local",
+                    base_url="http://127.0.0.1:8123",
+                    local_port=None,
+                ),
+                env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+            )
+            messages: list[str] = []
+            with patch("app.cli.sys.platform", "linux"):
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
+
+        self.assertEqual(code, 1)
+        self.assertIn("url: none", messages)
+        self.assertTrue(any("bunnify setup" in line for line in messages))
+
+    def test_status_shortcut_and_flag_invoke_run_status(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.cli import main
+        from app.config import ServerPreferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://bunnify.example",
+                    local_port=None,
+                ),
+                env_path=env_path,
+            )
+            with patch("app.cli.fetch_health", return_value=_healthy_status()):
+                for args in (
+                    ["status", "--env-file", str(env_path)],
+                    ["--status", "--env-file", str(env_path)],
+                ):
+                    result = CliRunner().invoke(main, args)
+                    self.assertEqual(result.exit_code, 0, result.output)
+                    self.assertIn("mode: remote", result.output)
+
     def test_base_url_prepends_http_scheme(self) -> None:
         from app.config import resolve_base_url
 
