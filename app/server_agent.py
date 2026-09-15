@@ -682,9 +682,9 @@ def _rollback_failed_install(
         # The restored bytes are a previously-verified-good configuration --
         # a failed re-bootstrap here means the *retry* didn't become healthy
         # in time (e.g. a slow reload), not that the configuration itself is
-        # bad. Leave the plist on disk (unloaded) so `bunnify install`/setup
-        # can retry against it instead of silently deleting local mode's
-        # last-known-good config.
+        # bad. Leave the plist on disk (unloaded) so `bunnify-server
+        # install`/setup can retry against it instead of silently deleting
+        # local mode's last-known-good config.
         return False
     plist.unlink(missing_ok=True)
     return False
