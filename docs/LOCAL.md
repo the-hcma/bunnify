@@ -89,15 +89,19 @@ configured — run `bunnify setup`).
 
 ### Switching between local and remote
 
-Switching modes always goes through `bunnify setup`'s verify-before-save flow:
-the new URL (remote) or managed server (local) must answer `/health` with
-`200 ok` before `config.toml` is updated, so a failed switch leaves the
-previous, working configuration in place rather than persisting a broken one.
+Switching modes goes through `bunnify setup`'s verify-then-save flow: local
+mode's managed server must answer `/health` with `200 ok` before
+`config.toml` is updated, so a failed local switch leaves the previous,
+working configuration in place. Remote mode verifies `/health` too, but an
+unreachable URL only warns and asks
+`Continue with this URL anyway? [y/N]`; an explicit `y` saves it regardless
+— so an unreachable remote switch is not guaranteed to leave the prior
+configuration in place unless you decline that prompt.
 On macOS, `bunnify-server upgrade` (and `bunnify upgrade`'s server-agent
-refresh) follows the same rule for the server LaunchAgent itself — if the new
-build cannot be reloaded or does not become healthy, the previous LaunchAgent
-plist is restored and reloaded rather than left uninstalled; only if that
-restore attempt also fails is the plist removed
+refresh) follows the verify-before-replace rule for the server LaunchAgent
+itself — if the new build cannot be reloaded or does not become healthy, the
+previous LaunchAgent plist is restored and reloaded rather than left
+uninstalled; only if that restore attempt also fails is the plist removed
 (and the failure is reported so you know local mode is down). Use
 `bunnify status` after any switch to confirm the configured target is
 healthy.

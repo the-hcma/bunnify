@@ -4456,7 +4456,11 @@ class ConfigUnitTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / "config.toml"
             messages: list[str] = []
-            code = run_status(env_path=env_path, print_fn=messages.append)
+            code = run_status(
+                env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                print_fn=messages.append,
+            )
 
         self.assertEqual(code, 1)
         self.assertIn("mode: unconfigured", messages)
@@ -4478,10 +4482,15 @@ class ConfigUnitTests(TestCase):
                     local_port=None,
                 ),
                 env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             messages: list[str] = []
             with patch("app.cli.fetch_health", return_value=_healthy_status()):
-                code = run_status(env_path=env_path, print_fn=messages.append)
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
 
         self.assertEqual(code, 0)
         self.assertIn("mode: remote", messages)
@@ -4504,10 +4513,15 @@ class ConfigUnitTests(TestCase):
                     local_port=None,
                 ),
                 env_path=env_path,
+                environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
             )
             messages: list[str] = []
             with patch("app.cli.fetch_health", return_value=_healthy_status(ok=False)):
-                code = run_status(env_path=env_path, print_fn=messages.append)
+                code = run_status(
+                    env_path=env_path,
+                    environ={"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp},
+                    print_fn=messages.append,
+                )
 
         self.assertEqual(code, 1)
         self.assertIn("healthy: no", messages)
