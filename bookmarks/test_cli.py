@@ -2853,6 +2853,60 @@ class ConfigUnitTests(TestCase):
             self.assertTrue(path.is_file())
             self.assertEqual(path.read_text(encoding="utf-8"), "mode = = broken\n")
 
+    def test_setup_recovers_when_legacy_migration_fails_before_config_exists(
+        self,
+    ) -> None:
+        # A bad legacy config.env value makes _migrate_legacy_config_if_needed
+        # raise ConfigParseError before config.toml is ever written, so there
+        # is no file for the corrupt-config recovery branch to back up.
+        # Accepting the "recreate" prompt must not crash trying to rename a
+        # nonexistent config.toml -- it should fall straight through to the
+        # seed-example offer instead.
+        import tempfile
+        from pathlib import Path
+
+        import app.config as config_mod
+        from app.cli import run_setup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            environ = {"XDG_CONFIG_HOME": tmp, "XDG_DATA_HOME": tmp}
+            legacy_path = config_mod.legacy_config_env_file_path(environ=environ)
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.write_text("BUNNIFY_MODE=remte\n", encoding="utf-8")
+            bookmarks = Path(tmp) / "bookmarks.json"
+            messages: list[str] = []
+            responses = iter(["y", "n", "remote", "https://remote.example/"])
+
+            with (
+                patch("app.cli.ensure_user_bookmarks", return_value=bookmarks),
+                patch("app.cli.check_health", return_value=True),
+                patch(
+                    "app.cli.fetch_health",
+                    return_value=_healthy_status(),
+                ),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.3.0", "abc123456789"),
+                ),
+            ):
+                result = run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    environ=environ,
+                    print_fn=messages.append,
+                )
+
+            self.assertEqual(result, "https://remote.example")
+            joined = "\n".join(messages)
+            self.assertIn("could not be loaded", joined)
+            self.assertIn("Backed up the unreadable legacy file", joined)
+            legacy_backups = list(legacy_path.parent.glob("config.env.bak-*"))
+            self.assertEqual(len(legacy_backups), 1)
+            path = config_mod.env_file_path(environ=environ)
+            preferences = config_mod.load_preferences(environ=environ, env_path=path)
+            self.assertIsNotNone(preferences)
+            assert preferences is not None
+            self.assertEqual(preferences.mode, "remote")
+
     def test_setup_remote_unreachable_continues_when_confirmed(self) -> None:
         import tempfile
         from pathlib import Path

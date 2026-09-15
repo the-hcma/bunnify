@@ -46,6 +46,7 @@ from app.config import (
     ensure_user_bookmarks,
     env_file_path,
     format_server_preferences_summary,
+    legacy_config_env_file_path,
     legacy_env_file_path,
     load_preferences,
     read_base_url_from_env_file,
@@ -323,8 +324,17 @@ def run_setup(
             raise ClientError(
                 f"Setup aborted; fix or remove {path}, then retry."
             ) from exc
-        backup = _backup_unreadable_config(path)
-        log(f"Backed up the unreadable file to {backup}.")
+        if path.is_file():
+            backup = _backup_unreadable_config(path)
+            log(f"Backed up the unreadable file to {backup}.")
+        else:
+            # The error came from a broken legacy config.env instead (path
+            # itself was never written). Quarantine it too, otherwise the
+            # next write to config.toml re-runs the same failing migration.
+            legacy_path = legacy_config_env_file_path(environ=environ)
+            if legacy_path.is_file():
+                legacy_backup = _backup_unreadable_config(legacy_path)
+                log(f"Backed up the unreadable legacy file to {legacy_backup}.")
         existing = None
 
     seeded_example = False
@@ -1390,7 +1400,7 @@ def _offer_and_seed_example_config(
 
 
 def _backup_unreadable_config(path: Path) -> Path:
-    """Rename an unreadable/corrupt config.toml aside so setup can recreate it."""
+    """Rename an unreadable/corrupt config file aside so setup can recreate it."""
     backup = path.with_name(f"{path.name}.bak-{int(time.time())}")
     path.rename(backup)
     return backup
