@@ -306,6 +306,7 @@ class ServerAgentTests(SimpleTestCase):
             program = home / "bin" / "bunnify-server"
             _write_executable(program)
             pid_dir = home / "run" / "launchd"
+            restored_pid_dir = home / "run" / "launchd-previous"
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
             previous_plist_text = format_agent_plist(
@@ -317,7 +318,7 @@ class ServerAgentTests(SimpleTestCase):
                     "--port",
                     "8000",
                     "--pid-dir",
-                    str(pid_dir),
+                    str(restored_pid_dir),
                 ],
             )
             plist.write_text(previous_plist_text, encoding="utf-8")
@@ -329,7 +330,7 @@ class ServerAgentTests(SimpleTestCase):
                 patch(
                     "app.server_agent._wait_for_managed_health",
                     side_effect=lambda base_url, *, pid_dir, port, timeout_s: (
-                        port == 8000
+                        port == 8000 and pid_dir == restored_pid_dir
                     ),
                 ),
             ):
@@ -358,11 +359,12 @@ class ServerAgentTests(SimpleTestCase):
                 stderr.getvalue(),
             )
             # _wait_for_managed_health is asserted (via side_effect) to have
-            # been probed on the *restored* plist's port (8000), proving
-            # install_agent re-derives the port from the restored plist
-            # rather than reusing the failed attempt's port (8123). Only one
-            # stop against this pid_dir (the initial rollback stop, before
-            # the restore) should run; a second one here would target the
+            # been probed on the *restored* plist's port (8000) and pid_dir
+            # (restored_pid_dir, distinct from the failed attempt's pid_dir),
+            # proving install_agent re-derives both from the restored plist
+            # rather than reusing the failed attempt's. Only one stop against
+            # this pid_dir (the initial rollback stop, before the restore)
+            # should run; a second one here would target the
             # just-restored (healthy) server instead.
             pid_dir_calls = [c for c in stop.call_args_list if c.args[0] == pid_dir]
             self.assertEqual(
@@ -378,6 +380,7 @@ class ServerAgentTests(SimpleTestCase):
             program = home / "bin" / "bunnify-server"
             _write_executable(program)
             pid_dir = home / "run" / "launchd"
+            restored_pid_dir = home / "run" / "launchd-previous"
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
             plist.write_text(
@@ -390,7 +393,7 @@ class ServerAgentTests(SimpleTestCase):
                         "--port",
                         "8000",
                         "--pid-dir",
-                        str(pid_dir),
+                        str(restored_pid_dir),
                     ],
                 ),
                 encoding="utf-8",
@@ -418,8 +421,9 @@ class ServerAgentTests(SimpleTestCase):
                 stderr.getvalue(),
             )
             # Cleanup after a failed restore must target the *restored*
-            # plist's port (8000), not the failed attempt's port (8123).
-            stop.assert_any_call(pid_dir, port=8000, port_timeout_s=5)
+            # plist's port (8000) and pid_dir (restored_pid_dir, distinct
+            # from the failed attempt's pid_dir), not the failed attempt's.
+            stop.assert_any_call(restored_pid_dir, port=8000, port_timeout_s=5)
 
     def test_install_restores_previous_plist_when_health_check_fails(self) -> None:
         from app.server_agent import (
@@ -435,6 +439,7 @@ class ServerAgentTests(SimpleTestCase):
             program = home / "bin" / "bunnify-server"
             _write_executable(program)
             pid_dir = home / "run" / "launchd"
+            restored_pid_dir = home / "run" / "launchd-previous"
             plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
             plist.parent.mkdir(parents=True)
             previous_plist_text = format_agent_plist(
@@ -446,7 +451,7 @@ class ServerAgentTests(SimpleTestCase):
                     "--port",
                     "8000",
                     "--pid-dir",
-                    str(pid_dir),
+                    str(restored_pid_dir),
                 ],
             )
             plist.write_text(previous_plist_text, encoding="utf-8")
@@ -457,7 +462,7 @@ class ServerAgentTests(SimpleTestCase):
                 patch(
                     "app.server_agent._wait_for_managed_health",
                     side_effect=lambda base_url, *, pid_dir, port, timeout_s: (
-                        port == 8000
+                        port == 8000 and pid_dir == restored_pid_dir
                     ),
                 ),
             ):
