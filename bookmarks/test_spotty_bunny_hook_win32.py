@@ -142,6 +142,64 @@ class HandleHookEventTests(SimpleTestCase):
         )
         record_activity.assert_called_once_with()
 
+    def test_query_key_state_corrects_stale_held_left_before_right_press(self) -> None:
+        tracker = ChordTracker()
+        # Simulate a missed KEYUP (e.g. released during a secure-desktop
+        # switch the hook never saw): left is believed held from before.
+        _handle_hook_event(
+            tracker,
+            n_code=0,
+            w_param=WM_KEYDOWN,
+            l_param=(VK_LCONTROL, 0, 0, 0, 0),
+            on_chord=MagicMock(),
+        )
+        self.assertTrue(tracker.held_left)
+        on_chord = MagicMock()
+        _handle_hook_event(
+            tracker,
+            n_code=0,
+            w_param=WM_KEYDOWN,
+            l_param=(VK_RCONTROL, 0, 0, 0, 0),
+            on_chord=on_chord,
+            query_key_state=lambda vk: vk != VK_LCONTROL,  # left is really up
+        )
+        on_chord.assert_not_called()
+        self.assertFalse(tracker.held_left)
+        self.assertTrue(tracker.held_right)
+
+    def test_query_key_state_leaves_genuinely_held_key_alone(self) -> None:
+        tracker = ChordTracker()
+        _handle_hook_event(
+            tracker,
+            n_code=0,
+            w_param=WM_KEYDOWN,
+            l_param=(VK_LCONTROL, 0, 0, 0, 0),
+            on_chord=MagicMock(),
+        )
+        on_chord = MagicMock()
+        _handle_hook_event(
+            tracker,
+            n_code=0,
+            w_param=WM_KEYDOWN,
+            l_param=(VK_RCONTROL, 0, 0, 0, 0),
+            on_chord=on_chord,
+            query_key_state=lambda vk: True,  # left is genuinely still down
+        )
+        on_chord.assert_called_once()
+
+    def test_query_key_state_not_called_when_other_side_not_held(self) -> None:
+        tracker = ChordTracker()
+        query = MagicMock(return_value=True)
+        _handle_hook_event(
+            tracker,
+            n_code=0,
+            w_param=WM_KEYDOWN,
+            l_param=(VK_LCONTROL, 0, 0, 0, 0),
+            on_chord=MagicMock(),
+            query_key_state=query,
+        )
+        query.assert_not_called()
+
 
 def _make_fake_win32_modules() -> tuple[ModuleType, ModuleType]:
     win32api = ModuleType("win32api")
@@ -190,6 +248,10 @@ class InstallChordHookTests(SimpleTestCase):
         args = fake_user32.SetWindowsHookExW.call_args.args
         self.assertEqual(args[0], win32con.WH_KEYBOARD_LL)
         self.assertEqual(args[2], 0xABCD)
+        # InstalledHook's whole reason for existing: retain a strong
+        # reference to the exact callback SetWindowsHookExW was given, so
+        # it can't be garbage-collected while the hook is still installed.
+        self.assertIs(hook._callback, args[1])
 
     def test_zero_handle_raises(self) -> None:
         win32api, win32con = _make_fake_win32_modules()

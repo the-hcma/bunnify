@@ -80,6 +80,7 @@ def _handle_hook_event(
     left_vk: int = VK_LCONTROL,
     right_vk: int = VK_RCONTROL,
     record_activity: Callable[[], None] | None = None,
+    query_key_state: Callable[[int], bool] | None = None,
 ) -> None:
     """Apply one raw hook callback invocation to *tracker*.
 
@@ -96,6 +97,19 @@ def _handle_hook_event(
     and this callback runs on the OS hook thread, which Windows silently
     unhooks if it's too slow (``LowLevelHooksTimeout``, default 300 ms) —
     so it must stay cheap on every event that isn't a chord completion.
+
+    Unlike macOS's ``apply_control_event``/``resolve_control_snapshot``,
+    :func:`~app.spotty_bunny_hotkey_win32.apply_win32_key_event` tracks
+    *left_vk*/*right_vk* purely as a delta over the events this hook has
+    seen — there's no equivalent of macOS's ``CGEventSourceKeyState``
+    cross-check. That's fine as long as every transition is delivered, but
+    a ``WH_KEYBOARD_LL`` hook stops receiving events while a secure desktop
+    has focus (UAC prompt, Ctrl+Alt+Del, lock screen, RDP reconnect); a
+    release during that window never reaches here, leaving
+    ``tracker.held_left``/``held_right`` stuck True so every later press of
+    the *other* Control alone reports a completed chord. When
+    *query_key_state* is given, it's used to catch and correct exactly that
+    before applying a real event — see :func:`_resync_stale_held_state`.
     """
     if n_code < 0:
         return
@@ -105,6 +119,14 @@ def _handle_hook_event(
     if vk_code not in (left_vk, right_vk):
         return
     key_down = w_param in _KEY_DOWN_MESSAGES
+    if query_key_state is not None:
+        _resync_stale_held_state(
+            tracker,
+            vk_code=vk_code,
+            left_vk=left_vk,
+            right_vk=right_vk,
+            query_key_state=query_key_state,
+        )
     fired = apply_win32_key_event(
         tracker,
         vk_code=vk_code,
@@ -118,6 +140,28 @@ def _handle_hook_event(
     if record_activity is not None:
         record_activity()
     on_chord()
+
+
+def _resync_stale_held_state(
+    tracker: ChordTracker,
+    *,
+    vk_code: int,
+    left_vk: int,
+    right_vk: int,
+    query_key_state: Callable[[int], bool],
+) -> None:
+    """Correct a stale held flag for the *other* key before applying *vk_code*'s event.
+
+    If the tracker believes the key opposite *vk_code* is held but
+    *query_key_state* (``GetAsyncKeyState``) says it isn't physically down
+    any more, clear it. This can't spuriously fire a chord: ``sync()``
+    only fires on a key transitioning to held while the other is already
+    held, and this only ever transitions the other key to *not* held.
+    """
+    if vk_code == left_vk and tracker.held_right and not query_key_state(right_vk):
+        tracker.sync(left_down=tracker.held_left, right_down=False)
+    elif vk_code == right_vk and tracker.held_left and not query_key_state(left_vk):
+        tracker.sync(left_down=False, right_down=tracker.held_right)
 
 
 def _record_hook_activity() -> None:
@@ -187,6 +231,12 @@ def install_chord_hook(
     )
     user32.UnhookWindowsHookEx.restype = wintypes.BOOL
     user32.UnhookWindowsHookEx.argtypes = (wintypes.HHOOK,)
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+
+    def _query_key_state(vk: int) -> bool:
+        # High-order bit set means the key is currently physically down.
+        return bool(user32.GetAsyncKeyState(vk) & 0x8000)
 
     def _handler(n_code: int, w_param: int, l_param: int) -> int:
         if n_code >= 0:
@@ -207,6 +257,7 @@ def install_chord_hook(
                 left_vk=left_vk,
                 right_vk=right_vk,
                 record_activity=_record_hook_activity,
+                query_key_state=_query_key_state,
             )
         # `handle` is resolved from the enclosing scope at call time, by
         # which point install_chord_hook has already returned it below —
