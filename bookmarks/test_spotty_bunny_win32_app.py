@@ -69,14 +69,40 @@ class MenuDispatchTests(SimpleTestCase):
         controller.dispatch_menu_action("quitSpottyBunny:")
         controller.request_quit.assert_called_once()
 
-    def test_install_action_calls_stub_agent_and_quits(self) -> None:
+    def test_install_success_marks_installed_and_quits(self) -> None:
         controller = _make_controller()
         controller.request_quit = MagicMock()
         with patch(
-            "app.spotty_bunny_agent_win32.install_agent", return_value=1
+            "app.spotty_bunny_agent_win32.install_agent", return_value=0
         ) as install:
             controller.dispatch_menu_action("installSpottyBunny:")
         install.assert_called_once()
+        controller.request_quit.assert_called_once()
+        self.assertTrue(controller._agent_installed)
+
+    def test_install_failure_stays_running_and_does_not_quit(self) -> None:
+        controller = _make_controller()
+        controller.request_quit = MagicMock()
+        statuses: list[str] = []
+        controller.set_status_text = statuses.append
+        with patch("app.spotty_bunny_agent_win32.install_agent", return_value=1):
+            controller.dispatch_menu_action("installSpottyBunny:")
+        controller.request_quit.assert_not_called()
+        self.assertFalse(controller._agent_installed)
+        self.assertTrue(any("failed" in s.lower() for s in statuses))
+
+    def test_upgrade_failure_stays_running_and_does_not_quit(self) -> None:
+        controller = _make_controller()
+        controller.request_quit = MagicMock()
+        with patch("app.spotty_bunny_agent_win32.upgrade_agent", return_value=1):
+            controller.dispatch_menu_action("upgradeSpottyBunny:")
+        controller.request_quit.assert_not_called()
+
+    def test_uninstall_always_quits_regardless_of_exit_code(self) -> None:
+        controller = _make_controller()
+        controller.request_quit = MagicMock()
+        with patch("app.spotty_bunny_agent_win32.uninstall_agent", return_value=1):
+            controller.dispatch_menu_action("uninstallSpottyBunny:")
         controller.request_quit.assert_called_once()
 
 
@@ -88,6 +114,24 @@ class ShowHideToggleTests(SimpleTestCase):
         self.assertTrue(controller.visible)
         controller.toggle()
         self.assertFalse(controller.visible)
+
+    def test_show_and_hide_call_set_window_visible(self) -> None:
+        controller = _make_controller()
+        visibility_calls: list[bool] = []
+        controller.set_window_visible = visibility_calls.append
+        controller.show()
+        controller.hide()
+        self.assertEqual(visibility_calls, [True, False])
+
+    def test_hide_clears_resolving_flag(self) -> None:
+        # Regression: a resolve that completes after hide() must not be
+        # locked out of ever resolving again (resolve_still_current would
+        # keep tripping the stale-seq early return in handle_resolve_ready).
+        controller = _make_controller()
+        controller.show()
+        controller._resolving = True
+        controller.hide()
+        self.assertFalse(controller._resolving)
 
     def test_hide_clears_completion_rows_and_about(self) -> None:
         controller = _make_controller()
@@ -278,3 +322,53 @@ class HandleAppMessageTests(SimpleTestCase):
         controller._pending_completions[3] = [CompletionRow("gh", "", -1)]
         controller.handle_app_message(WM_APP_COMPLETIONS_READY, 3, 0)
         self.assertEqual(controller.get_field_text(), "gh")
+
+
+class MoveCompletionTests(SimpleTestCase):
+    def test_moving_selection_calls_set_completion_index(self) -> None:
+        controller = _make_controller()
+        indices: list[int] = []
+        controller.set_completion_index = indices.append
+        controller._completion_rows = [
+            CompletionRow("a", "", 0),
+            CompletionRow("b", "", 0),
+        ]
+        controller._completion_visible = True
+        controller._completion_index = 0
+        controller.handle_edit_keydown(VK_DOWN)
+        self.assertEqual(indices, [1])
+
+
+class ResolveAndSetChordVksTests(SimpleTestCase):
+    def test_valid_choice_is_applied(self) -> None:
+        controller = _make_controller()
+        with patch(
+            "app.spotty_bunny_win32_app.load_spotty_bunny_hotkey",
+            return_value="control",
+        ):
+            controller.resolve_and_set_chord_vks()
+        self.assertIsNotNone(controller._left_vk)
+        self.assertIsNotNone(controller._right_vk)
+
+    def test_invalid_config_value_falls_back_to_control_chord(self) -> None:
+        # A hand-edited config.toml with an out-of-range value must not
+        # crash the whole process before a tray icon ever appears (mirrors
+        # macOS's _resolve_configured_chord fallback).
+        from app.spotty_bunny_hotkey_win32 import VK_LCONTROL, VK_RCONTROL
+
+        controller = _make_controller()
+
+        def boom() -> str:
+            raise ValueError("invalid choice")
+
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.load_spotty_bunny_hotkey",
+                side_effect=boom,
+            ),
+            self.assertLogs("app.spotty_bunny_win32_app", level="WARNING"),
+        ):
+            controller.resolve_and_set_chord_vks()
+        self.assertEqual(
+            (controller._left_vk, controller._right_vk), (VK_LCONTROL, VK_RCONTROL)
+        )

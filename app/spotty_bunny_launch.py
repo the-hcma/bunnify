@@ -268,18 +268,36 @@ def _spotty_bunny_process_alive(pid: int) -> bool:
     if not _process_exists(pid):
         return False
     if sys.platform == "win32":
-        # No cheap Windows equivalent of the `ps -o command=` cross-check
-        # below (getting a full command line back needs WMI/PowerShell, not
-        # just an OpenProcess handle) -- existence is the best signal
-        # available without that extra machinery.
+        # SECURITY/CORRECTNESS NOTE: no cheap Windows equivalent of the
+        # `ps -o command=` cross-check below (getting a full command line
+        # back needs WMI/PowerShell, not just an OpenProcess handle) --
+        # existence is the only signal available without that extra
+        # machinery. Every caller of stop_spotty_bunny()/_terminate_pid()
+        # today is darwin-gated (app.spotty_bunny_agent, app.coherence,
+        # ensure_spotty_bunny_running all check sys.platform first), so a
+        # stale PID being treated as "our overlay" here is currently inert.
+        # This stops being true once #427 wires a live Windows stop path --
+        # add an identity check (image name / build marker via WMI) before
+        # that path can call _terminate_pid() with an unverified PID.
         return True
     command = _process_command(pid)
     return command is not None and _is_spotty_bunny_command(command)
 
 
+_WIN32_ERROR_ACCESS_DENIED = 5
 _WIN32_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _WIN32_PROCESS_TERMINATE = 0x0001
 _WIN32_STILL_ACTIVE = 259
+
+
+def _win32_kernel32():
+    import ctypes
+
+    # use_last_error=True so a failed OpenProcess's GetLastError() is
+    # captured correctly by ctypes.get_last_error() below -- ctypes.windll's
+    # convenience objects don't do this reliably (see
+    # spotty_bunny_hook_win32.install_chord_hook, same pattern).
+    return ctypes.WinDLL("kernel32", use_last_error=True)
 
 
 def _win32_process_alive(pid: int) -> bool:
@@ -290,13 +308,20 @@ def _win32_process_alive(pid: int) -> bool:
     ``TerminateProcess(handle, sig)`` -- ``os.kill(pid, 0)`` would actually
     terminate a live process (with exit code 0) instead of merely probing
     it.
+
+    ``OpenProcess`` failing doesn't necessarily mean the pid is gone: it
+    also fails with ``ERROR_ACCESS_DENIED`` for a live process we lack
+    rights to (e.g. started elevated, or as another user) -- treat that as
+    "alive" rather than "not found", since concluding "not running" here
+    feeds ``stop_spotty_bunny()`` unlinking the pid file out from under a
+    process that is, in fact, still running.
     """
     import ctypes
 
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = _win32_kernel32()
     handle = kernel32.OpenProcess(_WIN32_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
-        return False
+        return ctypes.get_last_error() == _WIN32_ERROR_ACCESS_DENIED
     try:
         exit_code = ctypes.c_ulong()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
@@ -306,15 +331,23 @@ def _win32_process_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
-def _win32_terminate_pid(pid: int) -> None:
-    import ctypes
+def _win32_terminate_pid(pid: int) -> bool:
+    """Return whether ``TerminateProcess`` was actually issued.
 
-    kernel32 = ctypes.windll.kernel32
+    A ``False`` return (most commonly ``ERROR_ACCESS_DENIED``, same
+    caveat as :func:`_win32_process_alive`) tells :func:`_terminate_pid`
+    not to sit through a pointless wait for an exit that was never
+    requested.
+    """
+    kernel32 = _win32_kernel32()
     handle = kernel32.OpenProcess(_WIN32_PROCESS_TERMINATE, False, pid)
     if not handle:
-        return
+        logger.warning(
+            "could not open pid %s to terminate it (denied or already gone)", pid
+        )
+        return False
     try:
-        kernel32.TerminateProcess(handle, 1)
+        return bool(kernel32.TerminateProcess(handle, 1))
     finally:
         kernel32.CloseHandle(handle)
 
@@ -332,7 +365,11 @@ def _spawn_detached(command: Sequence[str]) -> int:
 
 def _terminate_pid(pid: int) -> None:
     if sys.platform == "win32":
-        _win32_terminate_pid(pid)
+        if not _win32_terminate_pid(pid):
+            # Nothing was actually requested (see _win32_terminate_pid) --
+            # waiting here would just stall for the full timeout on a
+            # termination that was never issued.
+            return
         _wait_for_exit(pid, timeout_s=10)
         return
     try:

@@ -3972,6 +3972,131 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         )
 
 
+class SpottyBunnyWin32ProcessTests(SimpleTestCase):
+    """_win32_process_alive/_win32_terminate_pid/_process_exists (issue #431/#426).
+
+    ctypes.WinDLL only exists on real Windows, so a fake stands in here --
+    same recipe as test_spotty_bunny_hook_win32.py's install_chord_hook
+    tests.
+    """
+
+    def _fake_kernel32(self) -> MagicMock:
+        kernel32 = MagicMock()
+        kernel32.CloseHandle = MagicMock(return_value=True)
+        return kernel32
+
+    def test_process_alive_false_when_open_process_fails_not_access_denied(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with (
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("ctypes.get_last_error", return_value=87, create=True),
+        ):
+            self.assertFalse(_win32_process_alive(4242))
+
+    def test_process_alive_true_when_open_process_denied(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with (
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("ctypes.get_last_error", return_value=5, create=True),
+        ):
+            self.assertTrue(_win32_process_alive(4242))
+
+    def test_process_alive_true_when_exit_code_still_active(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 259  # STILL_ACTIVE
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertTrue(_win32_process_alive(4242))
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_process_alive_false_when_exit_code_not_still_active(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 0
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertFalse(_win32_process_alive(4242))
+
+    def test_terminate_pid_returns_false_and_does_not_call_terminate_when_denied(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import _win32_terminate_pid
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        kernel32.TerminateProcess = MagicMock()
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertFalse(_win32_terminate_pid(4242))
+        kernel32.TerminateProcess.assert_not_called()
+
+    def test_terminate_pid_calls_terminate_process_and_returns_true(self) -> None:
+        from app.spotty_bunny_launch import _win32_terminate_pid
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+        kernel32.TerminateProcess = MagicMock(return_value=True)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertTrue(_win32_terminate_pid(4242))
+        kernel32.TerminateProcess.assert_called_once_with(99, 1)
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_process_exists_on_windows_never_calls_os_kill(self) -> None:
+        """Pins the regression this PR fixes: os.kill(pid, 0) on Windows
+        calls TerminateProcess(handle, 0), not a harmless probe."""
+        from app.spotty_bunny_launch import _process_exists
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 259
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("os.kill") as os_kill,
+        ):
+            self.assertTrue(_process_exists(4242))
+        os_kill.assert_not_called()
+
+    def test_terminate_pid_skips_wait_when_termination_not_issued(self) -> None:
+        """A denied TerminateProcess must not stall for the full timeout."""
+        from app.spotty_bunny_launch import _terminate_pid
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("app.spotty_bunny_launch._wait_for_exit") as wait_for_exit,
+        ):
+            _terminate_pid(4242)
+        wait_for_exit.assert_not_called()
+
+
 class SpottyBunnyResolveTests(SimpleTestCase):
     def test_failure_does_not_append_history(self) -> None:
         from app.client import ClientError

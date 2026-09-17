@@ -61,7 +61,10 @@ def make_spotty_bunny_icon_win32(size: int, *, outdated: bool = False) -> int:
         _draw_glyph_or_fallback(mem_dc, side, win32con=win32con, win32ui=win32ui)
         if outdated:
             _draw_outdated_badge(mem_dc, side, win32gui=win32gui, win32con=win32con)
-        mono_dc = win32gui.CreateCompatibleDC(screen_dc)
+        # Compatible with mem_dc, not the already-released screen_dc (a
+        # stale/NULL HDC here would make SelectObject silently delete
+        # mask_bitmap instead of drawing into it).
+        mono_dc = win32gui.CreateCompatibleDC(mem_dc)
         win32gui.SelectObject(mono_dc, mask_bitmap)
         win32gui.PatBlt(mono_dc, 0, 0, side, side, win32con.BLACKNESS)
         win32gui.DeleteDC(mono_dc)

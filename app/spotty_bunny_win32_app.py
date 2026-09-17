@@ -139,6 +139,7 @@ class SpottyBunnyWin32Controller:
         set_field_text: Callable[[str], None] | None = None,
         set_status_text: Callable[[str], None] | None = None,
         set_completion_rows: Callable[[list[CompletionRow]], None] | None = None,
+        set_window_visible: Callable[[bool], None] | None = None,
         io: Any = None,
     ) -> None:
         self._field_text = ""
@@ -146,6 +147,8 @@ class SpottyBunnyWin32Controller:
         self.set_field_text = set_field_text or self._default_set_field_text
         self.set_status_text = set_status_text or (lambda _text: None)
         self.set_completion_rows = set_completion_rows or (lambda _rows: None)
+        self.set_completion_index: Callable[[int], None] = lambda _index: None
+        self.set_window_visible = set_window_visible or (lambda _visible: None)
         self._io = io if io is not None else ThreadIo()
 
         self.visible = False
@@ -186,15 +189,18 @@ class SpottyBunnyWin32Controller:
         self.set_status_text("")
         self._load_completer_async()
         self.visible = True
+        self.set_window_visible(True)
         logger.info("show overlay")
 
     def hide(self) -> None:
         self._resolve_seq += 1
         self._completion_seq += 1
+        self._resolving = False
         self._hide_completions()
         if self.about_open:
             self.hide_about()
         self.visible = False
+        self.set_window_visible(False)
         logger.info("hide overlay")
 
     def toggle(self) -> None:
@@ -302,6 +308,7 @@ class SpottyBunnyWin32Controller:
             row_count=len(self._completion_rows),
             selector=selector,
         )
+        self.set_completion_index(self._completion_index)
 
     def _hide_completions(self) -> None:
         self._completion_rows = []
@@ -424,14 +431,30 @@ class SpottyBunnyWin32Controller:
         self._io.submit(work, on_done)
 
     def install_spotty_bunny(self) -> None:
+        """Install, then quit so the Scheduled Task owns the overlay.
+
+        Only quits on success -- like macOS's ``_install_ready``, a failure
+        (missing rights, #427's stub not implemented yet, ...) leaves this
+        process running with the failure surfaced in the status line,
+        rather than killing the only running overlay over a failed install.
+        """
         from app.spotty_bunny_agent_win32 import install_agent
 
         self.set_status_text(INSTALL_STATUS)
         code = install_agent()
-        self._agent_installed = code == 0
+        if code != 0:
+            logger.warning("install failed (exit code %s)", code)
+            self.set_status_text("Install failed. See the log for details.")
+            return
+        self._agent_installed = True
         self.quit_spotty_bunny()
 
     def uninstall_spotty_bunny(self) -> None:
+        """Remove the Scheduled Task and quit this process.
+
+        Unlike install/upgrade, uninstall has nothing to keep running for
+        even if it reports a failure (matches macOS's unconditional quit).
+        """
         from app.spotty_bunny_agent_win32 import uninstall_agent
 
         uninstall_agent()
@@ -439,10 +462,15 @@ class SpottyBunnyWin32Controller:
         self.quit_spotty_bunny()
 
     def upgrade_spotty_bunny(self) -> None:
+        """Upgrade, then quit so the Scheduled Task relaunches the new build."""
         from app.spotty_bunny_agent_win32 import upgrade_agent
 
         self.set_status_text(UPGRADE_STATUS)
-        upgrade_agent()
+        code = upgrade_agent()
+        if code != 0:
+            logger.warning("upgrade failed (exit code %s)", code)
+            self.set_status_text("Upgrade failed. See the log for details.")
+            return
         self.quit_spotty_bunny()
 
     def quit_spotty_bunny(self) -> None:
@@ -458,9 +486,29 @@ class SpottyBunnyWin32Controller:
         Windows silently drops a hook whose callback runs too slowly
         (``LowLevelHooksTimeout``), with no notification. Reinstalling
         unconditionally, rather than trying to detect staleness first, is
-        the only recovery available without extra polling machinery.
+        the only recovery available without extra polling machinery. This
+        also re-resolves the configured chord (mirroring macOS's
+        ``_resolve_configured_chord``), so ``spotty-bunny hotkey <choice>``'s
+        "wait for the next health check" hint holds true on Windows too.
         """
+        self.resolve_and_set_chord_vks()
         self._reinstall_hook()
+
+    def resolve_and_set_chord_vks(self) -> None:
+        """Read the configured hotkey choice into ``_left_vk``/``_right_vk``.
+
+        ``load_spotty_bunny_hotkey()`` raises ``ValueError`` for a
+        hand-edited, invalid ``config.toml`` value -- degrade to the
+        Control chord (mirroring macOS's ``_resolve_configured_chord``)
+        rather than letting that crash the whole process before a tray
+        icon ever appears.
+        """
+        try:
+            choice = load_spotty_bunny_hotkey()
+        except ValueError:
+            logger.warning("invalid spotty_bunny_hotkey config value; using auto")
+            choice = "auto"
+        self._left_vk, self._right_vk = resolve_win32_chord_vks(choice)
 
     def _reinstall_hook(self) -> None:
         if self._hook is not None:
@@ -513,8 +561,7 @@ def run_spotty_bunny_win32_app() -> int:
     import win32gui  # pyright: ignore[reportMissingModuleSource]
 
     controller = SpottyBunnyWin32Controller()
-    hotkey_choice = load_spotty_bunny_hotkey()
-    controller._left_vk, controller._right_vk = resolve_win32_chord_vks(hotkey_choice)
+    controller.resolve_and_set_chord_vks()
 
     hwnd = _create_overlay_window(controller, win32gui=win32gui, win32con=win32con)
     controller.hwnd = hwnd
@@ -580,7 +627,7 @@ def _create_overlay_window(
         0,
         0,
         420,
-        56,
+        204,
         0,
         0,
         win32gui.GetModuleHandle(None),
@@ -614,6 +661,20 @@ def _create_overlay_window(
         win32gui.GetModuleHandle(None),
         None,
     )
+    list_hwnd = win32gui.CreateWindowEx(
+        0,
+        "LISTBOX",
+        "",
+        win32con.WS_CHILD | win32con.WS_BORDER | win32con.LBS_NOTIFY,
+        8,
+        56,
+        404,
+        140,
+        hwnd,
+        0,
+        win32gui.GetModuleHandle(None),
+        None,
+    )
     controller.get_field_text = lambda: win32gui.GetWindowText(edit_hwnd)
     controller.set_field_text = lambda text: win32gui.SetWindowText(edit_hwnd, text)
     controller.set_status_text = lambda text: (
@@ -622,6 +683,30 @@ def _create_overlay_window(
             status_hwnd, win32con.SW_SHOW if text else win32con.SW_HIDE
         ),
     )
+
+    def _set_completion_rows(rows: list[CompletionRow]) -> None:
+        win32gui.SendMessage(list_hwnd, win32con.LB_RESETCONTENT, 0, 0)
+        for row in rows:
+            label = f"{row.insert}  {row.meta}" if row.meta else row.insert
+            win32gui.SendMessage(list_hwnd, win32con.LB_ADDSTRING, 0, label)
+        if rows:
+            win32gui.SendMessage(list_hwnd, win32con.LB_SETCURSEL, 0, 0)
+        win32gui.ShowWindow(list_hwnd, win32con.SW_SHOW if rows else win32con.SW_HIDE)
+
+    controller.set_completion_rows = _set_completion_rows
+    controller.set_completion_index = lambda index: win32gui.SendMessage(
+        list_hwnd, win32con.LB_SETCURSEL, index, 0
+    )
+
+    def _set_window_visible(visible: bool) -> None:
+        if visible:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+            win32gui.SetForegroundWindow(hwnd)
+            win32gui.SetFocus(edit_hwnd)
+        else:
+            win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+
+    controller.set_window_visible = _set_window_visible
     _subclass_edit_control(edit_hwnd, controller, win32gui=win32gui, win32con=win32con)
     return hwnd
 
