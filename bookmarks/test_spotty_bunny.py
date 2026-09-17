@@ -186,6 +186,18 @@ class SpottyBunnyCliTests(SimpleTestCase):
             self.assertEqual(main([]), 1)
         self.assertIn("only available on macOS", stderr.getvalue())
 
+    def test_windows_prints_not_yet_supported_hint(self) -> None:
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(main([]), 1)
+        text = stderr.getvalue()
+        self.assertIn("Windows support is in progress", text)
+        self.assertIn("issues/410", text)
+        self.assertNotIn("only available on macOS", text)
+
     def test_spotty_bunny_shortcut_dispatches_extra_args(self) -> None:
         from app.cli import main as cli_main
 
