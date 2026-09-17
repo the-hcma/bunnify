@@ -167,6 +167,31 @@ class HandleHookEventTests(SimpleTestCase):
         self.assertFalse(tracker.held_left)
         self.assertTrue(tracker.held_right)
 
+    def test_query_key_state_corrects_stale_held_right_before_left_press(self) -> None:
+        tracker = ChordTracker()
+        # Mirror of the left/right test above: right is believed held from
+        # a missed KEYUP, then a left press arrives.
+        _handle_hook_event(
+            tracker,
+            n_code=0,
+            w_param=WM_KEYDOWN,
+            l_param=(VK_RCONTROL, 0, 0, 0, 0),
+            on_chord=MagicMock(),
+        )
+        self.assertTrue(tracker.held_right)
+        on_chord = MagicMock()
+        _handle_hook_event(
+            tracker,
+            n_code=0,
+            w_param=WM_KEYDOWN,
+            l_param=(VK_LCONTROL, 0, 0, 0, 0),
+            on_chord=on_chord,
+            query_key_state=lambda vk: vk != VK_RCONTROL,  # right is really up
+        )
+        on_chord.assert_not_called()
+        self.assertFalse(tracker.held_right)
+        self.assertTrue(tracker.held_left)
+
     def test_query_key_state_leaves_genuinely_held_key_alone(self) -> None:
         tracker = ChordTracker()
         _handle_hook_event(
