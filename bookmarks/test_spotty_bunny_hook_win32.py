@@ -376,7 +376,7 @@ class InstallChordHookTests(SimpleTestCase):
             patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}),
             patch("ctypes.WinDLL", return_value=fake_user32, create=True),
             patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
-            patch("app.spotty_bunny_tap_health.try_write_spotty_bunny_health"),
+            patch("app.spotty_bunny_hook_win32.try_write_spotty_bunny_health"),
         ):
             install_chord_hook(tracker, on_chord=on_chord)
             handler = fake_user32.SetWindowsHookExW.call_args.args[1]
@@ -408,7 +408,7 @@ class InstallChordHookTests(SimpleTestCase):
             patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}),
             patch("ctypes.WinDLL", return_value=fake_user32, create=True),
             patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
-            patch("app.spotty_bunny_tap_health.try_write_spotty_bunny_health"),
+            patch("app.spotty_bunny_hook_win32.try_write_spotty_bunny_health"),
         ):
             install_chord_hook(tracker, on_chord=on_chord)
             handler = fake_user32.SetWindowsHookExW.call_args.args[1]
