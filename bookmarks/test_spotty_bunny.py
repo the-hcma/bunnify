@@ -663,7 +663,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
 
         path = Path("/tmp/bookmarks.json")
         self.assertTrue(open_path_in_text_editor(path, run=run))
-        self.assertEqual(calls, [["open", "-t", str(path)]])
+        self.assertEqual(calls, [["open", "-t", path.as_posix()]])
 
     def test_path_from_file_uri_decodes_path(self) -> None:
         from app.spotty_bunny_about_info import path_from_file_uri
@@ -1071,7 +1071,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(code, 0)
             self.assertTrue(plist.is_file())
             text = plist.read_text(encoding="utf-8")
-            self.assertIn(str(program), text)
+            # install_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(program.resolve()), text)
             self.assertIn("<key>KeepAlive</key>", text)
             self.assertEqual(tcc.probes, 1)
             self.assertEqual(tcc.requests, 0)
@@ -1582,7 +1585,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("pid: 99", text)
             self.assertIn("launchd: loaded", text)
             self.assertIn("binary: ", text)
-            self.assertIn(str(program), text)
+            # install_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(program.resolve()), text)
             self.assertIn("interpreter:", text)
             self.assertIn("application_log:", text)
             self.assertIn("follow_logs: tail --follow=name --retry", text)
@@ -1860,7 +1866,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 skip_chord_confirm=True,
             )
             self.assertEqual(code, 0)
-            self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
+            # upgrade_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(new_program.resolve()), plist.read_text(encoding="utf-8"))
             self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
             self.assertTrue(any(call[1] == "bootout" for call in ctl.calls))
             self.assertTrue(any(call[1] == "bootstrap" for call in ctl.calls))
@@ -1927,7 +1936,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 program=new_program,
             )
             self.assertEqual(code, 0)
-            self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
+            # upgrade_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(new_program.resolve()), plist.read_text(encoding="utf-8"))
             self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
 
     def test_uninstall_removes_plist_before_bootout(self) -> None:
