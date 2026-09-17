@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import ctypes
 import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
 from app.spotty_bunny_hook_win32 import (
+    KBDLLHOOKSTRUCT,
     WM_KEYDOWN,
     WM_KEYUP,
     WM_SYSKEYDOWN,
     WM_SYSKEYUP,
+    InstalledHook,
     _handle_hook_event,
     install_chord_hook,
 )
@@ -115,7 +120,7 @@ class HandleHookEventTests(SimpleTestCase):
         )
         self.assertFalse(tracker.held_left)
 
-    def test_record_activity_called_with_fired_flag(self) -> None:
+    def test_record_activity_called_only_on_chord_fire(self) -> None:
         tracker = ChordTracker()
         record_activity = MagicMock()
         _handle_hook_event(
@@ -126,8 +131,7 @@ class HandleHookEventTests(SimpleTestCase):
             on_chord=MagicMock(),
             record_activity=record_activity,
         )
-        record_activity.assert_called_once_with(False)
-        record_activity.reset_mock()
+        record_activity.assert_not_called()
         _handle_hook_event(
             tracker,
             n_code=0,
@@ -136,13 +140,11 @@ class HandleHookEventTests(SimpleTestCase):
             on_chord=MagicMock(),
             record_activity=record_activity,
         )
-        record_activity.assert_called_once_with(True)
+        record_activity.assert_called_once_with()
 
 
 def _make_fake_win32_modules() -> tuple[ModuleType, ModuleType]:
     win32api = ModuleType("win32api")
-    win32api.SetWindowsHookEx = MagicMock(return_value=12345)
-    win32api.CallNextHookEx = MagicMock(return_value=0)
     win32api.GetModuleHandle = MagicMock(return_value=0)
     win32api.UnhookWindowsHookEx = MagicMock()
     win32con = ModuleType("win32con")
@@ -150,34 +152,102 @@ def _make_fake_win32_modules() -> tuple[ModuleType, ModuleType]:
     return win32api, win32con
 
 
+def _identity_winfunctype(_restype, *_argtypes):
+    """Stand in for ctypes.WINFUNCTYPE(...): returns *fn* unwrapped.
+
+    ctypes.WINFUNCTYPE only exists on Windows, so install_chord_hook can't
+    run end to end off Windows. This fake keeps install_chord_hook's own
+    argument-wiring logic executing normally (real ctypes.WinDLL is faked
+    too, below) while sidestepping the one factory call that's genuinely
+    platform-locked, so everything else in the function — including the
+    real ctypes.cast/KBDLLHOOKSTRUCT pointer decoding — still runs as
+    written.
+    """
+
+    def _decorator(fn):
+        return fn
+
+    return _decorator
+
+
 class InstallChordHookTests(SimpleTestCase):
-    def test_install_registers_hook_and_returns_handle(self) -> None:
+    def test_install_calls_set_windows_hook_ex_with_keyboard_ll_and_module_handle(
+        self,
+    ) -> None:
         win32api, win32con = _make_fake_win32_modules()
+        win32api.GetModuleHandle = MagicMock(return_value=0xABCD)
+        fake_user32 = MagicMock()
+        fake_user32.SetWindowsHookExW = MagicMock(return_value=999)
         tracker = ChordTracker()
-        with patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}):
-            handle = install_chord_hook(tracker, on_chord=MagicMock())
-        self.assertEqual(handle, 12345)
-        win32api.SetWindowsHookEx.assert_called_once()
-        args = win32api.SetWindowsHookEx.call_args.args
+        with (
+            patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}),
+            patch("ctypes.WinDLL", return_value=fake_user32, create=True),
+            patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
+        ):
+            hook = install_chord_hook(tracker, on_chord=MagicMock())
+        self.assertIsInstance(hook, InstalledHook)
+        self.assertEqual(hook.handle, 999)
+        fake_user32.SetWindowsHookExW.assert_called_once()
+        args = fake_user32.SetWindowsHookExW.call_args.args
         self.assertEqual(args[0], win32con.WH_KEYBOARD_LL)
+        self.assertEqual(args[2], 0xABCD)
 
-    def test_installed_handler_dispatches_to_chord_logic_and_chains(self) -> None:
+    def test_zero_handle_raises(self) -> None:
         win32api, win32con = _make_fake_win32_modules()
+        fake_user32 = MagicMock()
+        fake_user32.SetWindowsHookExW = MagicMock(return_value=0)
         tracker = ChordTracker()
-        on_chord = MagicMock()
-        with patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}):
-            install_chord_hook(tracker, on_chord=on_chord)
-            handler = win32api.SetWindowsHookEx.call_args.args[1]
-            handler(0, WM_KEYDOWN, (VK_LCONTROL, 0, 0, 0, 0))
-            on_chord.assert_not_called()
-            handler(0, WM_KEYDOWN, (VK_RCONTROL, 0, 0, 0, 0))
-            on_chord.assert_called_once()
-            self.assertEqual(win32api.CallNextHookEx.call_count, 2)
-
-    def test_null_handle_raises(self) -> None:
-        win32api, win32con = _make_fake_win32_modules()
-        win32api.SetWindowsHookEx = MagicMock(return_value=None)
-        tracker = ChordTracker()
-        with patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}):
+        with (
+            patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}),
+            patch("ctypes.WinDLL", return_value=fake_user32, create=True),
+            patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
+            patch("ctypes.get_last_error", return_value=5, create=True),
+        ):
             with self.assertRaises(OSError):
                 install_chord_hook(tracker, on_chord=MagicMock())
+
+    def test_uninstall_calls_unhook_windows_hook_ex(self) -> None:
+        win32api, win32con = _make_fake_win32_modules()
+        with patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}):
+            InstalledHook(999, object()).uninstall()
+        win32api.UnhookWindowsHookEx.assert_called_once_with(999)
+
+    def test_handler_decodes_real_kbdllhookstruct_pointer_and_dispatches(self) -> None:
+        """Exercises install_chord_hook's real ctypes.cast/pointer decoding.
+
+        KBDLLHOOKSTRUCT, ctypes.cast, and ctypes.POINTER are ordinary
+        ctypes — not Windows-only — so a genuine struct built here and
+        addressed with ctypes.addressof() proves the handler's pointer
+        decoding is correct without needing an actual Windows hook thread.
+        """
+        win32api, win32con = _make_fake_win32_modules()
+        fake_user32 = MagicMock()
+        fake_user32.SetWindowsHookExW = MagicMock(return_value=999)
+        fake_user32.CallNextHookEx = MagicMock(return_value=0)
+        tracker = ChordTracker()
+        on_chord = MagicMock()
+        health_dir = TemporaryDirectory()
+        self.addCleanup(health_dir.cleanup)
+        with (
+            patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}),
+            patch("ctypes.WinDLL", return_value=fake_user32, create=True),
+            patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
+            patch(
+                "app.spotty_bunny_tap_health.data_dir",
+                return_value=Path(health_dir.name),
+            ),
+        ):
+            install_chord_hook(tracker, on_chord=on_chord)
+            handler = fake_user32.SetWindowsHookExW.call_args.args[1]
+
+            left = KBDLLHOOKSTRUCT(vkCode=VK_LCONTROL, scanCode=0, flags=0, time=0)
+            handler(0, WM_KEYDOWN, ctypes.addressof(left))
+            on_chord.assert_not_called()
+
+            right = KBDLLHOOKSTRUCT(vkCode=VK_RCONTROL, scanCode=0, flags=0, time=0)
+            handler(0, WM_KEYDOWN, ctypes.addressof(right))
+            on_chord.assert_called_once()
+
+        self.assertEqual(fake_user32.CallNextHookEx.call_count, 2)
+        health_file = Path(health_dir.name) / ".spotty-bunny-health"
+        self.assertIn("tap: ok", health_file.read_text(encoding="utf-8"))

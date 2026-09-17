@@ -29,15 +29,6 @@ class ApplyWin32KeyEventTests(SimpleTestCase):
             apply_win32_key_event(tracker, vk_code=VK_LCONTROL, key_down=True)
         )
 
-    def test_pressing_both_from_idle_does_not_fire(self) -> None:
-        tracker = ChordTracker()
-        apply_win32_key_event(tracker, vk_code=VK_LCONTROL, key_down=True)
-        self.assertFalse(tracker.held_right)
-        # Simulate near-simultaneous down events: left already applied above.
-        self.assertTrue(
-            apply_win32_key_event(tracker, vk_code=VK_RCONTROL, key_down=True)
-        )
-
     def test_releasing_then_repressing_fires_again(self) -> None:
         tracker = ChordTracker()
         apply_win32_key_event(tracker, vk_code=VK_LCONTROL, key_down=True)

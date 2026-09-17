@@ -1,30 +1,40 @@
 """Low-level Windows keyboard hook feeding ChordTracker (win32).
 
-Installs a ``WH_KEYBOARD_LL`` hook via ``pywin32``, the Windows analogue of
-the macOS ``CGEventTap`` feed in ``app/spotty_bunny_app.py``'s
-``_create_event_tap_callback``. A low-level hook can swallow events if its
-callback returns non-zero instead of calling ``CallNextHookEx`` — this
-module always calls it, matching the macOS tap's listen-only behavior:
-Spotty Bunny watches keys, it never intercepts them.
+Installs a ``WH_KEYBOARD_LL`` hook, the Windows analogue of the macOS
+``CGEventTap`` feed in ``app/spotty_bunny_app.py``'s
+``_create_event_tap_callback``. The hook install/chain/uninstall calls go
+through ``ctypes`` against ``user32.dll`` — verified against pywin32's own
+source that it does **not** expose ``SetWindowsHookEx``, ``CallNextHookEx``,
+or ``UnhookWindowsHookEx`` as callable Python functions (those three exist
+only inside pythonwin's internal C++ MFC message hook, unrelated to this).
+``pywin32`` is still used for what it does expose:
+``win32api.GetModuleHandle``, ``win32con.WH_KEYBOARD_LL``, and
+``win32gui.PumpMessages`` for the message loop a hook needs on its
+installing thread — a hook only fires while that loop runs.
 
-Requires a Windows message loop on the installing thread
-(:func:`pump_hook_messages`), so a hook only fires while that loop runs.
+A low-level hook can swallow events if its callback returns non-zero
+instead of calling ``CallNextHookEx`` — this module always calls it,
+matching the macOS tap's listen-only behavior: Spotty Bunny watches keys,
+it never intercepts them.
 
 The event-handling logic (:func:`_handle_hook_event`) takes plain ints and
 an injectable ``on_chord``/``record_activity``, so it's fully unit-testable
-without ``pywin32``. Only :func:`install_chord_hook`,
+without ``pywin32`` or ``ctypes.windll``. Only :func:`install_chord_hook`,
 :func:`pump_hook_messages`, and :func:`run_console_listener` touch
-``win32api``/``win32con``/``win32gui`` — those imports are deferred inside
-each function (like ``spotty_bunny_cli.py``'s PyObjC loading) so this
-module stays importable on any platform, and are the one part of this file
-that can't be exercised outside a real Windows message loop.
+``win32api``/``win32con``/``win32gui``/``ctypes.windll`` — those imports
+and calls are deferred inside each function (like ``spotty_bunny_cli.py``'s
+PyObjC loading) so this module stays importable on any platform, and are
+the one part of this file that can't be exercised outside a real Windows
+message loop.
 """
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import time
 from collections.abc import Callable, Sequence
+from ctypes import wintypes
 
 from app.spotty_bunny_hotkey import ChordTracker
 from app.spotty_bunny_hotkey_win32 import (
@@ -45,6 +55,19 @@ _KEY_DOWN_MESSAGES = frozenset({WM_KEYDOWN, WM_SYSKEYDOWN})
 _KEY_UP_MESSAGES = frozenset({WM_KEYUP, WM_SYSKEYUP})
 
 
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    """winuser.h's ``KBDLLHOOKSTRUCT`` — what a ``WH_KEYBOARD_LL`` lParam points to."""
+
+    _fields_ = (
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        # ULONG_PTR: pointer-sized: ctypes.wintypes has no alias for it.
+        ("dwExtraInfo", ctypes.c_size_t),
+    )
+
+
 def _handle_hook_event(
     tracker: ChordTracker,
     *,
@@ -54,14 +77,23 @@ def _handle_hook_event(
     on_chord: Callable[[], None],
     left_vk: int = VK_LCONTROL,
     right_vk: int = VK_RCONTROL,
-    record_activity: Callable[[bool], None] | None = None,
+    record_activity: Callable[[], None] | None = None,
 ) -> None:
     """Apply one raw hook callback invocation to *tracker*.
 
-    ``l_param`` is the ``pywin32``-decoded ``KBDLLHOOKSTRUCT`` tuple
-    ``(vkCode, scanCode, flags, time, dwExtraInfo)`` — only ``[0]`` (the
-    virtual-key code) is used. A negative *n_code* means "don't process
-    this event", per the Windows hook contract.
+    ``l_param`` is a sequence whose ``[0]`` is the virtual-key code (the
+    real callback in :func:`install_chord_hook` passes a decoded
+    :class:`KBDLLHOOKSTRUCT`'s field values; tests pass a plain tuple). A
+    negative *n_code* means "don't process this event", per the Windows
+    hook contract.
+
+    *on_chord* and *record_activity* run only when the chord actually
+    completes — matching ``spotty_bunny_app.py``'s macOS
+    ``_create_event_tap_callback``/``_record_tap_activity``, never on every
+    Control keystroke. Ctrl is used constantly elsewhere (copy/paste/undo),
+    and this callback runs on the OS hook thread, which Windows silently
+    unhooks if it's too slow (``LowLevelHooksTimeout``, default 300 ms) —
+    so it must stay cheap on every event that isn't a chord completion.
     """
     if n_code < 0:
         return
@@ -78,20 +110,40 @@ def _handle_hook_event(
         left_vk=left_vk,
         right_vk=right_vk,
     )
+    if not fired:
+        return
+    logger.info("chord complete (vk_code=%s)", vk_code)
     if record_activity is not None:
-        record_activity(fired)
-    if fired:
-        logger.info("chord complete (vk_code=%s)", vk_code)
-        on_chord()
+        record_activity()
+    on_chord()
 
 
-def _record_hook_activity(*, chord: bool) -> None:
+def _record_hook_activity() -> None:
     now = time.time()
     try_write_spotty_bunny_health(
-        last_chord_at=now if chord else None,
-        last_event_at=now,
-        tap=TAP_STATE_OK,
+        last_chord_at=now, last_event_at=now, tap=TAP_STATE_OK
     )
+
+
+class InstalledHook:
+    """A live ``WH_KEYBOARD_LL`` hook. Keeps its ctypes callback alive.
+
+    ``ctypes`` doesn't hold a reference to a ``WINFUNCTYPE`` instance on
+    Windows' behalf — if it were only a local variable inside
+    :func:`install_chord_hook`, it would be garbage-collected once that
+    function returns, leaving Windows calling into freed memory the next
+    time a Control key moves. Holding it here for as long as the caller
+    holds this object avoids that.
+    """
+
+    def __init__(self, handle: int, callback: object) -> None:
+        self.handle = handle
+        self._callback = callback
+
+    def uninstall(self) -> None:
+        import win32api  # pyright: ignore[reportMissingModuleSource]
+
+        win32api.UnhookWindowsHookEx(self.handle)
 
 
 def install_chord_hook(
@@ -100,44 +152,73 @@ def install_chord_hook(
     on_chord: Callable[[], None],
     left_vk: int = VK_LCONTROL,
     right_vk: int = VK_RCONTROL,
-) -> object:
+) -> InstalledHook:
     """Install the low-level keyboard hook and return its handle.
 
     Requires ``pywin32`` (optional extra ``windows``); raises ``ImportError``
     otherwise. Call :func:`pump_hook_messages` afterwards to run the message
-    loop the hook needs, and ``win32api.UnhookWindowsHookEx(handle)`` when
+    loop the hook needs, and ``.uninstall()`` on the returned handle when
     done.
     """
-    # types-pywin32 (dev-only stub package) resolves these for pyright on any
-    # platform; the real pywin32 source only installs on win32 (windows extra).
     import win32api  # pyright: ignore[reportMissingModuleSource]
     import win32con  # pyright: ignore[reportMissingModuleSource]
 
-    def _handler(n_code: int, w_param: int, l_param: Sequence[int]) -> int:
-        _handle_hook_event(
-            tracker,
-            n_code=n_code,
-            w_param=w_param,
-            l_param=l_param,
-            on_chord=on_chord,
-            left_vk=left_vk,
-            right_vk=right_vk,
-            record_activity=lambda fired: _record_hook_activity(chord=fired),
-        )
+    # use_last_error=True so a failed SetWindowsHookExW's GetLastError() is
+    # captured correctly by ctypes.get_last_error() below — ctypes.windll's
+    # convenience objects don't do this reliably.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    hook_proc_type = ctypes.WINFUNCTYPE(
+        ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
+    )
+    user32.SetWindowsHookExW.restype = wintypes.HHOOK
+    user32.SetWindowsHookExW.argtypes = (
+        ctypes.c_int,
+        hook_proc_type,
+        wintypes.HINSTANCE,
+        wintypes.DWORD,
+    )
+    user32.CallNextHookEx.restype = ctypes.c_ssize_t
+    user32.CallNextHookEx.argtypes = (
+        wintypes.HHOOK,
+        ctypes.c_int,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    )
+
+    def _handler(n_code: int, w_param: int, l_param: int) -> int:
+        if n_code >= 0:
+            kbd = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+            kbd_fields = (
+                kbd.vkCode,
+                kbd.scanCode,
+                kbd.flags,
+                kbd.time,
+                kbd.dwExtraInfo,
+            )
+            _handle_hook_event(
+                tracker,
+                n_code=n_code,
+                w_param=w_param,
+                l_param=kbd_fields,
+                on_chord=on_chord,
+                left_vk=left_vk,
+                right_vk=right_vk,
+                record_activity=_record_hook_activity,
+            )
         # `handle` is resolved from the enclosing scope at call time, by
         # which point install_chord_hook has already returned it below —
-        # Windows can't invoke this callback before SetWindowsHookEx does.
-        return win32api.CallNextHookEx(handle, n_code, w_param, l_param)
+        # Windows can't invoke this callback before SetWindowsHookExW does.
+        return user32.CallNextHookEx(handle, n_code, w_param, l_param)
 
-    handle = win32api.SetWindowsHookEx(
-        win32con.WH_KEYBOARD_LL,
-        _handler,
-        win32api.GetModuleHandle(None),
-        0,
+    callback = hook_proc_type(_handler)
+    handle = user32.SetWindowsHookExW(
+        win32con.WH_KEYBOARD_LL, callback, win32api.GetModuleHandle(None), 0
     )
-    if handle is None:
-        raise OSError("SetWindowsHookEx(WH_KEYBOARD_LL) returned NULL")
-    return handle
+    if not handle:
+        raise OSError(
+            ctypes.get_last_error(), "SetWindowsHookExW(WH_KEYBOARD_LL) failed"
+        )
+    return InstalledHook(handle, callback)
 
 
 def pump_hook_messages() -> None:
@@ -155,15 +236,13 @@ def run_console_listener() -> None:
     directly with ``python -m app.spotty_bunny_hook_win32`` on Windows to
     confirm the hook fires before that UI lands.
     """
-    import win32api  # pyright: ignore[reportMissingModuleSource]
-
     tracker = ChordTracker()
-    handle = install_chord_hook(tracker, on_chord=lambda: print("chord!", flush=True))
+    hook = install_chord_hook(tracker, on_chord=lambda: print("chord!", flush=True))
     print("Listening for the dual-Control chord. Ctrl+C to exit.")
     try:
         pump_hook_messages()
     finally:
-        win32api.UnhookWindowsHookEx(handle)
+        hook.uninstall()
 
 
 if __name__ == "__main__":
