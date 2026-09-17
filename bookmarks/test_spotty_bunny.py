@@ -74,7 +74,11 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.addCleanup(data_patch.stop)
 
     def tearDown(self) -> None:
-        for name in ("app.spotty_bunny_app", "app.spotty_bunny_cli"):
+        for name in (
+            "app.spotty_bunny_app",
+            "app.spotty_bunny_cli",
+            "app.spotty_bunny_win32_app",
+        ):
             logger = logging.getLogger(name)
             for handler in logger.handlers:
                 handler.close()
@@ -187,17 +191,69 @@ class SpottyBunnyCliTests(SimpleTestCase):
             self.assertEqual(main([]), 1)
         self.assertIn("only available on macOS", stderr.getvalue())
 
-    def test_windows_prints_not_yet_supported_hint(self) -> None:
+    def test_windows_dispatches_to_win32_app(self) -> None:
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_win32_app",
+                return_value=lambda: 0,
+            ),
+        ):
+            self.assertEqual(run_spotty_bunny(), 0)
+
+    def test_windows_missing_pywin32_prints_extra_hint(self) -> None:
+        def boom() -> int:
+            raise ImportError("No module named 'win32api'")
+
         stderr = StringIO()
         with (
             patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_win32_app",
+                side_effect=boom,
+            ),
             patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
-            self.assertEqual(main([]), 1)
+            self.assertEqual(run_spotty_bunny(), 1)
         text = stderr.getvalue()
-        self.assertIn("Windows support is in progress", text)
-        self.assertIn("issues/410", text)
-        self.assertNotIn("only available on macOS", text)
+        self.assertIn("bunnify[windows]", text)
+        self.assertIn("--force", text)
+
+    def test_windows_hook_error_prints_hook_failed_message(self) -> None:
+        from app.spotty_bunny_cli import SpottyBunnyHookError
+
+        def boom() -> int:
+            raise SpottyBunnyHookError("nope")
+
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_win32_app",
+                return_value=boom,
+            ),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(run_spotty_bunny(), 1)
+        self.assertIn("could not listen for the hotkey chord", stderr.getvalue())
+
+    def test_pid_tracking_runs_on_darwin_and_win32_not_elsewhere(self) -> None:
+        # write_spotty_bunny_pid is mocked throughout -- a real call would
+        # write to the developer's actual data dir (see issue #433).
+        for platform, should_track in (
+            ("darwin", True),
+            ("win32", True),
+            ("linux", False),
+        ):
+            with (
+                self.subTest(platform=platform),
+                patch("app.spotty_bunny_cli.sys.platform", platform),
+                patch("app.spotty_bunny_cli.run_spotty_bunny", return_value=0),
+                patch("app.spotty_bunny_cli.write_spotty_bunny_pid") as write_pid,
+                patch("app.spotty_bunny_cli.atexit.register"),
+            ):
+                self.assertEqual(main([]), 0)
+            self.assertEqual(write_pid.called, should_track)
 
     def test_spotty_bunny_shortcut_dispatches_extra_args(self) -> None:
         from app.cli import main as cli_main

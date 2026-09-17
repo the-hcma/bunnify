@@ -13,11 +13,13 @@ from app.spotty_bunny_hook_win32 import (
     KBDLLHOOKSTRUCT,
     WM_KEYDOWN,
     WM_KEYUP,
+    WM_QUIT,
     WM_SYSKEYDOWN,
     WM_SYSKEYUP,
     InstalledHook,
     _handle_hook_event,
     install_chord_hook,
+    install_console_quit_handler,
 )
 from app.spotty_bunny_hotkey import ChordTracker
 from app.spotty_bunny_hotkey_win32 import VK_LCONTROL, VK_RCONTROL
@@ -419,3 +421,28 @@ class InstallChordHookTests(SimpleTestCase):
             handler(0, WM_KEYDOWN, ctypes.addressof(right))
 
         on_chord.assert_called_once()
+
+
+class InstallConsoleQuitHandlerTests(SimpleTestCase):
+    def test_registers_handler_and_posts_wm_quit_to_target_thread(self) -> None:
+        fake_kernel32 = MagicMock()
+        fake_kernel32.SetConsoleCtrlHandler = MagicMock(return_value=True)
+        fake_user32 = MagicMock()
+        fake_user32.PostThreadMessageW = MagicMock(return_value=True)
+
+        def _fake_windll(name: str, use_last_error: bool = False):
+            return {"kernel32": fake_kernel32, "user32": fake_user32}[name]
+
+        with (
+            patch("ctypes.WinDLL", side_effect=_fake_windll, create=True),
+            patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
+        ):
+            unregister = install_console_quit_handler(4242)
+            fake_kernel32.SetConsoleCtrlHandler.assert_called_once()
+            handler = fake_kernel32.SetConsoleCtrlHandler.call_args.args[0]
+            self.assertTrue(handler(0))
+            fake_user32.PostThreadMessageW.assert_called_once_with(4242, WM_QUIT, 0, 0)
+            unregister()
+        # Second call (from unregister()) passes False to deregister.
+        self.assertEqual(fake_kernel32.SetConsoleCtrlHandler.call_count, 2)
+        self.assertEqual(fake_kernel32.SetConsoleCtrlHandler.call_args.args[1], False)

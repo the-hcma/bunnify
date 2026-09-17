@@ -7,7 +7,24 @@ from app.spotty_bunny_hotkey_win32 import (
     VK_LCONTROL,
     VK_RCONTROL,
     apply_win32_key_event,
+    resolve_win32_chord_vks,
 )
+
+
+class ResolveWin32ChordVksTests(SimpleTestCase):
+    def test_auto_and_control_resolve_to_control_chord(self) -> None:
+        self.assertEqual(resolve_win32_chord_vks("auto"), (VK_LCONTROL, VK_RCONTROL))
+        self.assertEqual(resolve_win32_chord_vks("Control"), (VK_LCONTROL, VK_RCONTROL))
+
+    def test_option_and_command_fall_back_to_control_chord(self) -> None:
+        with self.assertLogs("app.spotty_bunny_hotkey_win32", level="WARNING"):
+            self.assertEqual(
+                resolve_win32_chord_vks("option"), (VK_LCONTROL, VK_RCONTROL)
+            )
+        with self.assertLogs("app.spotty_bunny_hotkey_win32", level="WARNING"):
+            self.assertEqual(
+                resolve_win32_chord_vks("command"), (VK_LCONTROL, VK_RCONTROL)
+            )
 
 
 class ApplyWin32KeyEventTests(SimpleTestCase):

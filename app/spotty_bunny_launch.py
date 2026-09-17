@@ -252,15 +252,71 @@ def _process_command(pid: int) -> str | None:
     return command or None
 
 
-def _spotty_bunny_process_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
+def _process_exists(pid: int) -> bool:
+    if sys.platform == "win32":
+        return _win32_process_alive(pid)
     try:
         os.kill(pid, 0)
     except OSError:
         return False
+    return True
+
+
+def _spotty_bunny_process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if not _process_exists(pid):
+        return False
+    if sys.platform == "win32":
+        # No cheap Windows equivalent of the `ps -o command=` cross-check
+        # below (getting a full command line back needs WMI/PowerShell, not
+        # just an OpenProcess handle) -- existence is the best signal
+        # available without that extra machinery.
+        return True
     command = _process_command(pid)
     return command is not None and _is_spotty_bunny_command(command)
+
+
+_WIN32_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_WIN32_PROCESS_TERMINATE = 0x0001
+_WIN32_STILL_ACTIVE = 259
+
+
+def _win32_process_alive(pid: int) -> bool:
+    """Existence check via OpenProcess/GetExitCodeProcess.
+
+    Deliberately not ``os.kill(pid, 0)``: on Windows, ``os.kill`` with any
+    signal other than the two console-control events calls
+    ``TerminateProcess(handle, sig)`` -- ``os.kill(pid, 0)`` would actually
+    terminate a live process (with exit code 0) instead of merely probing
+    it.
+    """
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_WIN32_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == _WIN32_STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _win32_terminate_pid(pid: int) -> None:
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_WIN32_PROCESS_TERMINATE, False, pid)
+    if not handle:
+        return
+    try:
+        kernel32.TerminateProcess(handle, 1)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _spawn_detached(command: Sequence[str]) -> int:
@@ -275,6 +331,10 @@ def _spawn_detached(command: Sequence[str]) -> int:
 
 
 def _terminate_pid(pid: int) -> None:
+    if sys.platform == "win32":
+        _win32_terminate_pid(pid)
+        _wait_for_exit(pid, timeout_s=10)
+        return
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -291,9 +351,7 @@ def _terminate_pid(pid: int) -> None:
 def _wait_for_exit(pid: int, *, timeout_s: float) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except OSError:
+        if not _process_exists(pid):
             return True
         time.sleep(0.05)
     return False
