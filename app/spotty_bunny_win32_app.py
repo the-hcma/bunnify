@@ -35,6 +35,7 @@ from app.spotty_bunny_cli import SpottyBunnyHookError
 from app.spotty_bunny_complete import (
     CompletionRow,
     apply_completion,
+    completion_browse_all,
     completion_navigation_disposition,
     completion_row_after_selector,
     completion_still_current,
@@ -323,6 +324,15 @@ class SpottyBunnyWin32Controller:
             selector=selector,
         )
         self.set_completion_index(self._completion_index)
+        # Browse-all (empty prefix) keeps the field empty -- _submit_query's
+        # empty-field fallback reads _completion_index directly in that
+        # case. Otherwise the field must follow the highlight (mirrors
+        # macOS's _move_completion), or Return submits whatever was
+        # auto-inserted on Tab instead of the row the user just selected.
+        if completion_browse_all(self._completion_prefix):
+            return
+        row = self._completion_rows[self._completion_index]
+        self.set_field_text(apply_completion(self._completion_prefix, row))
 
     def _hide_completions(self) -> None:
         self._completion_rows = []

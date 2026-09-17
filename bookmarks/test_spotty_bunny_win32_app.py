@@ -325,6 +325,79 @@ class HandleEditKeydownTests(SimpleTestCase):
         controller = _make_controller()
         self.assertFalse(controller.handle_edit_keydown(0x41))
 
+    def test_arrow_selection_writes_row_into_field(self) -> None:
+        # Regression: the LISTBOX highlight moving must not be the only
+        # effect -- Return reads the field text, so the selected row has to
+        # land there too (mirrors macOS's _move_completion).
+        controller = _make_controller()
+        controller._completion_rows = [
+            CompletionRow("gh", "", -1),
+            CompletionRow("gcal", "", -1),
+        ]
+        controller._completion_prefix = "g"
+        controller._completion_visible = True
+        controller._completion_index = 0
+        controller.set_field_text("gh")
+        controller.handle_edit_keydown(VK_DOWN)
+        self.assertEqual(controller._completion_index, 1)
+        self.assertEqual(controller.get_field_text(), "gcal")
+
+    def test_browse_all_selection_does_not_touch_field(self) -> None:
+        # Empty prefix (Tab on an empty field): the field must stay empty
+        # so _submit_query's own empty-field/_completion_index fallback
+        # handles it, matching macOS's completion_browse_all guard.
+        controller = _make_controller()
+        controller._completion_rows = [
+            CompletionRow("gh", "", 0),
+            CompletionRow("gcal", "", 0),
+        ]
+        controller._completion_prefix = ""
+        controller._completion_visible = True
+        controller._completion_index = 0
+        controller.set_field_text("")
+        controller.handle_edit_keydown(VK_DOWN)
+        self.assertEqual(controller.get_field_text(), "")
+
+
+class _CapturingIo:
+    """Records submitted (work, on_done) pairs instead of running them."""
+
+    def __init__(self) -> None:
+        self.jobs: list[tuple] = []
+
+    def submit(self, fn, on_done) -> None:
+        self.jobs.append((fn, on_done))
+
+
+class SubmitQueryCancellationTests(SimpleTestCase):
+    def test_hide_before_resolve_completes_skips_opener_and_appender(self) -> None:
+        # Regression: hide()'s _resolve_seq += 1 is the only thing stopping
+        # a resolve that finishes after hide() from opening a browser and
+        # appending to history for a query the user already dismissed.
+        controller = _make_controller()
+        controller.show()
+        controller.set_field_text("gh")
+        io = _CapturingIo()
+        controller._io = io
+        open_url_fn = MagicMock()
+        append_history_fn = MagicMock()
+        controller._open_url_fn = open_url_fn
+        controller._append_history_fn = append_history_fn
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.lookup_resolved_url",
+                return_value="https://github.com",
+            ),
+            patch("app.spotty_bunny_win32_app.resolve_base_url", return_value="u"),
+        ):
+            controller.handle_edit_keydown(VK_RETURN)
+            self.assertEqual(len(io.jobs), 1)
+            work, _on_done = io.jobs[0]
+            controller.hide()
+            work()
+        open_url_fn.assert_not_called()
+        append_history_fn.assert_not_called()
+
 
 class LoadCompleterAsyncTests(SimpleTestCase):
     """Exercises the real _load_completer_async, not the _make_controller stub."""
@@ -506,3 +579,19 @@ class ResolveAndSetChordVksTests(SimpleTestCase):
         self.assertEqual(
             (controller._left_vk, controller._right_vk), (VK_LCONTROL, VK_RCONTROL)
         )
+
+
+class CheckEventTapHealthTests(SimpleTestCase):
+    def test_re_resolves_chord_and_reinstalls_hook(self) -> None:
+        # Regression: WH_KEYBOARD_LL exposes no "still active" query, so
+        # this unconditional reinstall is the only recovery from a hook
+        # Windows silently dropped -- deleting either call here would leave
+        # the chord dead for the rest of the session with no test noticing.
+        controller = _make_controller()
+        with (
+            patch.object(controller, "resolve_and_set_chord_vks") as resolve_vks,
+            patch.object(controller, "_reinstall_hook") as reinstall,
+        ):
+            controller.check_event_tap_health()
+        resolve_vks.assert_called_once()
+        reinstall.assert_called_once()
