@@ -115,7 +115,7 @@ class BuildInfoTests(SimpleTestCase):
             self.assertNotEqual(shown, venv_binary.resolve())
 
     def test_running_command_path_looks_up_bare_command_on_path(self) -> None:
-        located = Path("/Users/me/.local/bin/bunnify")
+        located = Path(tempfile.gettempdir()) / "me" / ".local" / "bin" / "bunnify"
         with (
             mock.patch("app.version.sys.argv", ["bunnify-on-path"]),
             mock.patch("app.version.shutil.which", return_value=str(located)) as which,
@@ -125,7 +125,7 @@ class BuildInfoTests(SimpleTestCase):
         self.assertEqual(shown, located)
 
     def test_running_command_path_prefers_path_over_cwd_file(self) -> None:
-        located = Path("/Users/me/.local/bin/bunnify")
+        located = Path(tempfile.gettempdir()) / "me" / ".local" / "bin" / "bunnify"
         with tempfile.TemporaryDirectory() as temporary_directory:
             cwd_file = Path(temporary_directory) / "bunnify"
             cwd_file.write_text("not the CLI\n")

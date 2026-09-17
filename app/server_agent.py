@@ -63,8 +63,12 @@ def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
     args_xml = "\n".join(
         f"    <string>{escape(arg)}</string>" for arg in program_arguments
     )
+    # This plist only ever runs on macOS; as_posix() keeps __HOME__ in
+    # forward-slash form regardless of the host OS running this function
+    # (e.g. under test on Windows), matching the template's hardcoded
+    # "__HOME__/Library/Logs/..." paths.
     return _PLIST_TEMPLATE.replace("__PROGRAM_ARGUMENTS__", args_xml).replace(
-        "__HOME__", escape(str(home))
+        "__HOME__", escape(home.as_posix())
     )
 
 
@@ -418,7 +422,9 @@ def _bootout_agent(
 
 
 def _gui_domain(uid: int | None = None) -> str:
-    return f"gui/{os.getuid() if uid is None else uid}"
+    if uid is None:
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+    return f"gui/{uid}"
 
 
 def _is_darwin(platform: str | None) -> bool:

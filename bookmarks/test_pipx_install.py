@@ -36,13 +36,17 @@ class PipxInstallTests(SimpleTestCase):
 
     def test_macos_extra_installed_falls_back_to_sys_executable(self) -> None:
         completed = subprocess.CompletedProcess(["python"], 1, "", "")
+        fallback = "/opt/fallback/bin/python"
         with (
             patch("app.pipx_install.pipx_bunnify_venv_python", return_value=None),
             patch("app.pipx_install.subprocess.run", return_value=completed) as run,
-            patch("app.pipx_install.sys.executable", "/opt/fallback/bin/python"),
+            patch("app.pipx_install.sys.executable", fallback),
         ):
             self.assertFalse(macos_extra_installed())
-        self.assertEqual(run.call_args.args[0][0], "/opt/fallback/bin/python")
+        # The SUT routes sys.executable through Path(...), which normalizes
+        # separators for the host OS -- compare against that same
+        # normalization instead of the raw fallback string.
+        self.assertEqual(run.call_args.args[0][0], str(Path(fallback)))
 
     def test_macos_extra_installed_returns_false_when_probe_fails(self) -> None:
         completed = subprocess.CompletedProcess(["python"], 1, "", "")

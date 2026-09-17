@@ -203,13 +203,7 @@ jobs:
 
     - name: Run unit tests
       shell: bash
-      # Informational only until #431 (pre-existing POSIX-only path
-      # assumptions across the suite, unrelated to Spotty Bunny) is fixed —
-      # `|| true` keeps this check green so it doesn't block the merge-queue
-      # / review-loop tooling on a known, already-tracked gap. Failures are
-      # still fully visible in this step's log. Drop `|| true` once #431
-      # lands so this becomes a real blocking signal.
-      run: ./test_bunnify || true
+      run: ./test_bunnify
 
   secret-scan:
     name: Secret Scan

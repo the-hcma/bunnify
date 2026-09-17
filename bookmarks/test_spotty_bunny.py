@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -3478,13 +3479,16 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             self.assertFalse((pid_dir / SPOTTY_BUNNY_PID_FILE).exists())
 
     def test_spotty_bunny_command_prefers_executable_local_bin(self) -> None:
-        from app.spotty_bunny_launch import spotty_bunny_command
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_LOCAL_BIN_NAME,
+            spotty_bunny_command,
+        )
 
         with TemporaryDirectory() as tmp:
             home = Path(tmp)
             local_bin = home / ".local" / "bin"
             local_bin.mkdir(parents=True)
-            preferred = local_bin / "spotty-bunny"
+            preferred = local_bin / SPOTTY_BUNNY_LOCAL_BIN_NAME
             _write_executable(preferred)
             path_bin = home / "path-bin"
             path_bin.mkdir()
@@ -3506,7 +3510,16 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             home = Path(tmp)
             local_bin = home / ".local" / "bin"
             local_bin.mkdir(parents=True)
-            stale = local_bin / "spotty-bunny"
+            # Windows synthesizes the "executable" bit from the file
+            # extension rather than from permissions, so a stale file at
+            # the exact canonical launcher name (spotty-bunny.exe) would be
+            # indistinguishable from a real one. A name without a
+            # recognized launcher extension keeps "nothing usable at the
+            # canonical path" meaningful on every platform.
+            stale_name = (
+                "spotty-bunny.stale" if sys.platform == "win32" else "spotty-bunny"
+            )
+            stale = local_bin / stale_name
             stale.write_text("stale wrapper\n", encoding="utf-8")
             path_bin = home / "path-bin"
             path_bin.mkdir()
@@ -3663,7 +3676,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("Repository:", info_source)
         self.assertIn("SPOTTY_BUNNY_REPO_URL", info_source)
         self.assertIn("PYPI_PROJECT_URL", info_source)
-        self.assertIn('["open", "-t", str(path)]', info_source)
+        self.assertIn('["open", "-t", path.as_posix()]', info_source)
         self.assertIn("def about_details_text_and_links", info_source)
         self.assertIn("def about_link_spans", info_source)
         self.assertIn("def about_version_text_and_links", info_source)

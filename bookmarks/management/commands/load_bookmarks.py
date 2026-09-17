@@ -99,7 +99,7 @@ class Command(BaseCommand):
             },
         }
 
-        self.stdout.write(f"📖 Loading bookmarks from: {json_file_path}")
+        self.stdout.write(f"Loading bookmarks from: {json_file_path}")
 
         try:
             # Read and parse JSON file
@@ -109,7 +109,7 @@ class Command(BaseCommand):
             logger.info("Starting JSON schema validation")
             validate(instance=data, schema=schema)
             logger.info("JSON schema validation passed")
-            self.stdout.write(self.style.SUCCESS("✓ JSON schema validation passed"))
+            self.stdout.write(self.style.SUCCESS("JSON schema validation passed"))
 
             # Check for reserved keywords
             reserved_keywords = ["h", "help"]
@@ -179,7 +179,7 @@ class Command(BaseCommand):
 
             logger.info(f"Successfully loaded {created_count} bookmarks")
             self.stdout.write(
-                self.style.SUCCESS(f"✓ Successfully loaded {created_count} bookmarks")
+                self.style.SUCCESS(f"Successfully loaded {created_count} bookmarks")
             )
 
         except FileNotFoundError:
