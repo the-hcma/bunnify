@@ -3490,6 +3490,16 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 )
             self.assertFalse((pid_dir / SPOTTY_BUNNY_PID_FILE).exists())
 
+    def test_spotty_bunny_local_bin_name_matches_platform(self) -> None:
+        from app.spotty_bunny_launch import SPOTTY_BUNNY_LOCAL_BIN_NAME
+
+        # Pinned independently of the fixtures below, which build their
+        # local-bin filename from this same constant: without this, a
+        # regression in the constant itself couldn't be caught by those
+        # tests (they'd still agree with whatever the constant says).
+        expected = "spotty-bunny.exe" if sys.platform == "win32" else "spotty-bunny"
+        self.assertEqual(SPOTTY_BUNNY_LOCAL_BIN_NAME, expected)
+
     def test_spotty_bunny_command_prefers_executable_local_bin(self) -> None:
         from app.spotty_bunny_launch import (
             SPOTTY_BUNNY_LOCAL_BIN_NAME,
@@ -3522,12 +3532,15 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             home = Path(tmp)
             local_bin = home / ".local" / "bin"
             local_bin.mkdir(parents=True)
-            # Windows synthesizes the "executable" bit from the file
-            # extension rather than from permissions, so a stale file at
-            # the exact canonical launcher name (spotty-bunny.exe) would be
-            # indistinguishable from a real one. A name without a
-            # recognized launcher extension keeps "nothing usable at the
-            # canonical path" meaningful on every platform.
+            # os.access(path, os.X_OK) on Windows is existence-based (it
+            # doesn't consult permission bits), so a same-named stale file
+            # at the canonical launcher path would be indistinguishable
+            # from a real one there -- chmod alone (as the fixtures below
+            # rely on) can't simulate "present but not launchable" on
+            # Windows. Using a name distinct from SPOTTY_BUNNY_LOCAL_BIN_NAME
+            # keeps this meaningful on every platform: local.is_file() at
+            # the canonical path is simply False, so the code falls
+            # through to PATH -- the behavior this test guards.
             stale_name = (
                 "spotty-bunny.stale" if sys.platform == "win32" else "spotty-bunny"
             )
