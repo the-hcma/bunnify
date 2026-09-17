@@ -1585,10 +1585,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("pid: 99", text)
             self.assertIn("launchd: loaded", text)
             self.assertIn("binary: ", text)
-            # install_agent resolves the program path (e.g. Windows'
-            # 8.3-style TEMP dir names get expanded to their long form), so
-            # compare against that same resolved form.
-            self.assertIn(str(program.resolve()), text)
+            # This test writes the plist directly with format_agent_plist
+            # (no install_agent path resolution in between), so the status
+            # output should still contain the exact, unresolved path.
+            self.assertIn(str(program), text)
             self.assertIn("interpreter:", text)
             self.assertIn("application_log:", text)
             self.assertIn("follow_logs: tail --follow=name --retry", text)
