@@ -113,7 +113,7 @@ def display_user_path(path: Path) -> str:
     if expanded == home:
         return "~"
     try:
-        return f"~/{expanded.relative_to(home)}"
+        return f"~/{expanded.relative_to(home).as_posix()}"
     except ValueError:
         return str(expanded)
 
@@ -255,8 +255,11 @@ def open_path_in_text_editor(
     """Open *path* in the default text editor (``open -t`` on macOS)."""
     runner = run if run is not None else subprocess.run
     try:
+        # ``open`` only exists on macOS, so as_posix() keeps this argument
+        # forward-slash regardless of the host OS running this function
+        # (e.g. under test on Windows).
         completed = runner(
-            ["open", "-t", str(path)],
+            ["open", "-t", path.as_posix()],
             check=False,
             capture_output=True,
             text=True,

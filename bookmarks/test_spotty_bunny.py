@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -662,7 +663,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
 
         path = Path("/tmp/bookmarks.json")
         self.assertTrue(open_path_in_text_editor(path, run=run))
-        self.assertEqual(calls, [["open", "-t", str(path)]])
+        self.assertEqual(calls, [["open", "-t", path.as_posix()]])
 
     def test_path_from_file_uri_decodes_path(self) -> None:
         from app.spotty_bunny_about_info import path_from_file_uri
@@ -1070,7 +1071,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(code, 0)
             self.assertTrue(plist.is_file())
             text = plist.read_text(encoding="utf-8")
-            self.assertIn(str(program), text)
+            # install_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(program.resolve()), text)
             self.assertIn("<key>KeepAlive</key>", text)
             self.assertEqual(tcc.probes, 1)
             self.assertEqual(tcc.requests, 0)
@@ -1581,6 +1585,9 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("pid: 99", text)
             self.assertIn("launchd: loaded", text)
             self.assertIn("binary: ", text)
+            # This test writes the plist directly with format_agent_plist
+            # (no install_agent path resolution in between), so the status
+            # output should still contain the exact, unresolved path.
             self.assertIn(str(program), text)
             self.assertIn("interpreter:", text)
             self.assertIn("application_log:", text)
@@ -1859,7 +1866,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 skip_chord_confirm=True,
             )
             self.assertEqual(code, 0)
-            self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
+            # upgrade_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(new_program.resolve()), plist.read_text(encoding="utf-8"))
             self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
             self.assertTrue(any(call[1] == "bootout" for call in ctl.calls))
             self.assertTrue(any(call[1] == "bootstrap" for call in ctl.calls))
@@ -1926,7 +1936,10 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 program=new_program,
             )
             self.assertEqual(code, 0)
-            self.assertIn(str(new_program), plist.read_text(encoding="utf-8"))
+            # upgrade_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(new_program.resolve()), plist.read_text(encoding="utf-8"))
             self.assertNotIn("/old/spotty-bunny", plist.read_text(encoding="utf-8"))
 
     def test_uninstall_removes_plist_before_bootout(self) -> None:
@@ -3477,14 +3490,27 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
                 )
             self.assertFalse((pid_dir / SPOTTY_BUNNY_PID_FILE).exists())
 
+    def test_spotty_bunny_local_bin_name_matches_platform(self) -> None:
+        from app.spotty_bunny_launch import SPOTTY_BUNNY_LOCAL_BIN_NAME
+
+        # Pinned independently of the fixtures below, which build their
+        # local-bin filename from this same constant: without this, a
+        # regression in the constant itself couldn't be caught by those
+        # tests (they'd still agree with whatever the constant says).
+        expected = "spotty-bunny.exe" if sys.platform == "win32" else "spotty-bunny"
+        self.assertEqual(SPOTTY_BUNNY_LOCAL_BIN_NAME, expected)
+
     def test_spotty_bunny_command_prefers_executable_local_bin(self) -> None:
-        from app.spotty_bunny_launch import spotty_bunny_command
+        from app.spotty_bunny_launch import (
+            SPOTTY_BUNNY_LOCAL_BIN_NAME,
+            spotty_bunny_command,
+        )
 
         with TemporaryDirectory() as tmp:
             home = Path(tmp)
             local_bin = home / ".local" / "bin"
             local_bin.mkdir(parents=True)
-            preferred = local_bin / "spotty-bunny"
+            preferred = local_bin / SPOTTY_BUNNY_LOCAL_BIN_NAME
             _write_executable(preferred)
             path_bin = home / "path-bin"
             path_bin.mkdir()
@@ -3506,7 +3532,19 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
             home = Path(tmp)
             local_bin = home / ".local" / "bin"
             local_bin.mkdir(parents=True)
-            stale = local_bin / "spotty-bunny"
+            # os.access(path, os.X_OK) on Windows is existence-based (it
+            # doesn't consult permission bits), so a same-named stale file
+            # at the canonical launcher path would be indistinguishable
+            # from a real one there -- chmod alone (as the fixtures below
+            # rely on) can't simulate "present but not launchable" on
+            # Windows. Using a name distinct from SPOTTY_BUNNY_LOCAL_BIN_NAME
+            # keeps this meaningful on every platform: local.is_file() at
+            # the canonical path is simply False, so the code falls
+            # through to PATH -- the behavior this test guards.
+            stale_name = (
+                "spotty-bunny.stale" if sys.platform == "win32" else "spotty-bunny"
+            )
+            stale = local_bin / stale_name
             stale.write_text("stale wrapper\n", encoding="utf-8")
             path_bin = home / "path-bin"
             path_bin.mkdir()
@@ -3663,7 +3701,7 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn("Repository:", info_source)
         self.assertIn("SPOTTY_BUNNY_REPO_URL", info_source)
         self.assertIn("PYPI_PROJECT_URL", info_source)
-        self.assertIn('["open", "-t", str(path)]', info_source)
+        self.assertIn('["open", "-t", path.as_posix()]', info_source)
         self.assertIn("def about_details_text_and_links", info_source)
         self.assertIn("def about_link_spans", info_source)
         self.assertIn("def about_version_text_and_links", info_source)

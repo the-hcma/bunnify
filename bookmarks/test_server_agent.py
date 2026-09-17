@@ -88,7 +88,10 @@ class ServerAgentTests(SimpleTestCase):
             self.assertEqual(code, 0)
             self.assertTrue(plist.is_file())
             text = plist.read_text(encoding="utf-8")
-            self.assertIn(str(program), text)
+            # install_agent resolves the program path (e.g. Windows'
+            # 8.3-style TEMP dir names get expanded to their long form), so
+            # compare against that same resolved form.
+            self.assertIn(str(program.resolve()), text)
             self.assertIn("<string>8123</string>", text)
             self.assertIn(str(pid_dir), text)
             self.assertTrue(any(call[1] == "bootstrap" for call in ctl.calls))

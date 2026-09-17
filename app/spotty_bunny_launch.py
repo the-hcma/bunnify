@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 RestartFn = Callable[[str | None, str], bool]
 SPOTTY_BUNNY_LAUNCHD_WAIT_S = 2.0
+SPOTTY_BUNNY_LOCAL_BIN_NAME = (
+    "spotty-bunny.exe" if sys.platform == "win32" else "spotty-bunny"
+)
 SPOTTY_BUNNY_PID_FILE = ".spotty-bunny.pid"
 SPOTTY_BUNNY_STARTUP_WAIT_S = 0.05
 
@@ -162,7 +165,7 @@ def read_spotty_bunny_runtime(
 
 def spotty_bunny_command() -> list[str]:
     """Return the argv used to launch Spotty Bunny."""
-    local = Path.home() / ".local" / "bin" / "spotty-bunny"
+    local = Path.home() / ".local" / "bin" / SPOTTY_BUNNY_LOCAL_BIN_NAME
     if local.is_file() and os.access(local, os.X_OK):
         return [str(local)]
     binary = shutil.which("spotty-bunny")
