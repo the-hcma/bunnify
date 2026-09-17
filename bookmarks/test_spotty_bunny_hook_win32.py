@@ -354,3 +354,68 @@ class InstallChordHookTests(SimpleTestCase):
 
         self.assertEqual(fake_user32.CallNextHookEx.call_count, 3)
         self.assertIn("tap: ok", health_file.read_text(encoding="utf-8"))
+
+    def test_real_query_key_state_clears_stale_held_left_via_install_path(
+        self,
+    ) -> None:
+        """Exercises install_chord_hook's real _query_key_state closure.
+
+        The query_key_state unit tests above inject their own lambdas, so
+        they can't catch a regression in the actual
+        ``GetAsyncKeyState(vk) & 0x8000`` masking/polarity this module
+        relies on in production — e.g. dropping the mask, or checking the
+        low bit instead, would still pass every one of them.
+        """
+        win32api, win32con = _make_fake_win32_modules()
+        fake_user32 = MagicMock()
+        fake_user32.SetWindowsHookExW = MagicMock(return_value=999)
+        fake_user32.CallNextHookEx = MagicMock(return_value=0)
+        tracker = ChordTracker()
+        on_chord = MagicMock()
+        with (
+            patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}),
+            patch("ctypes.WinDLL", return_value=fake_user32, create=True),
+            patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
+            patch("app.spotty_bunny_tap_health.try_write_spotty_bunny_health"),
+        ):
+            install_chord_hook(tracker, on_chord=on_chord)
+            handler = fake_user32.SetWindowsHookExW.call_args.args[1]
+
+            left = KBDLLHOOKSTRUCT(vkCode=VK_LCONTROL, scanCode=0, flags=0, time=0)
+            handler(0, WM_KEYDOWN, ctypes.addressof(left))
+            self.assertTrue(tracker.held_left)
+
+            # High bit clear: GetAsyncKeyState says left isn't really down
+            # any more — the right press must resync, not fire.
+            fake_user32.GetAsyncKeyState = MagicMock(return_value=0)
+            right = KBDLLHOOKSTRUCT(vkCode=VK_RCONTROL, scanCode=0, flags=0, time=0)
+            handler(0, WM_KEYDOWN, ctypes.addressof(right))
+
+        fake_user32.GetAsyncKeyState.assert_called_with(VK_LCONTROL)
+        self.assertFalse(tracker.held_left)
+        on_chord.assert_not_called()
+
+    def test_real_query_key_state_allows_genuine_chord_via_install_path(self) -> None:
+        win32api, win32con = _make_fake_win32_modules()
+        fake_user32 = MagicMock()
+        fake_user32.SetWindowsHookExW = MagicMock(return_value=999)
+        fake_user32.CallNextHookEx = MagicMock(return_value=0)
+        # High bit set: GetAsyncKeyState says left is genuinely still down.
+        fake_user32.GetAsyncKeyState = MagicMock(return_value=0x8000)
+        tracker = ChordTracker()
+        on_chord = MagicMock()
+        with (
+            patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}),
+            patch("ctypes.WinDLL", return_value=fake_user32, create=True),
+            patch("ctypes.WINFUNCTYPE", _identity_winfunctype, create=True),
+            patch("app.spotty_bunny_tap_health.try_write_spotty_bunny_health"),
+        ):
+            install_chord_hook(tracker, on_chord=on_chord)
+            handler = fake_user32.SetWindowsHookExW.call_args.args[1]
+
+            left = KBDLLHOOKSTRUCT(vkCode=VK_LCONTROL, scanCode=0, flags=0, time=0)
+            handler(0, WM_KEYDOWN, ctypes.addressof(left))
+            right = KBDLLHOOKSTRUCT(vkCode=VK_RCONTROL, scanCode=0, flags=0, time=0)
+            handler(0, WM_KEYDOWN, ctypes.addressof(right))
+
+        on_chord.assert_called_once()
