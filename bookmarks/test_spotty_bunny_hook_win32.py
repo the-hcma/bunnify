@@ -255,11 +255,15 @@ class InstallChordHookTests(SimpleTestCase):
             left = KBDLLHOOKSTRUCT(vkCode=VK_LCONTROL, scanCode=0, flags=0, time=0)
             self.assertEqual(handler(0, WM_KEYDOWN, ctypes.addressof(left)), 7)
             on_chord.assert_not_called()
+            health_file = Path(health_dir.name) / ".spotty-bunny-health"
+            self.assertFalse(
+                health_file.exists(),
+                "record_activity must not run on a non-chord keystroke",
+            )
 
             right = KBDLLHOOKSTRUCT(vkCode=VK_RCONTROL, scanCode=0, flags=0, time=0)
             self.assertEqual(handler(0, WM_KEYDOWN, ctypes.addressof(right)), 7)
             on_chord.assert_called_once()
 
         self.assertEqual(fake_user32.CallNextHookEx.call_count, 3)
-        health_file = Path(health_dir.name) / ".spotty-bunny-health"
         self.assertIn("tap: ok", health_file.read_text(encoding="utf-8"))

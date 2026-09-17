@@ -51,6 +51,7 @@ WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
+WM_QUIT = 0x0012
 
 _KEY_DOWN_MESSAGES = frozenset({WM_KEYDOWN, WM_SYSKEYDOWN})
 _KEY_UP_MESSAGES = frozenset({WM_KEYUP, WM_SYSKEYUP})
@@ -237,13 +238,47 @@ def run_console_listener() -> None:
     https://github.com/the-hcma/bunnify/issues/426, owns that). Run
     directly with ``python -m app.spotty_bunny_hook_win32`` on Windows to
     confirm the hook fires before that UI lands.
+
+    ``win32gui.PumpMessages()`` blocks inside ``GetMessage`` until a
+    ``WM_QUIT`` is posted to this thread's message queue. Ctrl+C in a
+    console is a *console control event*, not a window message — Python's
+    SIGINT handler never runs while the thread is parked in that call, so
+    nothing would ever post ``WM_QUIT`` and Ctrl+C would appear to do
+    nothing. ``SetConsoleCtrlHandler`` runs its callback on a separate OS
+    thread specifically so it can interrupt a blocked thread like this one;
+    the handler posts ``WM_QUIT`` to this thread by id, letting
+    ``pump_hook_messages()`` return and the ``finally`` below actually run.
     """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+    main_thread_id = kernel32.GetCurrentThreadId()
+
+    ctrl_handler_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+    kernel32.SetConsoleCtrlHandler.restype = wintypes.BOOL
+    kernel32.SetConsoleCtrlHandler.argtypes = (ctrl_handler_type, wintypes.BOOL)
+
+    def _on_console_ctrl(_event: int) -> bool:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.PostThreadMessageW.restype = wintypes.BOOL
+        user32.PostThreadMessageW.argtypes = (
+            wintypes.DWORD,
+            ctypes.c_uint,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        )
+        user32.PostThreadMessageW(main_thread_id, WM_QUIT, 0, 0)
+        return True
+
+    ctrl_handler = ctrl_handler_type(_on_console_ctrl)
+    kernel32.SetConsoleCtrlHandler(ctrl_handler, True)
+
     tracker = ChordTracker()
     hook = install_chord_hook(tracker, on_chord=lambda: print("chord!", flush=True))
     print("Listening for the dual-Control chord. Ctrl+C to exit.")
     try:
         pump_hook_messages()
     finally:
+        kernel32.SetConsoleCtrlHandler(ctrl_handler, False)
         hook.uninstall()
 
 
