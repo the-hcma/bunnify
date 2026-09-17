@@ -19,13 +19,14 @@ it never intercepts them.
 
 The event-handling logic (:func:`_handle_hook_event`) takes plain ints and
 an injectable ``on_chord``/``record_activity``, so it's fully unit-testable
-without ``pywin32`` or ``ctypes.windll``. Only :func:`install_chord_hook`,
-:func:`pump_hook_messages`, and :func:`run_console_listener` touch
-``win32api``/``win32con``/``win32gui``/``ctypes.windll`` — those imports
-and calls are deferred inside each function (like ``spotty_bunny_cli.py``'s
-PyObjC loading) so this module stays importable on any platform, and are
-the one part of this file that can't be exercised outside a real Windows
-message loop.
+without ``pywin32`` or ``ctypes.windll``. Only :func:`install_chord_hook`
+(and, through the ``ctypes.WinDLL`` handle it hands to :class:`InstalledHook`,
+its ``.uninstall()``), :func:`pump_hook_messages`, and
+:func:`run_console_listener` touch ``win32api``/``win32con``/``win32gui``/
+``ctypes.windll`` — those imports and calls are deferred inside each
+function (like ``spotty_bunny_cli.py``'s PyObjC loading) so this module
+stays importable on any platform, and are the one part of this file that
+can't be exercised outside a real Windows message loop.
 """
 
 from __future__ import annotations
@@ -136,14 +137,13 @@ class InstalledHook:
     holds this object avoids that.
     """
 
-    def __init__(self, handle: int, callback: object) -> None:
+    def __init__(self, handle: int, callback: object, user32: ctypes.WinDLL) -> None:
         self.handle = handle
         self._callback = callback
+        self._user32 = user32
 
     def uninstall(self) -> None:
-        import win32api  # pyright: ignore[reportMissingModuleSource]
-
-        win32api.UnhookWindowsHookEx(self.handle)
+        self._user32.UnhookWindowsHookEx(self.handle)
 
 
 def install_chord_hook(
@@ -184,6 +184,8 @@ def install_chord_hook(
         wintypes.WPARAM,
         wintypes.LPARAM,
     )
+    user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+    user32.UnhookWindowsHookEx.argtypes = (wintypes.HHOOK,)
 
     def _handler(n_code: int, w_param: int, l_param: int) -> int:
         if n_code >= 0:
@@ -218,7 +220,7 @@ def install_chord_hook(
         raise OSError(
             ctypes.get_last_error(), "SetWindowsHookExW(WH_KEYBOARD_LL) failed"
         )
-    return InstalledHook(handle, callback)
+    return InstalledHook(handle, callback, user32)
 
 
 def pump_hook_messages() -> None:

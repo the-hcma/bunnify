@@ -146,7 +146,6 @@ class HandleHookEventTests(SimpleTestCase):
 def _make_fake_win32_modules() -> tuple[ModuleType, ModuleType]:
     win32api = ModuleType("win32api")
     win32api.GetModuleHandle = MagicMock(return_value=0)
-    win32api.UnhookWindowsHookEx = MagicMock()
     win32con = ModuleType("win32con")
     win32con.WH_KEYBOARD_LL = 13
     return win32api, win32con
@@ -206,11 +205,10 @@ class InstallChordHookTests(SimpleTestCase):
             with self.assertRaises(OSError):
                 install_chord_hook(tracker, on_chord=MagicMock())
 
-    def test_uninstall_calls_unhook_windows_hook_ex(self) -> None:
-        win32api, win32con = _make_fake_win32_modules()
-        with patch.dict(sys.modules, {"win32api": win32api, "win32con": win32con}):
-            InstalledHook(999, object()).uninstall()
-        win32api.UnhookWindowsHookEx.assert_called_once_with(999)
+    def test_uninstall_calls_unhook_windows_hook_ex_via_ctypes(self) -> None:
+        fake_user32 = MagicMock()
+        InstalledHook(999, object(), fake_user32).uninstall()
+        fake_user32.UnhookWindowsHookEx.assert_called_once_with(999)
 
     def test_handler_decodes_real_kbdllhookstruct_pointer_and_dispatches(self) -> None:
         """Exercises install_chord_hook's real ctypes.cast/pointer decoding.
@@ -219,11 +217,17 @@ class InstallChordHookTests(SimpleTestCase):
         ctypes — not Windows-only — so a genuine struct built here and
         addressed with ctypes.addressof() proves the handler's pointer
         decoding is correct without needing an actual Windows hook thread.
+        Also asserts the handler *returns* CallNextHookEx's chained result
+        (never a value of its own) — a WH_KEYBOARD_LL callback that returns
+        non-zero swallows the key system-wide, so this is the one contract
+        that actually matters on real Windows.
         """
         win32api, win32con = _make_fake_win32_modules()
         fake_user32 = MagicMock()
         fake_user32.SetWindowsHookExW = MagicMock(return_value=999)
-        fake_user32.CallNextHookEx = MagicMock(return_value=0)
+        # A distinguishable, non-zero/non-default value: proves the handler
+        # returns exactly what CallNextHookEx returned, not 0 or 1 of its own.
+        fake_user32.CallNextHookEx = MagicMock(return_value=7)
         tracker = ChordTracker()
         on_chord = MagicMock()
         health_dir = TemporaryDirectory()
@@ -240,14 +244,22 @@ class InstallChordHookTests(SimpleTestCase):
             install_chord_hook(tracker, on_chord=on_chord)
             handler = fake_user32.SetWindowsHookExW.call_args.args[1]
 
+            # A negative n_code ("don't process this event") must still
+            # chain to CallNextHookEx and leave a fresh tracker untouched.
+            unprocessed = KBDLLHOOKSTRUCT(
+                vkCode=VK_LCONTROL, scanCode=0, flags=0, time=0
+            )
+            self.assertEqual(handler(-1, WM_KEYDOWN, ctypes.addressof(unprocessed)), 7)
+            self.assertFalse(tracker.held_left)
+
             left = KBDLLHOOKSTRUCT(vkCode=VK_LCONTROL, scanCode=0, flags=0, time=0)
-            handler(0, WM_KEYDOWN, ctypes.addressof(left))
+            self.assertEqual(handler(0, WM_KEYDOWN, ctypes.addressof(left)), 7)
             on_chord.assert_not_called()
 
             right = KBDLLHOOKSTRUCT(vkCode=VK_RCONTROL, scanCode=0, flags=0, time=0)
-            handler(0, WM_KEYDOWN, ctypes.addressof(right))
+            self.assertEqual(handler(0, WM_KEYDOWN, ctypes.addressof(right)), 7)
             on_chord.assert_called_once()
 
-        self.assertEqual(fake_user32.CallNextHookEx.call_count, 2)
+        self.assertEqual(fake_user32.CallNextHookEx.call_count, 3)
         health_file = Path(health_dir.name) / ".spotty-bunny-health"
         self.assertIn("tap: ok", health_file.read_text(encoding="utf-8"))
