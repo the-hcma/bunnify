@@ -149,6 +149,7 @@ class SpottyBunnyWin32Controller:
         self.set_completion_rows = set_completion_rows or (lambda _rows: None)
         self.set_completion_index: Callable[[int], None] = lambda _index: None
         self.set_window_visible = set_window_visible or (lambda _visible: None)
+        self.set_icon_outdated: Callable[[bool], None] = lambda _outdated: None
         self._io = io if io is not None else ThreadIo()
 
         self.visible = False
@@ -186,7 +187,14 @@ class SpottyBunnyWin32Controller:
     # -- show/hide/toggle --------------------------------------------------
 
     def show(self) -> None:
+        self.set_field_text("")
         self.set_status_text("")
+        # Rebuild rather than reuse: a session-long tray process would
+        # otherwise never see queries appended by earlier resolves (the
+        # navigator built once in __init__ never learns about them), and a
+        # stale field would silently resubmit or get concatenated onto the
+        # next typed query.
+        self._history = HistoryNavigator(load_history_lines())
         self._load_completer_async()
         self.visible = True
         self.set_window_visible(True)
@@ -220,7 +228,13 @@ class SpottyBunnyWin32Controller:
     # -- About stub (real dialog lands in #428) -----------------------------
 
     def show_about(self) -> None:
-        self.about_open = True
+        # No real panel exists yet, so this deliberately does NOT set
+        # about_open = True: that flag is a real invariant elsewhere (the
+        # WM_ACTIVATE/WA_INACTIVE handler skips auto-hide while it's set,
+        # and dismiss_with_escape() special-cases it) -- setting it here
+        # with nothing to ever clear it outside hide()/hide_about() would
+        # leave the always-on-top overlay stuck open after a click-away.
+        logger.info("About panel requested; lands in #428")
 
     def hide_about(self) -> None:
         self.about_open = False
@@ -425,7 +439,10 @@ class SpottyBunnyWin32Controller:
                 self.set_status_text("Could not check for updates.")
                 return
             self._update_status = result
-            self._outdated = bool(badge_should_show(result, self_stale=False))
+            outdated = bool(badge_should_show(result, self_stale=False))
+            if outdated != self._outdated:
+                self._outdated = outdated
+                self.set_icon_outdated(outdated)
             self.set_status_text(summarize_update_check(result, self_stale=False))
 
         self._io.submit(work, on_done)
@@ -570,8 +587,8 @@ def run_spotty_bunny_win32_app() -> int:
     )
     controller.request_quit = win32gui.PostQuitMessage
 
-    icon_handle = make_spotty_bunny_icon_win32(16)
-    controller.icon_handle = icon_handle
+    icon_state: dict[str, int] = {"handle": make_spotty_bunny_icon_win32(16)}
+    controller.icon_handle = icon_state["handle"]
     win32gui.Shell_NotifyIcon(
         win32gui.NIM_ADD,
         (
@@ -579,10 +596,29 @@ def run_spotty_bunny_win32_app() -> int:
             TRAY_ICON_ID,
             win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP,
             WM_APP_TRAY,
-            icon_handle,
+            icon_state["handle"],
             "Spotty Bunny",
         ),
     )
+
+    def _set_icon_outdated(outdated: bool) -> None:
+        old_handle = icon_state["handle"]
+        icon_state["handle"] = make_spotty_bunny_icon_win32(16, outdated=outdated)
+        controller.icon_handle = icon_state["handle"]
+        win32gui.Shell_NotifyIcon(
+            win32gui.NIM_MODIFY,
+            (
+                hwnd,
+                TRAY_ICON_ID,
+                win32gui.NIF_ICON,
+                WM_APP_TRAY,
+                icon_state["handle"],
+                "Spotty Bunny",
+            ),
+        )
+        win32gui.DestroyIcon(old_handle)
+
+    controller.set_icon_outdated = _set_icon_outdated
 
     controller._reinstall_hook()
     if controller._hook is None:
@@ -603,7 +639,7 @@ def run_spotty_bunny_win32_app() -> int:
         if controller._hook is not None:
             controller._hook.uninstall()
         win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (hwnd, TRAY_ICON_ID))
-        win32gui.DestroyIcon(icon_handle)
+        win32gui.DestroyIcon(icon_state["handle"])
         win32gui.DestroyWindow(hwnd)
     return 0
 

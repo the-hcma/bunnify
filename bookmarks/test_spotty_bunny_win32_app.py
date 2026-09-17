@@ -106,6 +106,44 @@ class MenuDispatchTests(SimpleTestCase):
         controller.request_quit.assert_called_once()
 
 
+class CheckForUpdatesTests(SimpleTestCase):
+    def test_outdated_transition_calls_set_icon_outdated(self) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        calls: list[bool] = []
+        controller.set_icon_outdated = calls.append
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.refresh_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
+            patch("app.spotty_bunny_win32_app.summarize_update_check", return_value=""),
+        ):
+            controller.check_for_updates()
+        self.assertEqual(calls, [True])
+        self.assertTrue(controller._outdated)
+
+    def test_unchanged_outdated_state_does_not_re_render_icon(self) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        controller._outdated = False
+        calls: list[bool] = []
+        controller.set_icon_outdated = calls.append
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.refresh_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=False),
+            patch("app.spotty_bunny_win32_app.summarize_update_check", return_value=""),
+        ):
+            controller.check_for_updates()
+        self.assertEqual(calls, [])
+
+
 class ShowHideToggleTests(SimpleTestCase):
     def test_toggle_shows_then_hides(self) -> None:
         controller = _make_controller()
@@ -122,6 +160,25 @@ class ShowHideToggleTests(SimpleTestCase):
         controller.show()
         controller.hide()
         self.assertEqual(visibility_calls, [True, False])
+
+    def test_show_clears_stale_field_text(self) -> None:
+        # Regression: a leftover query from the previous open must not
+        # resubmit on Return, or get concatenated onto newly typed text.
+        controller = _make_controller()
+        controller.set_field_text("gh")
+        controller.show()
+        self.assertEqual(controller.get_field_text(), "")
+
+    def test_show_rebuilds_history_with_newly_appended_lines(self) -> None:
+        # Regression: a session-long tray process must see queries appended
+        # by earlier resolves, not just the snapshot taken at __init__.
+        controller = _make_controller()
+        with patch(
+            "app.spotty_bunny_win32_app.load_history_lines",
+            return_value=["yt"],
+        ):
+            controller.show()
+        self.assertEqual(controller._history.up(""), "yt")
 
     def test_hide_clears_resolving_flag(self) -> None:
         # Regression: a resolve that completes after hide() must not be
@@ -155,6 +212,14 @@ class ShowHideToggleTests(SimpleTestCase):
         controller.dismiss_with_escape()
         self.assertFalse(controller.visible)
 
+    def test_show_about_stub_does_not_set_about_open(self) -> None:
+        # Regression: the stub must not set a real invariant (WM_ACTIVATE
+        # gating, dismiss_with_escape's precedence) with nothing but
+        # hide()/hide_about() ever able to clear it again.
+        controller = _make_controller()
+        controller.show_about()
+        self.assertFalse(controller.about_open)
+
 
 class HandleEditKeydownTests(SimpleTestCase):
     def test_return_submits_query(self) -> None:
@@ -167,6 +232,40 @@ class HandleEditKeydownTests(SimpleTestCase):
             submitted.append(query)
             return "https://github.com"
 
+        open_url_fn = MagicMock()
+        append_history_fn = MagicMock()
+        controller._open_url_fn = open_url_fn
+        controller._append_history_fn = append_history_fn
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.lookup_resolved_url",
+                side_effect=fake_lookup,
+            ),
+            patch("app.spotty_bunny_win32_app.resolve_base_url", return_value="u"),
+        ):
+            handled = controller.handle_edit_keydown(VK_RETURN)
+        self.assertTrue(handled)
+        self.assertEqual(submitted, ["gh"])
+        open_url_fn.assert_called_once_with("https://github.com")
+        append_history_fn.assert_called_once_with("gh")
+
+    def test_return_with_empty_field_and_selected_row_submits_that_row(self) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        controller._completion_rows = [
+            CompletionRow("gh", "GitHub", -2),
+            CompletionRow("gcal", "Calendar", -2),
+        ]
+        controller._completion_prefix = "g"
+        controller._completion_visible = True
+        controller._completion_index = 1
+        controller.set_field_text("")
+        submitted: list[str] = []
+
+        def fake_lookup(query: str, **_kwargs: object) -> str:
+            submitted.append(query)
+            return "https://calendar.google.com"
+
         with (
             patch(
                 "app.spotty_bunny_win32_app.lookup_resolved_url",
@@ -176,9 +275,10 @@ class HandleEditKeydownTests(SimpleTestCase):
         ):
             controller._open_url_fn = MagicMock()
             controller._append_history_fn = MagicMock()
-            handled = controller.handle_edit_keydown(VK_RETURN)
-        self.assertTrue(handled)
-        self.assertEqual(submitted, ["gh"])
+            controller.handle_edit_keydown(VK_RETURN)
+        # apply_completion("g", row) with start_position=-2 replaces the
+        # whole "g" prefix with the selected row's insert text.
+        self.assertEqual(submitted, ["gcal"])
 
     def test_escape_hides_when_visible(self) -> None:
         controller = _make_controller()
@@ -224,6 +324,40 @@ class HandleEditKeydownTests(SimpleTestCase):
     def test_unmapped_character_key_is_not_handled(self) -> None:
         controller = _make_controller()
         self.assertFalse(controller.handle_edit_keydown(0x41))
+
+
+class LoadCompleterAsyncTests(SimpleTestCase):
+    """Exercises the real _load_completer_async, not the _make_controller stub."""
+
+    def test_success_sets_completer_base_url_and_entries(self) -> None:
+        controller = SpottyBunnyWin32Controller(io=ImmediateIo())
+        entries = [object()]
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.resolve_base_url",
+                return_value="http://127.0.0.1:8000",
+            ),
+            patch("app.spotty_bunny_win32_app.fetch_key_entries", return_value=entries),
+            patch(
+                "app.spotty_bunny_win32_app.make_spotty_completer",
+                return_value="a-completer",
+            ),
+        ):
+            controller._load_completer_async()
+        self.assertEqual(controller._completer, "a-completer")
+        self.assertEqual(controller._base_url, "http://127.0.0.1:8000")
+        self.assertEqual(controller._entries, entries)
+
+    def test_failure_leaves_completer_unset(self) -> None:
+        controller = SpottyBunnyWin32Controller(io=ImmediateIo())
+
+        def boom(**_kwargs: object) -> object:
+            raise ConnectionError("unreachable")
+
+        with patch("app.spotty_bunny_win32_app.resolve_base_url", side_effect=boom):
+            with self.assertLogs("app.spotty_bunny_win32_app", level="WARNING"):
+                controller._load_completer_async()
+        self.assertIsNone(controller._completer)
 
 
 class CompletionsReadyTests(SimpleTestCase):
