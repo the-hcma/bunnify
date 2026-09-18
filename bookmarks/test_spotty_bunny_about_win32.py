@@ -86,6 +86,19 @@ class ToSyslinkMarkupTests(SimpleTestCase):
     def test_no_links_returns_fully_escaped_text(self) -> None:
         self.assertEqual(to_syslink_markup("plain text", ()), "plain text")
 
+    def test_exact_markup_for_a_two_link_input(self) -> None:
+        """Pins the splice bookkeeping (cursor = start + length, plus the
+        trailing tail append) exactly, not just via assertIn on each link
+        substring -- those pass even if the text between/after links is
+        duplicated or truncated."""
+        text, links = about_version_text_and_links("1.2.3", "abcdef1")
+        self.assertEqual(
+            to_syslink_markup(text, links),
+            'Version <A HREF="https://pypi.org/project/bunnify/1.2.3/">1.2.3</A>'
+            ' · commit <A HREF="https://github.com/the-hcma/bunnify/commit/'
+            'abcdef1">abcdef1</A>',
+        )
+
 
 class WindowsApiConstantsTests(SimpleTestCase):
     """Pins the commctrl.h literal values directly -- the behavioral tests
@@ -110,6 +123,12 @@ class WindowsApiConstantsTests(SimpleTestCase):
         from app.spotty_bunny_about_win32 import _LM_GETITEM
 
         self.assertEqual(_LM_GETITEM, 0x0703)
+
+    def test_litem_mask_bits(self) -> None:
+        from app.spotty_bunny_about_win32 import _LIF_ITEMINDEX, _LIF_URL
+
+        self.assertEqual(_LIF_ITEMINDEX, 0x00000001)
+        self.assertEqual(_LIF_URL, 0x00000008)
 
 
 class UrlFromNotifyTests(SimpleTestCase):
@@ -136,7 +155,12 @@ class UrlFromNotifyTests(SimpleTestCase):
         self.assertIsNone(_url_from_notify(ctypes.addressof(link)))
 
     def test_falls_back_to_lm_getitem_when_szurl_is_empty(self) -> None:
-        from app.spotty_bunny_about_win32 import _LITEM, _LM_GETITEM
+        from app.spotty_bunny_about_win32 import (
+            _LIF_ITEMINDEX,
+            _LIF_URL,
+            _LITEM,
+            _LM_GETITEM,
+        )
 
         link = _NMLINK()
         link.hdr.code = _NM_CLICK
@@ -147,6 +171,10 @@ class UrlFromNotifyTests(SimpleTestCase):
             self.assertEqual(msg, _LM_GETITEM)
             item_ptr = ctypes.cast(lparam, ctypes.POINTER(_LITEM))
             self.assertEqual(item_ptr[0].iLink, 2)
+            # Regression: the mask must request LIF_URL (0x8), not
+            # LIF_ITEMID (0x4) -- comctl32 fills whatever the mask asks
+            # for, and szID isn't what's being read back here.
+            self.assertEqual(item_ptr[0].mask, _LIF_ITEMINDEX | _LIF_URL)
             item_ptr[0].szUrl = "https://example.com/from-lm-getitem"
             return 1
 
@@ -436,14 +464,24 @@ class BuildAboutWindowTests(SimpleTestCase):
         win32con = MagicMock()
         win32con.WM_SETFONT = 0x30
         win32con.FW_BOLD = 700
+        # Real winuser.h values -- needed as real ints (not MagicMocks) so
+        # the bitwise-OR'd style/ex_style values below are checkable.
+        win32con.WS_CHILD = 0x40000000
+        win32con.WS_VISIBLE = 0x10000000
+        win32con.SS_LEFT = 0x00000000
+        win32con.WS_TABSTOP = 0x00010000
+        win32con.WS_POPUP = 0x80000000
+        win32con.WS_BORDER = 0x00800000
+        win32con.WS_EX_TOPMOST = 0x00000008
+        win32con.WS_EX_TOOLWINDOW = 0x00000080
 
         created: list[dict[str, object]] = []
 
         def create_window_ex(
-            _ex_style,
+            ex_style,
             class_name,
             text,
-            _style,
+            style,
             x,
             y,
             width,
@@ -458,6 +496,8 @@ class BuildAboutWindowTests(SimpleTestCase):
                     "y": y,
                     "width": width,
                     "height": height,
+                    "style": style,
+                    "ex_style": ex_style,
                 }
             )
             return len(created)
@@ -511,6 +551,26 @@ class BuildAboutWindowTests(SimpleTestCase):
         self.assertEqual(created[3]["class_name"], "SysLink")
         self.assertEqual(created[4]["class_name"], "SysLink")
         self.assertEqual(created[5]["class_name"], "SysLink")
+
+    def test_top_level_window_and_children_carry_the_right_styles(self) -> None:
+        """Regression: a dropped WS_VISIBLE (blank popup) or WS_EX_TOPMOST
+        (not on top) would previously pass every test in this class."""
+        win32gui, win32con, win32api, created = self._fake_win32()
+        self._build(win32gui, win32con, win32api)
+
+        self.assertEqual(
+            created[0]["ex_style"], win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
+        )
+        self.assertEqual(created[0]["style"], win32con.WS_POPUP | win32con.WS_BORDER)
+        for row in created[1:3]:  # STATIC rows
+            self.assertEqual(
+                row["style"], win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT
+            )
+        for row in created[3:6]:  # SysLink rows
+            self.assertEqual(
+                row["style"],
+                win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.WS_TABSTOP,
+            )
 
     def test_details_syslink_uses_to_syslink_markup_of_the_real_content(
         self,
