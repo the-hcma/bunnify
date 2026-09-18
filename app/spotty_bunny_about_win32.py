@@ -50,9 +50,13 @@ ABOUT_WINDOW_CLASS = "BunnifySpottyBunnyAbout"
 ABOUT_WIDTH = 440
 ABOUT_PAD = 12
 ABOUT_ROW_GAP = 6
+# about_details_text_and_links() emits 6-7 lines (Repository/License/
+# Bookmarks/GitHub/server/Server build); tall enough for all of them to
+# wrap inside inner_width at the default GUI font, with no scrolling.
+ABOUT_DETAILS_HEIGHT = 112
 
 _SYSLINK_CLASS = "SysLink"
-_ICC_LINK_CLASS = 0x00000800
+_ICC_LINK_CLASS = 0x00008000
 _NM_CLICK = -2
 _NM_RETURN = -3
 
@@ -85,7 +89,13 @@ def build_about_window(
     win32con,
     win32api,
 ) -> int:
-    """Create, position, and show the About popup. Returns its hwnd."""
+    """Create, position, and show the About popup. Returns its hwnd.
+
+    Rows are ``(height, factory)`` pairs, laid out top-to-bottom by one
+    loop that both sizes the window and places each child -- a single
+    source of truth for row height, so it can't diverge the way separate
+    ``row_heights``/``y +=`` bookkeeping could (and once did, mid-review).
+    """
     _init_syslink_class()
     class_atom = _register_about_class(controller, win32gui=win32gui, win32con=win32con)
 
@@ -101,13 +111,111 @@ def build_about_window(
         else f"Update available: {status.latest}"
     )
 
-    row_heights = [24, 54, 20, 20, 72]
+    inner_width = ABOUT_WIDTH - 2 * ABOUT_PAD
+    rows: list[tuple[int, Callable[[int, int], int]]] = [
+        (
+            24,
+            lambda hwnd, y: _create_static(
+                hwnd,
+                "Spotty Bunny",
+                x=ABOUT_PAD,
+                y=y,
+                width=inner_width,
+                height=24,
+                win32gui=win32gui,
+                win32con=win32con,
+                bold=True,
+            ),
+        ),
+        (
+            54,
+            lambda hwnd, y: _create_static(
+                hwnd,
+                ABOUT_SUMMARY_WIN32,
+                x=ABOUT_PAD,
+                y=y,
+                width=inner_width,
+                height=54,
+                win32gui=win32gui,
+                win32con=win32con,
+            ),
+        ),
+        (
+            20,
+            lambda hwnd, y: _create_syslink(
+                hwnd,
+                to_syslink_markup(version_text, version_links),
+                x=ABOUT_PAD,
+                y=y,
+                width=inner_width,
+                height=20,
+                win32gui=win32gui,
+                win32con=win32con,
+            ),
+        ),
+        (
+            20,
+            lambda hwnd, y: _create_syslink(
+                hwnd,
+                to_syslink_markup(
+                    ABOUT_COPYRIGHT, ((ABOUT_GITHUB_HANDLE, ABOUT_GITHUB_PROFILE_URL),)
+                ),
+                x=ABOUT_PAD,
+                y=y,
+                width=inner_width,
+                height=20,
+                win32gui=win32gui,
+                win32con=win32con,
+            ),
+        ),
+        (
+            ABOUT_DETAILS_HEIGHT,
+            lambda hwnd, y: _create_syslink(
+                hwnd,
+                to_syslink_markup(details_text, details_links),
+                x=ABOUT_PAD,
+                y=y,
+                width=inner_width,
+                height=ABOUT_DETAILS_HEIGHT,
+                win32gui=win32gui,
+                win32con=win32con,
+            ),
+        ),
+    ]
     if update_text is not None:
-        row_heights.append(20)
+        rows.append(
+            (
+                20,
+                lambda hwnd, y: _create_static(
+                    hwnd,
+                    update_text,
+                    x=ABOUT_PAD,
+                    y=y,
+                    width=inner_width,
+                    height=20,
+                    win32gui=win32gui,
+                    win32con=win32con,
+                ),
+            )
+        )
     if skew_text is not None:
-        row_heights.append(36)
-    height = ABOUT_PAD * 2 + sum(row_heights) + ABOUT_ROW_GAP * (len(row_heights) - 1)
+        rows.append(
+            (
+                36,
+                lambda hwnd, y: _create_static(
+                    hwnd,
+                    skew_text,
+                    x=ABOUT_PAD,
+                    y=y,
+                    width=inner_width,
+                    height=36,
+                    win32gui=win32gui,
+                    win32con=win32con,
+                ),
+            )
+        )
 
+    height = ABOUT_PAD * 2 + sum(h for h, _ in rows) + ABOUT_ROW_GAP * (len(rows) - 1)
     left, top = _anchor_near_cursor(ABOUT_WIDTH, height, win32api=win32api)
     hwnd = win32gui.CreateWindowEx(
         win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
@@ -124,58 +232,10 @@ def build_about_window(
         None,
     )
 
-    inner_width = ABOUT_WIDTH - 2 * ABOUT_PAD
     y = ABOUT_PAD
-    _create_static(
-        hwnd, "Spotty Bunny", x=ABOUT_PAD, y=y, width=inner_width, height=24, bold=True
-    )
-    y += 24 + ABOUT_ROW_GAP
-    _create_static(
-        hwnd, ABOUT_SUMMARY_WIN32, x=ABOUT_PAD, y=y, width=inner_width, height=54
-    )
-    y += 54 + ABOUT_ROW_GAP
-    _create_syslink(
-        hwnd,
-        to_syslink_markup(version_text, version_links),
-        x=ABOUT_PAD,
-        y=y,
-        width=inner_width,
-        height=20,
-        win32gui=win32gui,
-        win32con=win32con,
-    )
-    y += 20 + ABOUT_ROW_GAP
-    _create_syslink(
-        hwnd,
-        to_syslink_markup(
-            ABOUT_COPYRIGHT, ((ABOUT_GITHUB_HANDLE, ABOUT_GITHUB_PROFILE_URL),)
-        ),
-        x=ABOUT_PAD,
-        y=y,
-        width=inner_width,
-        height=20,
-        win32gui=win32gui,
-        win32con=win32con,
-    )
-    y += 20 + ABOUT_ROW_GAP
-    _create_syslink(
-        hwnd,
-        to_syslink_markup(details_text, details_links),
-        x=ABOUT_PAD,
-        y=y,
-        width=inner_width,
-        height=72,
-        win32gui=win32gui,
-        win32con=win32con,
-    )
-    y += 72 + ABOUT_ROW_GAP
-    if update_text is not None:
-        _create_static(
-            hwnd, update_text, x=ABOUT_PAD, y=y, width=inner_width, height=20
-        )
-        y += 20 + ABOUT_ROW_GAP
-    if skew_text is not None:
-        _create_static(hwnd, skew_text, x=ABOUT_PAD, y=y, width=inner_width, height=36)
+    for row_height, factory in rows:
+        factory(hwnd, y)
+        y += row_height + ABOUT_ROW_GAP
 
     win32gui.ShowWindow(hwnd, win32con.SW_SHOWNORMAL)
     win32gui.SetForegroundWindow(hwnd)
@@ -241,11 +301,17 @@ def _init_syslink_class() -> None:
 
 
 def _create_static(
-    hwnd: int, text: str, *, x: int, y: int, width: int, height: int, bold: bool = False
+    hwnd: int,
+    text: str,
+    *,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    win32gui,
+    win32con,
+    bold: bool = False,
 ) -> int:
-    import win32con  # pyright: ignore[reportMissingModuleSource]
-    import win32gui  # pyright: ignore[reportMissingModuleSource]
-
     style = win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT
     child = win32gui.CreateWindowEx(
         0,
@@ -317,24 +383,33 @@ def _create_syslink(
 
 
 _about_class_registered = False
+# Holds the controller the *currently registered* wndproc should dispatch
+# to -- updated on every build_about_window() call rather than baked into
+# the wndproc closure at first registration, so a fresh controller (or a
+# test constructing its own) is never left pointed at a stale one from an
+# earlier registration. Safe because at most one About window exists at a
+# time (show_about() is a no-op while about_open is already True).
+_about_wndproc_controller: SpottyBunnyWin32Controller | None = None
 
 
 def _register_about_class(
     controller: SpottyBunnyWin32Controller, *, win32gui, win32con
 ) -> str:
-    """Register the About window class once per process.
+    """Register the About window class at most once per process.
 
     Unlike the overlay's class (registered exactly once, at startup),
     ``build_about_window`` runs on every ``show_about()`` -- registering
-    the same class name twice raises, so this is memoized rather than
-    caught. The single controller instance never changes across calls,
-    so the wndproc closure this registers stays valid for the process's
-    whole lifetime.
+    the same class name twice raises, so this is memoized. The wndproc
+    itself never closes over *controller* directly (see
+    ``_about_wndproc_controller``), so memoizing the registration doesn't
+    also pin the dispatch target to whichever controller happened to
+    register the class first.
     """
-    global _about_class_registered
+    global _about_class_registered, _about_wndproc_controller
+    _about_wndproc_controller = controller
     if _about_class_registered:
         return ABOUT_WINDOW_CLASS
-    wndproc = _make_about_wndproc(controller, win32gui=win32gui, win32con=win32con)
+    wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
     wnd_class = win32gui.WNDCLASS()
     wnd_class.lpfnWndProc = wndproc
     wnd_class.lpszClassName = ABOUT_WINDOW_CLASS
@@ -344,7 +419,7 @@ def _register_about_class(
     return ABOUT_WINDOW_CLASS
 
 
-def _make_about_wndproc(controller: SpottyBunnyWin32Controller, *, win32gui, win32con):
+def _make_about_wndproc(*, win32gui, win32con):
     def _wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
         if msg == win32con.WM_NOTIFY:
             url = _url_from_notify(lparam)
@@ -352,14 +427,19 @@ def _make_about_wndproc(controller: SpottyBunnyWin32Controller, *, win32gui, win
                 _handle_link_click(url)
             return 0
         if msg == win32con.WM_KEYDOWN and wparam == win32con.VK_ESCAPE:
-            controller.hide_about()
+            _hide_current_about()
             return 0
         if msg == win32con.WM_ACTIVATE and wparam == win32con.WA_INACTIVE:
-            controller.hide_about()
+            _hide_current_about()
             return 0
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
 
     return _wndproc
+
+
+def _hide_current_about() -> None:
+    if _about_wndproc_controller is not None:
+        _about_wndproc_controller.hide_about()
 
 
 class _INITCOMMONCONTROLSEX(ctypes.Structure):

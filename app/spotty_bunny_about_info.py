@@ -289,12 +289,24 @@ def open_path_in_text_editor(
     return completed.returncode == 0
 
 
+_WINDOWS_DRIVE_FILE_PATH = re.compile(r"^/[A-Za-z]:/")
+
+
 def path_from_file_uri(uri: str) -> Path | None:
-    """Return a filesystem path for a ``file:`` URI, or None."""
+    """Return a filesystem path for a ``file:`` URI, or None.
+
+    ``Path.as_uri()`` on a Windows path produces ``file:///C:/...``, so
+    ``urlparse`` hands back a path with a leading slash still in front of
+    the drive letter (``/C:/...``) -- strip it so the drive is parsed as
+    a drive rather than becoming an unopenable path.
+    """
     parsed = urlparse(uri.strip())
     if parsed.scheme != "file" or not parsed.path:
         return None
-    return Path(unquote(parsed.path))
+    raw_path = unquote(parsed.path)
+    if _WINDOWS_DRIVE_FILE_PATH.match(raw_path):
+        raw_path = raw_path[1:]
+    return Path(raw_path)
 
 
 def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:

@@ -305,6 +305,29 @@ class ShowHideToggleTests(SimpleTestCase):
         controller.destroy_about_window.assert_not_called()
         self.assertFalse(controller.about_open)
 
+    def test_show_about_raising_leaves_about_open_false(self) -> None:
+        """Regression: about_open must not be set before create_about_
+        window() actually returns -- a raise there must not permanently
+        suppress the overlay's auto-hide gate or future show_about() calls."""
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(side_effect=OSError("boom"))
+        with self.assertRaises(OSError):
+            controller.show_about()
+        self.assertFalse(controller.about_open)
+        self.assertIsNone(controller.about_hwnd)
+
+    def test_hide_about_raising_still_clears_the_flags(self) -> None:
+        """Regression: a raise from destroy_about_window() must not leave
+        about_open stuck True with a dead/absent hwnd."""
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
+        controller.destroy_about_window = MagicMock(side_effect=OSError("boom"))
+        controller.show_about()
+        with self.assertRaises(OSError):
+            controller.hide_about()
+        self.assertFalse(controller.about_open)
+        self.assertIsNone(controller.about_hwnd)
+
 
 class HandleEditKeydownTests(SimpleTestCase):
     def test_return_submits_query(self) -> None:

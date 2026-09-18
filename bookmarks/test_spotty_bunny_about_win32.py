@@ -158,10 +158,9 @@ class AboutWndProcTests(SimpleTestCase):
         return con
 
     def test_wm_notify_link_click_dispatches_to_handle_link_click(self) -> None:
-        controller = MagicMock()
         win32con = self._fake_win32con()
         win32gui = MagicMock()
-        wndproc = _make_about_wndproc(controller, win32gui=win32gui, win32con=win32con)
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
         link = _NMLINK()
         link.hdr.code = _NM_CLICK
         link.item.szUrl = "https://example.com"
@@ -171,23 +170,33 @@ class AboutWndProcTests(SimpleTestCase):
         self.assertEqual(result, 0)
 
     def test_wm_notify_for_unrelated_code_does_not_dispatch(self) -> None:
-        controller = MagicMock()
         win32con = self._fake_win32con()
         win32gui = MagicMock()
-        wndproc = _make_about_wndproc(controller, win32gui=win32gui, win32con=win32con)
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
         link = _NMLINK()
         link.hdr.code = 999
         with patch("app.spotty_bunny_about_win32._handle_link_click") as handle:
             wndproc(123, win32con.WM_NOTIFY, 0, ctypes.addressof(link))
         handle.assert_not_called()
 
-    def test_escape_hides_the_about_window(self) -> None:
+    def test_escape_hides_the_current_controllers_about_window(self) -> None:
         controller = MagicMock()
         win32con = self._fake_win32con()
         win32gui = MagicMock()
-        wndproc = _make_about_wndproc(controller, win32gui=win32gui, win32con=win32con)
-        result = wndproc(123, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        with patch(
+            "app.spotty_bunny_about_win32._about_wndproc_controller", controller
+        ):
+            result = wndproc(123, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
         controller.hide_about.assert_called_once()
+        self.assertEqual(result, 0)
+
+    def test_escape_is_a_no_op_when_no_controller_is_registered(self) -> None:
+        win32con = self._fake_win32con()
+        win32gui = MagicMock()
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        with patch("app.spotty_bunny_about_win32._about_wndproc_controller", None):
+            result = wndproc(123, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
         self.assertEqual(result, 0)
 
     def test_other_keydown_is_not_handled(self) -> None:
@@ -195,25 +204,262 @@ class AboutWndProcTests(SimpleTestCase):
         win32con = self._fake_win32con()
         win32gui = MagicMock()
         win32gui.DefWindowProc.return_value = 7
-        wndproc = _make_about_wndproc(controller, win32gui=win32gui, win32con=win32con)
-        result = wndproc(123, win32con.WM_KEYDOWN, 0x41, 0)  # 'A'
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        with patch(
+            "app.spotty_bunny_about_win32._about_wndproc_controller", controller
+        ):
+            result = wndproc(123, win32con.WM_KEYDOWN, 0x41, 0)  # 'A'
         controller.hide_about.assert_not_called()
         self.assertEqual(result, 7)
 
-    def test_deactivate_hides_the_about_window(self) -> None:
+    def test_deactivate_hides_the_current_controllers_about_window(self) -> None:
         controller = MagicMock()
         win32con = self._fake_win32con()
         win32gui = MagicMock()
-        wndproc = _make_about_wndproc(controller, win32gui=win32gui, win32con=win32con)
-        result = wndproc(123, win32con.WM_ACTIVATE, win32con.WA_INACTIVE, 0)
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        with patch(
+            "app.spotty_bunny_about_win32._about_wndproc_controller", controller
+        ):
+            result = wndproc(123, win32con.WM_ACTIVATE, win32con.WA_INACTIVE, 0)
         controller.hide_about.assert_called_once()
         self.assertEqual(result, 0)
 
     def test_unhandled_message_delegates_to_def_window_proc(self) -> None:
-        controller = MagicMock()
         win32con = self._fake_win32con()
         win32gui = MagicMock()
         win32gui.DefWindowProc.return_value = 42
-        wndproc = _make_about_wndproc(controller, win32gui=win32gui, win32con=win32con)
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
         result = wndproc(123, 0x9999, 0, 0)
         self.assertEqual(result, 42)
+
+
+class RegisterAboutClassTests(SimpleTestCase):
+    """The wndproc dispatch target follows the *latest* registering
+    controller, rather than being pinned to whichever controller first
+    triggered class registration (the process-global memo bug)."""
+
+    def setUp(self) -> None:
+        import app.spotty_bunny_about_win32 as about_win32
+
+        self._about_win32 = about_win32
+        self._previous_registered = about_win32._about_class_registered
+        self._previous_controller = about_win32._about_wndproc_controller
+        about_win32._about_class_registered = False
+        about_win32._about_wndproc_controller = None
+
+    def tearDown(self) -> None:
+        self._about_win32._about_class_registered = self._previous_registered
+        self._about_win32._about_wndproc_controller = self._previous_controller
+
+    def test_registers_only_once_across_two_controllers(self) -> None:
+        from app.spotty_bunny_about_win32 import _register_about_class
+
+        win32con = MagicMock()
+        win32gui = MagicMock()
+        first = MagicMock()
+        second = MagicMock()
+
+        _register_about_class(first, win32gui=win32gui, win32con=win32con)
+        _register_about_class(second, win32gui=win32gui, win32con=win32con)
+
+        win32gui.RegisterClass.assert_called_once()
+
+    def test_wndproc_dispatches_to_the_most_recently_registered_controller(
+        self,
+    ) -> None:
+        from app.spotty_bunny_about_win32 import _register_about_class
+
+        win32con = MagicMock()
+        win32con.WM_KEYDOWN = 0x0100
+        win32con.VK_ESCAPE = 0x1B
+        win32gui = MagicMock()
+        first = MagicMock()
+        second = MagicMock()
+
+        _register_about_class(first, win32gui=win32gui, win32con=win32con)
+        wndproc = win32gui.WNDCLASS.return_value.lpfnWndProc
+        _register_about_class(second, win32gui=win32gui, win32con=win32con)
+
+        wndproc(123, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
+        first.hide_about.assert_not_called()
+        second.hide_about.assert_called_once()
+
+
+class BuildAboutWindowTests(SimpleTestCase):
+    """Exercises the shipped window-creation function directly, with
+    every win32* module injected as a mock -- no real Windows needed."""
+
+    def setUp(self) -> None:
+        import app.spotty_bunny_about_win32 as about_win32
+
+        self._about_win32 = about_win32
+        self._previous_registered = about_win32._about_class_registered
+        self._previous_controller = about_win32._about_wndproc_controller
+        self._previous_font = about_win32._title_font
+        about_win32._about_class_registered = False
+        about_win32._about_wndproc_controller = None
+        about_win32._title_font = None
+
+    def tearDown(self) -> None:
+        self._about_win32._about_class_registered = self._previous_registered
+        self._about_win32._about_wndproc_controller = self._previous_controller
+        self._about_win32._title_font = self._previous_font
+
+    def _fake_win32(
+        self,
+    ) -> tuple[MagicMock, MagicMock, MagicMock, list[dict[str, object]]]:
+        win32con = MagicMock()
+        win32con.WM_SETFONT = 0x30
+        win32con.FW_BOLD = 700
+
+        created: list[dict[str, object]] = []
+
+        def create_window_ex(
+            _ex_style,
+            class_name,
+            text,
+            _style,
+            x,
+            y,
+            width,
+            height,
+            *_rest,
+        ):
+            created.append(
+                {
+                    "class_name": class_name,
+                    "text": text,
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                }
+            )
+            return len(created)
+
+        win32gui = MagicMock()
+        win32gui.CreateWindowEx.side_effect = create_window_ex
+        win32gui.GetModuleHandle.return_value = 1
+
+        win32api = MagicMock()
+        win32api.GetCursorPos.return_value = (100, 200)
+        win32api.GetSystemMetrics.side_effect = lambda index: {0: 1920, 1: 1080}[index]
+
+        return win32gui, win32con, win32api, created
+
+    def _build(
+        self, win32gui: MagicMock, win32con: MagicMock, win32api: MagicMock
+    ) -> int:
+        from app.spotty_bunny_about_win32 import build_about_window
+        from app.spotty_bunny_update import UpdateStatus
+
+        with (
+            patch("app.spotty_bunny_about_win32._init_syslink_class"),
+            patch(
+                "app.spotty_bunny_about_win32.load_about_runtime_info",
+                return_value=_about_runtime(),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.read_cached_update_status",
+                return_value=UpdateStatus(
+                    checked_at=0.0, current="1.0.0", latest=None, outdated=False
+                ),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.get_build_info",
+                return_value=("1.2.3", "abc1234"),
+            ),
+        ):
+            return build_about_window(
+                MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
+            )
+
+    def test_creates_the_top_level_window_and_every_child_row(self) -> None:
+        win32gui, win32con, win32api, created = self._fake_win32()
+        self._build(win32gui, win32con, win32api)
+
+        # Top-level popup first, then title/summary/version/copyright/details.
+        self.assertEqual(len(created), 6)
+        self.assertEqual(created[1]["class_name"], "STATIC")
+        self.assertEqual(created[1]["text"], "Spotty Bunny")
+        self.assertEqual(created[2]["class_name"], "STATIC")
+        self.assertEqual(created[3]["class_name"], "SysLink")
+        self.assertEqual(created[4]["class_name"], "SysLink")
+        self.assertEqual(created[5]["class_name"], "SysLink")
+
+    def test_details_syslink_uses_to_syslink_markup_of_the_real_content(
+        self,
+    ) -> None:
+        from app.spotty_bunny_about_info import about_details_text_and_links
+        from app.spotty_bunny_about_win32 import to_syslink_markup
+
+        win32gui, win32con, win32api, created = self._fake_win32()
+        self._build(win32gui, win32con, win32api)
+
+        details_text, details_links = about_details_text_and_links(_about_runtime())
+        self.assertEqual(
+            created[5]["text"], to_syslink_markup(details_text, details_links)
+        )
+
+    def test_version_syslink_uses_to_syslink_markup_of_the_real_content(self) -> None:
+        from app.spotty_bunny_about_win32 import to_syslink_markup
+
+        win32gui, win32con, win32api, created = self._fake_win32()
+        self._build(win32gui, win32con, win32api)
+
+        text, links = about_version_text_and_links("1.2.3", "abc1234")
+        self.assertEqual(created[3]["text"], to_syslink_markup(text, links))
+
+    def test_row_heights_match_between_the_window_and_its_children(self) -> None:
+        win32gui, win32con, win32api, created = self._fake_win32()
+        self._build(win32gui, win32con, win32api)
+
+        window_height = created[0]["height"]
+        child_span = sum(row["height"] for row in created[1:]) + 6 * (len(created) - 2)
+        self.assertEqual(window_height, 12 * 2 + child_span)
+
+    def test_window_is_positioned_at_the_anchor_near_cursor_result(self) -> None:
+        win32gui, win32con, win32api, created = self._fake_win32()
+        self._build(win32gui, win32con, win32api)
+
+        self.assertEqual((created[0]["x"], created[0]["y"]), (100, 200))
+
+    def test_adds_an_update_row_when_outdated(self) -> None:
+        from app.spotty_bunny_about_win32 import build_about_window
+        from app.spotty_bunny_update import UpdateStatus
+
+        win32gui, win32con, win32api, created = self._fake_win32()
+        with (
+            patch("app.spotty_bunny_about_win32._init_syslink_class"),
+            patch(
+                "app.spotty_bunny_about_win32.load_about_runtime_info",
+                return_value=_about_runtime(),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.read_cached_update_status",
+                return_value=UpdateStatus(
+                    checked_at=0.0, current="1.0.0", latest="2.0.0", outdated=True
+                ),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.get_build_info",
+                return_value=("1.2.3", "abc1234"),
+            ),
+        ):
+            build_about_window(
+                MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
+            )
+
+        self.assertEqual(len(created), 7)
+        self.assertEqual(created[6]["text"], "Update available: 2.0.0")
+
+    def test_registration_and_bold_font_are_memoized_across_two_calls(self) -> None:
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        self._build(win32gui, win32con, win32api)
+        win32gui2, win32con2, win32api2, _created2 = self._fake_win32()
+        self._build(win32gui2, win32con2, win32api2)
+
+        win32gui.RegisterClass.assert_called_once()
+        win32gui2.RegisterClass.assert_not_called()
+        win32gui.CreateFont.assert_called_once()
+        win32gui2.CreateFont.assert_not_called()

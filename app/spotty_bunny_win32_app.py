@@ -240,18 +240,33 @@ class SpottyBunnyWin32Controller:
     # -- About panel ---------------------------------------------------------
 
     def show_about(self) -> None:
-        """Create the real About popup (idempotent while already open)."""
+        """Create the real About popup (idempotent while already open).
+
+        ``about_open`` is set only after ``create_about_window()``
+        actually returns -- if it raises, the flag must stay False, or
+        the overlay's WM_ACTIVATE auto-hide gate would stay suppressed
+        and every later tray left-click would be swallowed by the
+        already-open guard above, with no About window to show for it.
+        """
         if self.about_open:
             return
-        self.about_open = True
         self.about_hwnd = self.create_about_window()
+        self.about_open = True
         logger.info("show About panel")
 
     def hide_about(self) -> None:
-        if self.about_hwnd is not None:
-            self.destroy_about_window(self.about_hwnd)
-            self.about_hwnd = None
+        """Clear the flags before the fallible destroy, not after.
+
+        A raise from destroy_about_window() must not leave about_open
+        stuck True with a hwnd that's gone (or never existed) -- our own
+        state staying consistent matters more than guaranteeing the OS
+        call itself succeeded.
+        """
+        hwnd = self.about_hwnd
+        self.about_hwnd = None
         self.about_open = False
+        if hwnd is not None:
+            self.destroy_about_window(hwnd)
 
     # -- key handling --------------------------------------------------------
 

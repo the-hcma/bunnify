@@ -784,7 +784,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     "file:///C:/Users/a/bookmarks.json", start_file=start_file
                 )
             )
-        self.assertEqual(calls, [Path("/C:/Users/a/bookmarks.json")])
+        self.assertEqual(calls, [Path("C:/Users/a/bookmarks.json")])
 
     def test_path_from_file_uri_decodes_path(self) -> None:
         from app.spotty_bunny_about_info import path_from_file_uri
@@ -794,6 +794,23 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             Path("/tmp/bookmarks.json"),
         )
         self.assertIsNone(path_from_file_uri("https://example.com/x"))
+
+    def test_path_from_file_uri_strips_leading_slash_before_a_drive_letter(
+        self,
+    ) -> None:
+        from app.spotty_bunny_about_info import path_from_file_uri
+
+        self.assertEqual(
+            path_from_file_uri("file:///C:/Users/a/bookmarks.json"),
+            Path("C:/Users/a/bookmarks.json"),
+        )
+        # A regular path segment that merely starts with a drive-letter-like
+        # pattern deeper in the tree (not right after the leading slash)
+        # keeps its slash.
+        self.assertEqual(
+            path_from_file_uri("file:///home/c/bookmarks.json"),
+            Path("/home/c/bookmarks.json"),
+        )
 
     def test_server_skew_message_local_names_restart_without_agent(self) -> None:
         from app.spotty_bunny_about_info import server_skew_message
