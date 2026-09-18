@@ -327,6 +327,21 @@ class HandleEditKeydownTests(SimpleTestCase):
             controller._completion_rows, [CompletionRow("gh", "GitHub", 0)]
         )
 
+    def test_tab_with_no_completer_loaded_is_a_safe_no_op(self) -> None:
+        # Regression: this is the real state for the first seconds after
+        # show() while _load_completer_async() is still in flight.
+        # completions_for(prefix, None) would raise AttributeError if this
+        # guard were removed, propagating out of the edit-control wndproc.
+        controller = _make_controller()
+        controller._completer = None
+        rows_calls: list[list[CompletionRow]] = []
+        controller.set_completion_rows = rows_calls.append
+        handled = controller.handle_edit_keydown(VK_TAB)
+        self.assertTrue(handled)
+        self.assertEqual(controller._completion_rows, [])
+        self.assertFalse(controller._completion_visible)
+        self.assertEqual(rows_calls, [])
+
     def test_up_arrow_without_completion_rows_walks_history(self) -> None:
         controller = _make_controller()
         controller._history._lines = ["gh", "yt"]
@@ -745,6 +760,68 @@ class CheckEventTapHealthTests(SimpleTestCase):
             controller.check_event_tap_health()
         resolve_vks.assert_called_once()
         reinstall.assert_called_once()
+
+
+class ReinstallHookTests(SimpleTestCase):
+    """Exercises the real _reinstall_hook body (CheckEventTapHealthTests
+    above mocks it out to test check_event_tap_health's delegation only)."""
+
+    def test_installs_with_resolved_vks_and_wires_on_chord_to_toggle(self) -> None:
+        controller = _make_controller()
+        controller._left_vk = 0xAA
+        controller._right_vk = 0xBB
+        posted: list[tuple] = []
+        controller.post_app_message = lambda *args: posted.append(args)
+        fake_hook = object()
+        with patch(
+            "app.spotty_bunny_win32_app.install_chord_hook",
+            return_value=fake_hook,
+        ) as install_hook:
+            controller._reinstall_hook()
+        self.assertIs(controller._hook, fake_hook)
+        install_hook.assert_called_once()
+        kwargs = install_hook.call_args.kwargs
+        self.assertEqual(kwargs["left_vk"], 0xAA)
+        self.assertEqual(kwargs["right_vk"], 0xBB)
+        # The acceptance criterion itself: firing the passed on_chord must
+        # post WM_APP_TOGGLE through post_app_message.
+        kwargs["on_chord"]()
+        self.assertEqual(posted, [(WM_APP_TOGGLE, 0, 0)])
+
+    def test_falls_back_to_default_vks_when_unresolved(self) -> None:
+        from app.spotty_bunny_hotkey_win32 import VK_LCONTROL, VK_RCONTROL
+
+        controller = _make_controller()
+        self.assertIsNone(controller._left_vk)
+        self.assertIsNone(controller._right_vk)
+        with patch(
+            "app.spotty_bunny_win32_app.install_chord_hook",
+            return_value=object(),
+        ) as install_hook:
+            controller._reinstall_hook()
+        kwargs = install_hook.call_args.kwargs
+        self.assertEqual(kwargs["left_vk"], VK_LCONTROL)
+        self.assertEqual(kwargs["right_vk"], VK_RCONTROL)
+
+    def test_failed_install_leaves_hook_none(self) -> None:
+        controller = _make_controller()
+        with patch(
+            "app.spotty_bunny_win32_app.install_chord_hook",
+            side_effect=OSError("no hook"),
+        ):
+            controller._reinstall_hook()
+        self.assertIsNone(controller._hook)
+
+    def test_uninstalls_the_previous_hook_first(self) -> None:
+        controller = _make_controller()
+        old_hook = MagicMock()
+        controller._hook = old_hook
+        with patch(
+            "app.spotty_bunny_win32_app.install_chord_hook",
+            return_value=object(),
+        ):
+            controller._reinstall_hook()
+        old_hook.uninstall.assert_called_once()
 
 
 class _FakeWin32Con:
