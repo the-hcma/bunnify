@@ -4110,6 +4110,107 @@ class SpottyBunnyWin32ProcessTests(SimpleTestCase):
             _terminate_pid(4242)
         wait_for_exit.assert_not_called()
 
+    def test_image_name_none_when_open_process_fails(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_image_name
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertIsNone(_win32_process_image_name(4242))
+
+    def test_image_name_none_when_query_fails(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_image_name
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+        kernel32.QueryFullProcessImageNameW = MagicMock(return_value=False)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertIsNone(_win32_process_image_name(4242))
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_image_name_returns_path_on_success(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_image_name
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _query(_handle: int, _flags: int, buf: object, _size: object) -> bool:
+            buf.value = "C:\\Users\\a\\.local\\bin\\spotty-bunny.exe"
+            return True
+
+        kernel32.QueryFullProcessImageNameW = MagicMock(side_effect=_query)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertEqual(
+                _win32_process_image_name(4242),
+                "C:\\Users\\a\\.local\\bin\\spotty-bunny.exe",
+            )
+
+    def test_process_alive_false_on_windows_when_image_name_unavailable(self) -> None:
+        """Denied/gone can't be confirmed as *our* overlay -- default to False."""
+        from app.spotty_bunny_launch import _spotty_bunny_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 259
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch(
+                "app.spotty_bunny_launch._win32_process_image_name",
+                return_value=None,
+            ),
+        ):
+            self.assertFalse(_spotty_bunny_process_alive(4242))
+
+    def test_process_alive_true_on_windows_when_image_matches(self) -> None:
+        from app.spotty_bunny_launch import _spotty_bunny_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 259
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch(
+                "app.spotty_bunny_launch._win32_process_image_name",
+                return_value="C:\\Users\\a\\.local\\bin\\spotty-bunny.exe",
+            ),
+        ):
+            self.assertTrue(_spotty_bunny_process_alive(4242))
+
+    def test_process_alive_false_on_windows_for_a_foreign_process(self) -> None:
+        """A reused/stale pid now pointing at an unrelated process (e.g.
+        notepad.exe) must not be mistaken for our overlay."""
+        from app.spotty_bunny_launch import _spotty_bunny_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 259
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch(
+                "app.spotty_bunny_launch._win32_process_image_name",
+                return_value="C:\\Windows\\System32\\notepad.exe",
+            ),
+        ):
+            self.assertFalse(_spotty_bunny_process_alive(4242))
+
 
 class SpottyBunnyResolveTests(SimpleTestCase):
     def test_failure_does_not_append_history(self) -> None:

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from app.spotty_bunny_task_win32 import format_task_xml
+from app.spotty_bunny_task_win32 import create_or_update_task, format_task_xml
 
 
 class InstallAgentTests(SimpleTestCase):
@@ -65,9 +65,18 @@ class InstallAgentTests(SimpleTestCase):
             program = _write_executable(home / "spotty-bunny.exe")
             pid_dir = home / "run"
             stderr = StringIO()
-            with patch(
-                "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
-                return_value=True,
+            with (
+                patch(
+                    "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                    # None before the task runs, a new pid after -- the
+                    # unchanged-pid case is covered by the "never becomes
+                    # healthy" tests below.
+                    side_effect=[None, (4242, "test")],
+                ),
             ):
                 code = install_agent(
                     pid_dir=pid_dir,
@@ -81,15 +90,39 @@ class InstallAgentTests(SimpleTestCase):
         self.assertTrue(fake.running)
         self.assertIn("installed Scheduled Task", stderr.getvalue())
 
+    def test_rejects_bare_interpreter_fallback(self) -> None:
+        import sys
+
+        from app.spotty_bunny_agent_win32 import install_agent
+
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp) / "run"
+            stderr = StringIO()
+            with patch(
+                "app.spotty_bunny_agent_win32.spotty_bunny_program_arguments",
+                return_value=[sys.executable, "-m", "app.spotty_bunny_cli"],
+            ):
+                code = install_agent(
+                    pid_dir=pid_dir,
+                    platform="win32",
+                    print_err=stderr.write,
+                    schtasks=_FakeSchtasks(),
+                )
+        self.assertEqual(code, 1)
+        self.assertIn("no packaged spotty-bunny", stderr.getvalue())
+
     def test_rolls_back_when_create_fails(self) -> None:
         from app.spotty_bunny_agent_win32 import install_agent
 
         fake = _FakeSchtasks()
         fake.create_should_fail = True
         with TemporaryDirectory() as tmp:
-            program = _write_executable(Path(tmp) / "spotty-bunny.exe")
+            home = Path(tmp)
+            program = _write_executable(home / "spotty-bunny.exe")
+            pid_dir = home / "run"
             stderr = StringIO()
             code = install_agent(
+                pid_dir=pid_dir,
                 platform="win32",
                 print_err=stderr.write,
                 program=program,
@@ -104,13 +137,16 @@ class InstallAgentTests(SimpleTestCase):
 
         fake = _FakeSchtasks()
         with TemporaryDirectory() as tmp:
-            program = _write_executable(Path(tmp) / "spotty-bunny.exe")
+            home = Path(tmp)
+            program = _write_executable(home / "spotty-bunny.exe")
+            pid_dir = home / "run"
             stderr = StringIO()
             with patch(
                 "app.spotty_bunny_agent_win32._wait_for_managed_overlay",
                 return_value=False,
             ):
                 code = install_agent(
+                    pid_dir=pid_dir,
                     platform="win32",
                     print_err=stderr.write,
                     program=program,
@@ -132,15 +168,18 @@ class InstallAgentTests(SimpleTestCase):
         )
         previous_xml = fake.registered_xml
         with TemporaryDirectory() as tmp:
-            program = _write_executable(Path(tmp) / "spotty-bunny.exe")
+            home = Path(tmp)
+            program = _write_executable(home / "spotty-bunny.exe")
+            pid_dir = home / "run"
             stderr = StringIO()
             with patch(
                 "app.spotty_bunny_agent_win32._wait_for_managed_overlay",
-                side_effect=lambda *, pid_dir, timeout_s: (
+                side_effect=lambda *, pid_dir, timeout_s, exclude_pid=None: (
                     timeout_s == ROLLBACK_WAIT_TIMEOUT_S
                 ),
             ):
                 code = install_agent(
+                    pid_dir=pid_dir,
                     platform="win32",
                     print_err=stderr.write,
                     program=program,
@@ -267,9 +306,11 @@ class StatusAgentTests(SimpleTestCase):
         from app.spotty_bunny_tap_health import TAP_STATE_OK, SpottyBunnyHealth
 
         fake = _FakeSchtasks()
-        fake.registered = True
+        create_or_update_task(
+            format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"]),
+            schtasks=fake,
+        )
         fake.running = True
-        fake.task_to_run = '"C:\\bin\\spotty-bunny.exe"'
         health = SpottyBunnyHealth(
             last_chord_at=None,
             last_event_at=None,
@@ -390,7 +431,6 @@ class _FakeSchtasks:
         self.registered = False
         self.registered_xml: str | None = None
         self.running = False
-        self.task_to_run = ""
         self.create_should_fail = False
 
     def __call__(
@@ -432,10 +472,7 @@ class _FakeSchtasks:
                 )
             if "/V" in argv:
                 status = "Running" if self.running else "Ready"
-                stdout = (
-                    f"Status:                               {status}\n"
-                    f"Task To Run:                          {self.task_to_run}\n"
-                )
+                stdout = f"Status:                               {status}\n"
                 return subprocess.CompletedProcess(argv, 0, stdout, "")
             return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, 1, "", f"unhandled: {action}")

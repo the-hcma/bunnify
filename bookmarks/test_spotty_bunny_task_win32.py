@@ -202,20 +202,42 @@ class TaskProgramArgumentsTests(SimpleTestCase):
     def test_none_when_not_installed(self) -> None:
         self.assertIsNone(task_program_arguments(schtasks=_FakeSchtasks()))
 
-    def test_parses_task_to_run_field(self) -> None:
+    def test_reads_command_and_arguments_from_registered_xml(self) -> None:
         fake = _FakeSchtasks()
-        fake.registered = True
-        fake.task_to_run = '"C:\\Program Files\\spotty-bunny.exe" --pid-dir "C:\\a b"'
+        xml = format_task_xml(
+            program_arguments=[
+                "C:\\Program Files\\spotty-bunny.exe",
+                "--pid-dir",
+                "C:\\a b",
+            ]
+        )
+        create_or_update_task(xml, schtasks=fake)
         self.assertEqual(
             task_program_arguments(schtasks=fake),
             ["C:\\Program Files\\spotty-bunny.exe", "--pid-dir", "C:\\a b"],
         )
 
-    def test_none_when_task_to_run_is_blank(self) -> None:
+    def test_command_only_no_extra_arguments(self) -> None:
         fake = _FakeSchtasks()
-        fake.registered = True
-        fake.task_to_run = ""
-        self.assertIsNone(task_program_arguments(schtasks=fake))
+        xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
+        create_or_update_task(xml, schtasks=fake)
+        self.assertEqual(
+            task_program_arguments(schtasks=fake), ["C:\\bin\\spotty-bunny.exe"]
+        )
+
+    def test_spaced_command_path_round_trips(self) -> None:
+        # Regression: <Command> is written unquoted even with a space in
+        # the path -- this must not be parsed via the free-text "Task To
+        # Run" display field, which would truncate at the first space.
+        fake = _FakeSchtasks()
+        xml = format_task_xml(
+            program_arguments=["C:\\Users\\John Doe\\.local\\bin\\spotty-bunny.exe"]
+        )
+        create_or_update_task(xml, schtasks=fake)
+        self.assertEqual(
+            task_program_arguments(schtasks=fake),
+            ["C:\\Users\\John Doe\\.local\\bin\\spotty-bunny.exe"],
+        )
 
 
 class SchtasksErrorHandlingTests(SimpleTestCase):
@@ -240,7 +262,6 @@ class _FakeSchtasks:
         self.registered = False
         self.registered_xml: str | None = None
         self.running = False
-        self.task_to_run = ""
         self.create_should_fail = False
         self.delete_should_fail_with: str | None = None
         self.last_xml_path: Path = Path()
@@ -288,10 +309,7 @@ class _FakeSchtasks:
                 )
             if "/V" in argv:
                 status = "Running" if self.running else "Ready"
-                stdout = (
-                    f"Status:                               {status}\n"
-                    f"Task To Run:                          {self.task_to_run}\n"
-                )
+                stdout = f"Status:                               {status}\n"
                 return subprocess.CompletedProcess(argv, 0, stdout, "")
             return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, 1, "", f"unhandled: {action}")

@@ -26,6 +26,7 @@ from app.spotty_bunny_agent import (
 from app.spotty_bunny_cli import COMMAND_NAME, _spotty_bunny_log_file
 from app.spotty_bunny_launch import (
     clear_spotty_bunny_pid,
+    read_spotty_bunny_runtime,
     spotty_bunny_is_running,
     stop_spotty_bunny,
 )
@@ -94,6 +95,20 @@ def install_agent(
             f"{launch_binary.expanduser()}"
         )
         return 1
+    if _is_bare_interpreter_fallback(program_argv):
+        err(
+            f"{COMMAND_NAME}: no packaged spotty-bunny(.exe) found on PATH -- "
+            "can't verify a bare Python interpreter process is the one the "
+            "Scheduled Task started. Run `pipx ensurepath` (or otherwise put "
+            "spotty-bunny.exe on PATH), then retry."
+        )
+        return 1
+    # Captured before touching the task so the wait below can tell "the
+    # task's own new instance started" apart from "whatever was already
+    # running (often this very process, when install/upgrade is
+    # menu-triggered) is still there" -- see _wait_for_managed_overlay.
+    previous_runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
+    previous_pid = previous_runtime[0] if previous_runtime is not None else None
     previous_xml = task_xml(schtasks=schtasks)
     xml = format_task_xml(program_arguments=program_argv)
     if not create_or_update_task(xml, schtasks=schtasks):
@@ -104,7 +119,9 @@ def install_agent(
         err(f"{COMMAND_NAME}: schtasks /Create failed for '{TASK_NAME}'.")
         return 1
     run_task_once(schtasks=schtasks)
-    if not _wait_for_managed_overlay(pid_dir=pid_dir, timeout_s=timeout_s):
+    if not _wait_for_managed_overlay(
+        pid_dir=pid_dir, timeout_s=timeout_s, exclude_pid=previous_pid
+    ):
         restored = _rollback_failed_install(
             previous_xml, pid_dir=pid_dir, schtasks=schtasks
         )
@@ -268,8 +285,6 @@ def _is_win32(platform: str | None) -> bool:
 
 
 def _pid_text(*, pid_dir: Path | None) -> str:
-    from app.spotty_bunny_launch import read_spotty_bunny_runtime
-
     runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
     if runtime is None:
         return "none"
@@ -294,6 +309,8 @@ def _rollback_failed_install(
     so a failed upgrade doesn't leave Spotty Bunny fully uninstalled.
     Returns True when that restore succeeded.
     """
+    previous_runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
+    stale_pid = previous_runtime[0] if previous_runtime is not None else None
     stop_spotty_bunny(pid_dir=pid_dir)
     clear_spotty_bunny_pid(pid_dir=pid_dir)
     if previous_xml is None:
@@ -302,7 +319,9 @@ def _rollback_failed_install(
     if not create_or_update_task(previous_xml, schtasks=schtasks):
         return False
     run_task_once(schtasks=schtasks)
-    return _wait_for_managed_overlay(pid_dir=pid_dir, timeout_s=ROLLBACK_WAIT_TIMEOUT_S)
+    return _wait_for_managed_overlay(
+        pid_dir=pid_dir, timeout_s=ROLLBACK_WAIT_TIMEOUT_S, exclude_pid=stale_pid
+    )
 
 
 def _rollback_outcome_message(restored: bool, *, schtasks: SchtasksFn | None) -> str:
@@ -319,10 +338,48 @@ def _rollback_outcome_message(restored: bool, *, schtasks: SchtasksFn | None) ->
     )
 
 
-def _wait_for_managed_overlay(*, pid_dir: Path | None, timeout_s: float) -> bool:
+def _is_bare_interpreter_fallback(program_argv: list[str]) -> bool:
+    """True for ``spotty_bunny_command()``'s last-resort ``-m`` invocation.
+
+    That form's image name (``python.exe``/``pythonw.exe``) can't be told
+    apart from any other Python process by :func:`_win32_process_image_name`
+    (unlike macOS, ``QueryFullProcessImageNameW`` doesn't expose argv), so
+    a Scheduled Task built from it can never be confirmed as *our* overlay
+    once running -- refuse up front with an actionable message instead of
+    registering a task whose health can never be verified.
+    """
+    return (
+        len(program_argv) >= 2
+        and program_argv[0] == sys.executable
+        and program_argv[1] == "-m"
+    )
+
+
+def _wait_for_managed_overlay(
+    *,
+    pid_dir: Path | None,
+    timeout_s: float,
+    exclude_pid: int | None = None,
+) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if spotty_bunny_is_running(pid_dir=pid_dir):
+        if _new_overlay_running(pid_dir=pid_dir, exclude_pid=exclude_pid):
             return True
         time.sleep(0.05)
+    return _new_overlay_running(pid_dir=pid_dir, exclude_pid=exclude_pid)
+
+
+def _new_overlay_running(*, pid_dir: Path | None, exclude_pid: int | None) -> bool:
+    """Confirm a *different* pid than *exclude_pid* is now the live overlay.
+
+    Plain ``spotty_bunny_is_running()`` isn't enough here: whatever was
+    already running before this install/upgrade attempt (often this very
+    process, for the menu-triggered path) still satisfies it regardless of
+    whether the Scheduled Task's own ``/Run`` actually produced anything,
+    so it can't distinguish "the task started its own instance" from
+    "nothing changed."
+    """
+    runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
+    if runtime is None or runtime[0] == exclude_pid:
+        return False
     return spotty_bunny_is_running(pid_dir=pid_dir)

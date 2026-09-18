@@ -67,7 +67,12 @@ def format_task_xml(*, program_arguments: Sequence[str]) -> str:
     single path, not a command line); the rest become ``Arguments``,
     quoted with :func:`subprocess.list2cmdline` -- the same escaping rules
     ``CommandLineToArgvW`` expects, so :func:`_split_windows_command_line`
-    can parse them back out of ``schtasks /Query``'s "Task To Run" field.
+    can parse them back out of :func:`task_program_arguments`. (Command is
+    written unquoted even when it contains a space -- deliberately not
+    read back from ``schtasks /Query``'s free-text "Task To Run" field,
+    which concatenates Command+Arguments into one display string and would
+    need its own re-quoting heuristic to round-trip a spaced path; reading
+    ``<Command>``/``<Arguments>`` straight out of the XML avoids that.)
     """
     command, *rest = program_arguments
     return _TASK_XML_TEMPLATE.replace("__COMMAND__", escape(command)).replace(
@@ -138,17 +143,29 @@ def task_xml(*, schtasks: SchtasksFn | None = None) -> str | None:
 
 
 def task_program_arguments(*, schtasks: SchtasksFn | None = None) -> list[str] | None:
-    """Argv Task Scheduler will exec, parsed from the "Task To Run" field."""
-    completed = _schtasks(
-        ["/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"],
-        schtasks=schtasks,
-    )
-    if completed.returncode != 0:
+    """Argv Task Scheduler will exec, read from the registered task's XML."""
+    xml = task_xml(schtasks=schtasks)
+    if xml is None:
         return None
-    command = _field_from_query_output(completed.stdout, "Task To Run")
-    if command is None:
+    return _program_arguments_from_xml(xml)
+
+
+def _program_arguments_from_xml(xml: str) -> list[str] | None:
+    command = _xml_tag_text(xml, "Command")
+    if not command:
         return None
-    return _split_windows_command_line(command) or None
+    arguments = _xml_tag_text(xml, "Arguments")
+    return [command, *_split_windows_command_line(arguments)]
+
+
+def _xml_tag_text(xml: str, tag: str) -> str:
+    from html import unescape
+
+    start = xml.find(f"<{tag}>")
+    end = xml.find(f"</{tag}>")
+    if start < 0 or end < 0 or end <= start:
+        return ""
+    return unescape(xml[start + len(tag) + 2 : end])
 
 
 def _field_from_query_output(text: str, field: str) -> str | None:
