@@ -235,7 +235,13 @@ def uninstall_agent(
     if not _is_win32(platform):
         err(NOT_WINDOWS_MESSAGE)
         return 1
-    remove_task(schtasks=schtasks)
+    if not remove_task(schtasks=schtasks):
+        # The task is still registered (most likely "Access is denied" --
+        # elevated registration, insufficient rights) -- leave the overlay
+        # running rather than stopping it out from under a task that will
+        # just relaunch it at the next logon anyway.
+        err(f"{COMMAND_NAME}: schtasks /Delete failed for '{TASK_NAME}'.")
+        return 1
     stop_spotty_bunny(pid_dir=pid_dir)
     clear_spotty_bunny_pid(pid_dir=pid_dir)
     err(f"{COMMAND_NAME}: uninstalled Scheduled Task '{TASK_NAME}'")

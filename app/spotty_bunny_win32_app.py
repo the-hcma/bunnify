@@ -550,14 +550,21 @@ class SpottyBunnyWin32Controller:
         self.quit_spotty_bunny()
 
     def uninstall_spotty_bunny(self) -> None:
-        """Remove the Scheduled Task and quit this process.
+        """Remove the Scheduled Task, then quit so it stops running.
 
-        Unlike install/upgrade, uninstall has nothing to keep running for
-        even if it reports a failure (matches macOS's unconditional quit).
+        Only quits on success -- unlike macOS's plist unlink (which can't
+        meaningfully fail), a real ``schtasks /Delete`` denial leaves the
+        task registered, so telling the user it's gone and killing the
+        only running overlay would leave it silently relaunched at the
+        next logon instead.
         """
         from app.spotty_bunny_agent_win32 import uninstall_agent
 
-        uninstall_agent()
+        code = uninstall_agent()
+        if code != 0:
+            logger.warning("uninstall failed (exit code %s)", code)
+            self.set_status_text("Uninstall failed. See the log for details.")
+            return
         self._agent_installed = False
         self.quit_spotty_bunny()
 

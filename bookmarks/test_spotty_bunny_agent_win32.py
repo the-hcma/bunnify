@@ -158,6 +158,43 @@ class InstallAgentTests(SimpleTestCase):
         self.assertIn("overlay did not start", stderr.getvalue())
         self.assertIn("removed the non-functional Scheduled Task", stderr.getvalue())
 
+    def test_removes_task_when_no_new_instance_starts(self) -> None:
+        """The pre-existing overlay (often this very process) staying up
+        unchanged must not be mistaken for the task's own run -- only the
+        real _wait_for_managed_overlay/_new_overlay_running guard against
+        this, so nothing here mocks either of them away."""
+        from app.spotty_bunny_agent_win32 import install_agent
+
+        fake = _FakeSchtasks()
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = _write_executable(home / "spotty-bunny.exe")
+            pid_dir = home / "run"
+            stderr = StringIO()
+            with (
+                patch(
+                    "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                    # Same pid before and after run_task_once -- nothing new
+                    # ever came up.
+                    return_value=(4242, "test"),
+                ),
+            ):
+                code = install_agent(
+                    pid_dir=pid_dir,
+                    platform="win32",
+                    print_err=stderr.write,
+                    program=program,
+                    schtasks=fake,
+                    timeout_s=0.01,
+                )
+        self.assertEqual(code, 1)
+        self.assertFalse(fake.registered)
+        self.assertIn("overlay did not start", stderr.getvalue())
+
     def test_restores_previous_task_when_upgrade_never_becomes_healthy(self) -> None:
         from app.spotty_bunny_agent_win32 import ROLLBACK_WAIT_TIMEOUT_S, install_agent
 
@@ -282,6 +319,34 @@ class UninstallAgentTests(SimpleTestCase):
         )
         self.assertEqual(code, 0)
 
+    def test_reports_failure_and_leaves_overlay_running_when_delete_fails(
+        self,
+    ) -> None:
+        from app.spotty_bunny_agent_win32 import uninstall_agent
+
+        fake = _FakeSchtasks()
+        fake.registered = True
+        fake.delete_should_fail_with = "ERROR: Access is denied."
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp) / "run"
+            stderr = StringIO()
+            with (
+                patch("app.spotty_bunny_agent_win32.stop_spotty_bunny") as stop,
+                patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid") as clear,
+            ):
+                code = uninstall_agent(
+                    pid_dir=pid_dir,
+                    platform="win32",
+                    print_err=stderr.write,
+                    schtasks=fake,
+                )
+        self.assertEqual(code, 1)
+        self.assertTrue(fake.registered)
+        stop.assert_not_called()
+        clear.assert_not_called()
+        self.assertIn("schtasks /Delete failed", stderr.getvalue())
+        self.assertNotIn("uninstalled Scheduled Task", stderr.getvalue())
+
 
 class StatusAgentTests(SimpleTestCase):
     def test_not_installed_shape(self) -> None:
@@ -369,6 +434,82 @@ class StatusAgentTests(SimpleTestCase):
         self.assertEqual(code, 1)
 
 
+class WaitForManagedOverlayTests(SimpleTestCase):
+    """Direct coverage of the exclude_pid guard (install_agent's higher-level
+    tests above cover it end to end, but patch this function away in most
+    cases)."""
+
+    def test_excludes_the_pre_existing_pid(self) -> None:
+        from app.spotty_bunny_agent_win32 import _wait_for_managed_overlay
+
+        with (
+            patch(
+                "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                return_value=(4242, "test"),
+            ),
+            patch(
+                "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                return_value=True,
+            ),
+        ):
+            self.assertFalse(
+                _wait_for_managed_overlay(
+                    pid_dir=None, timeout_s=0.01, exclude_pid=4242
+                )
+            )
+
+    def test_accepts_a_different_pid(self) -> None:
+        from app.spotty_bunny_agent_win32 import _wait_for_managed_overlay
+
+        with (
+            patch(
+                "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                return_value=(9999, "test"),
+            ),
+            patch(
+                "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                return_value=True,
+            ),
+        ):
+            self.assertTrue(
+                _wait_for_managed_overlay(
+                    pid_dir=None, timeout_s=0.01, exclude_pid=4242
+                )
+            )
+
+    def test_accepts_any_pid_when_nothing_was_previously_running(self) -> None:
+        from app.spotty_bunny_agent_win32 import _wait_for_managed_overlay
+
+        with (
+            patch(
+                "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                return_value=(9999, "test"),
+            ),
+            patch(
+                "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                return_value=True,
+            ),
+        ):
+            self.assertTrue(
+                _wait_for_managed_overlay(
+                    pid_dir=None, timeout_s=0.01, exclude_pid=None
+                )
+            )
+
+    def test_false_when_nothing_is_running_at_all(self) -> None:
+        from app.spotty_bunny_agent_win32 import _wait_for_managed_overlay
+
+        with patch(
+            "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+            return_value=None,
+        ):
+            self.assertFalse(
+                _wait_for_managed_overlay(
+                    pid_dir=None, timeout_s=0.01, exclude_pid=None
+                )
+            )
+
+
 class IsAgentInstalledTests(SimpleTestCase):
     def test_delegates_to_is_task_installed(self) -> None:
         from app.spotty_bunny_agent_win32 import is_agent_installed
@@ -432,6 +573,7 @@ class _FakeSchtasks:
         self.registered_xml: str | None = None
         self.running = False
         self.create_should_fail = False
+        self.delete_should_fail_with: str | None = None
 
     def __call__(
         self, argv: list[str], **_kwargs: object
@@ -451,6 +593,10 @@ class _FakeSchtasks:
             if not self.registered:
                 return subprocess.CompletedProcess(
                     argv, 1, "", "ERROR: The system cannot find the file specified.\n"
+                )
+            if self.delete_should_fail_with is not None:
+                return subprocess.CompletedProcess(
+                    argv, 1, "", self.delete_should_fail_with
                 )
             self.registered = False
             self.registered_xml = None
