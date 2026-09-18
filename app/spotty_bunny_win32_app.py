@@ -518,13 +518,25 @@ class SpottyBunnyWin32Controller:
 
         self._io.submit(work, on_done)
 
+    def refresh_agent_installed(self) -> None:
+        """Sync ``_agent_installed`` with the real Scheduled Task state.
+
+        Called once at startup so the tray menu offers Uninstall/Upgrade
+        (not Install) when this process was itself launched by an
+        already-registered task -- e.g. at logon.
+        """
+        from app.spotty_bunny_agent_win32 import is_agent_installed
+
+        self._agent_installed = is_agent_installed()
+
     def install_spotty_bunny(self) -> None:
         """Install, then quit so the Scheduled Task owns the overlay.
 
-        Only quits on success -- like macOS's ``_install_ready``, a failure
-        (missing rights, #427's stub not implemented yet, ...) leaves this
-        process running with the failure surfaced in the status line,
-        rather than killing the only running overlay over a failed install.
+        Only quits on success -- like macOS's ``_install_ready``, a
+        failure (missing rights, schtasks unavailable, the overlay never
+        coming up, ...) leaves this process running with the failure
+        surfaced in the status line, rather than killing the only running
+        overlay over a failed install.
         """
         from app.spotty_bunny_agent_win32 import install_agent
 
@@ -538,14 +550,21 @@ class SpottyBunnyWin32Controller:
         self.quit_spotty_bunny()
 
     def uninstall_spotty_bunny(self) -> None:
-        """Remove the Scheduled Task and quit this process.
+        """Remove the Scheduled Task, then quit so it stops running.
 
-        Unlike install/upgrade, uninstall has nothing to keep running for
-        even if it reports a failure (matches macOS's unconditional quit).
+        Only quits on success -- unlike macOS's plist unlink (which can't
+        meaningfully fail), a real ``schtasks /Delete`` denial leaves the
+        task registered, so telling the user it's gone and killing the
+        only running overlay would leave it silently relaunched at the
+        next logon instead.
         """
         from app.spotty_bunny_agent_win32 import uninstall_agent
 
-        uninstall_agent()
+        code = uninstall_agent()
+        if code != 0:
+            logger.warning("uninstall failed (exit code %s)", code)
+            self.set_status_text("Uninstall failed. See the log for details.")
+            return
         self._agent_installed = False
         self.quit_spotty_bunny()
 
@@ -650,6 +669,7 @@ def run_spotty_bunny_win32_app() -> int:
 
     controller = SpottyBunnyWin32Controller()
     controller.resolve_and_set_chord_vks()
+    controller.refresh_agent_installed()
 
     hwnd = _create_overlay_window(controller, win32gui=win32gui, win32con=win32con)
     controller.hwnd = hwnd

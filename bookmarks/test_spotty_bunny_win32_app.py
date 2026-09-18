@@ -104,12 +104,45 @@ class MenuDispatchTests(SimpleTestCase):
             controller.dispatch_menu_action("upgradeSpottyBunny:")
         controller.request_quit.assert_not_called()
 
-    def test_uninstall_always_quits_regardless_of_exit_code(self) -> None:
+    def test_uninstall_success_marks_uninstalled_and_quits(self) -> None:
         controller = _make_controller()
+        controller._agent_installed = True
         controller.request_quit = MagicMock()
-        with patch("app.spotty_bunny_agent_win32.uninstall_agent", return_value=1):
+        with patch("app.spotty_bunny_agent_win32.uninstall_agent", return_value=0):
             controller.dispatch_menu_action("uninstallSpottyBunny:")
         controller.request_quit.assert_called_once()
+        self.assertFalse(controller._agent_installed)
+
+    def test_uninstall_failure_stays_running_and_does_not_quit(self) -> None:
+        controller = _make_controller()
+        controller._agent_installed = True
+        controller.request_quit = MagicMock()
+        statuses: list[str] = []
+        controller.set_status_text = statuses.append
+        with patch("app.spotty_bunny_agent_win32.uninstall_agent", return_value=1):
+            controller.dispatch_menu_action("uninstallSpottyBunny:")
+        controller.request_quit.assert_not_called()
+        self.assertTrue(controller._agent_installed)
+        self.assertTrue(any("failed" in s.lower() for s in statuses))
+
+
+class RefreshAgentInstalledTests(SimpleTestCase):
+    def test_sets_true_when_task_is_registered(self) -> None:
+        controller = _make_controller()
+        with patch(
+            "app.spotty_bunny_agent_win32.is_agent_installed", return_value=True
+        ):
+            controller.refresh_agent_installed()
+        self.assertTrue(controller._agent_installed)
+
+    def test_sets_false_when_task_is_not_registered(self) -> None:
+        controller = _make_controller()
+        controller._agent_installed = True
+        with patch(
+            "app.spotty_bunny_agent_win32.is_agent_installed", return_value=False
+        ):
+            controller.refresh_agent_installed()
+        self.assertFalse(controller._agent_installed)
 
 
 class CheckForUpdatesTests(SimpleTestCase):

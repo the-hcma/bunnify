@@ -268,18 +268,18 @@ def _spotty_bunny_process_alive(pid: int) -> bool:
     if not _process_exists(pid):
         return False
     if sys.platform == "win32":
-        # SECURITY/CORRECTNESS NOTE: no cheap Windows equivalent of the
-        # `ps -o command=` cross-check below (getting a full command line
-        # back needs WMI/PowerShell, not just an OpenProcess handle) --
-        # existence is the only signal available without that extra
-        # machinery. Every caller of stop_spotty_bunny()/_terminate_pid()
-        # today is darwin-gated (app.spotty_bunny_agent, app.coherence,
-        # ensure_spotty_bunny_running all check sys.platform first), so a
-        # stale PID being treated as "our overlay" here is currently inert.
-        # This stops being true once #427 wires a live Windows stop path --
-        # add an identity check (image name / build marker via WMI) before
-        # that path can call _terminate_pid() with an unverified PID.
-        return True
+        # #427 wires a live Windows stop path (uninstall/rollback), so a
+        # stale/reused PID being treated as "our overlay" is no longer
+        # inert -- verify the executable's image name before trusting it.
+        # This is weaker than the `ps -o command=` cross-check below: a
+        # full command line needs WMI/PowerShell, not just a process
+        # handle, so the "-m app.spotty_bunny_cli" dev-invocation launch
+        # form (image name is just python.exe/pythonw.exe) can't be
+        # verified this way and is treated as a mismatch. The packaged
+        # `spotty-bunny.exe` console script (the documented Windows
+        # install path) is unaffected.
+        image = _win32_process_image_name(pid)
+        return image is not None and _is_spotty_bunny_command(image)
     command = _process_command(pid)
     return command is not None and _is_spotty_bunny_command(command)
 
@@ -288,6 +288,29 @@ _WIN32_ERROR_ACCESS_DENIED = 5
 _WIN32_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _WIN32_PROCESS_TERMINATE = 0x0001
 _WIN32_STILL_ACTIVE = 259
+
+
+def _win32_process_image_name(pid: int) -> str | None:
+    """Return the running executable's path for *pid*, or None if unknown.
+
+    None covers both "process is gone" and "denied" -- either way, the
+    caller cannot confirm identity, so it must not treat *pid* as our
+    overlay.
+    """
+    import ctypes
+
+    kernel32 = _win32_kernel32()
+    handle = kernel32.OpenProcess(_WIN32_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(len(buf))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return None
+        return buf.value
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _win32_kernel32():
