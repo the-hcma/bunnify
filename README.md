@@ -306,8 +306,9 @@ bunnify spotty-bunny upgrade    # re-register the task for the current binary
 ```
 
 `bunnify spotty-bunny upgrade` rewrites the Scheduled Task and re-runs it. A
-failed upgrade restores the previous task configuration rather than leaving
-Spotty Bunny fully uninstalled.
+failed upgrade restores the previous task configuration when one existed
+(or removes the non-functional registration when it didn't) rather than
+silently leaving a broken task behind.
 
 ### Uninstall
 
