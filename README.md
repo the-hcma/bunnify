@@ -25,8 +25,9 @@ running either command. Prefer the pipx apps over any checkout
 `./scripts/bunnify` still on `PATH`.
 
 The wheel installs **`bunnify`** (CLI), **`bunnify-server`** (Django
-server), and **`spotty-bunny`** (macOS search box; needs extra
-`macos`). No repository checkout or `uv` is required at runtime.
+server), and **`spotty-bunny`** (Spotlight-style search box; macOS needs
+extra `macos`, Windows needs extra `windows`). No repository checkout or
+`uv` is required at runtime.
 
 Package on PyPI: [pypi.org/project/bunnify](https://pypi.org/project/bunnify/).
 
@@ -59,6 +60,9 @@ Summary of what it covers:
 5. **macOS Spotty Bunny** (optional) — `pipx install 'bunnify[macos]'` then
    `bunnify spotty-bunny install`
    ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
+6. **Windows Spotty Bunny** (optional) — `pipx install 'bunnify[windows]'`
+   then `bunnify spotty-bunny install`
+   ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
 
 ### Upgrade
 
@@ -74,7 +78,10 @@ bare `pipx upgrade bunnify` so you can see when PATH is still a git checkout.
 
 On **macOS**, `bunnify upgrade` also refreshes installed server and Spotty Bunny
 LaunchAgents when their plists are present (or run `bunnify-server upgrade` /
-`bunnify spotty-bunny upgrade` manually).
+`bunnify spotty-bunny upgrade` manually). On **Windows**, `bunnify upgrade`
+does not touch the Spotty Bunny Scheduled Task — run
+`bunnify spotty-bunny upgrade` yourself afterward so the task picks up the
+new build.
 
 `pipx upgrade` only updates `~/.local/bin/bunnify`. If `bunnify --version` still
 shows a checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv`.
@@ -258,6 +265,67 @@ lives in a GitHub checkout, and whether the CLI is talking to a local or
 remote server (with its URL).
 
 Details:
+[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
+
+## Spotty Bunny (Windows)
+
+Optional Spotlight-style search box, same overlay behavior as macOS. Needs
+the `windows` extra (pywin32).
+
+### Hotkey chord
+
+Only the dual-Control chord actually works on Windows today: hold left
+Control, tap right Control (or the reverse). `auto` and `control` both
+resolve to it; `option` and `command` fall back to Control with a warning
+logged, rather than inventing an Alt or Windows-key chord.
+
+```powershell
+bunnify spotty-bunny hotkey            # show the current choice
+bunnify spotty-bunny hotkey control    # dual-Control (the only chord that works)
+```
+
+### Install
+
+```powershell
+pipx install 'bunnify[windows]'
+pipx ensurepath
+bunnify spotty-bunny install    # Scheduled Task (LogonTrigger + RestartOnFailure)
+bunnify spotty-bunny status
+```
+
+There is no TCC-style permission step on Windows — `install` registers a
+Scheduled Task named "Bunnify Spotty Bunny", runs it once, and waits for the
+overlay to come up. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no
+subcommand) still runs in the **foreground** for debugging.
+
+### Upgrade
+
+```powershell
+bunnify upgrade                 # pipx package; does not touch the Scheduled Task
+bunnify spotty-bunny upgrade    # re-register the task for the current binary
+```
+
+`bunnify spotty-bunny upgrade` rewrites the Scheduled Task and re-runs it. A
+failed upgrade restores the previous task configuration rather than leaving
+Spotty Bunny fully uninstalled.
+
+### Uninstall
+
+```powershell
+bunnify spotty-bunny uninstall
+```
+
+That deletes the Scheduled Task and stops a leftover overlay process.
+Bookmarks and `config.toml` are unchanged. The right-click menu (Check for
+Updates, Install/Uninstall/Upgrade, Quit) and left-click-for-About behavior
+are the same as macOS's.
+
+`WH_KEYBOARD_LL`, the low-level keyboard hook Spotty Bunny uses to detect the
+chord, is a known heuristic trigger for antivirus software and Windows
+SmartScreen on unsigned pipx-installed binaries — the hook is listen-only
+(it always calls `CallNextHookEx`, so keystrokes are never intercepted or
+altered, only observed to detect the chord), but the first run may still show
+a SmartScreen prompt. Details:
 [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ## Server lifecycle

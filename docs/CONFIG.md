@@ -96,6 +96,10 @@ in (or unplugging) an external keyboard is picked up without a restart.
 Pinning a choice (`control` / `option` / `command`) always uses both copies
 of that modifier regardless of what's attached.
 
+On **Windows**, only dual-Control actually works: `auto`/`control` resolve
+to it, and `option`/`command` fall back to Control with a warning logged
+rather than inventing an Alt or Windows-key chord.
+
 ## Bookmark schema
 
 Each entry in `bookmarks.json` is an object with:
