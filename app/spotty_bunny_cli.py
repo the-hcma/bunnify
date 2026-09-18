@@ -126,11 +126,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the installed Spotty Bunny command."""
     args = list(argv) if argv is not None else sys.argv[1:]
     if args:
-        from app.spotty_bunny_agent import (
-            AGENT_COMMANDS,
-            UNKNOWN_COMMAND_MESSAGE,
-            run_agent_command,
-        )
+        if sys.platform == "win32":
+            from app.spotty_bunny_agent_win32 import (
+                AGENT_COMMANDS,
+                UNKNOWN_COMMAND_MESSAGE,
+            )
+            from app.spotty_bunny_agent_win32 import (
+                run_win32_agent_command as run_agent_command,
+            )
+        else:
+            from app.spotty_bunny_agent import (
+                AGENT_COMMANDS,
+                UNKNOWN_COMMAND_MESSAGE,
+                run_agent_command,
+            )
 
         token = args[0]
         if token in AGENT_COMMANDS:

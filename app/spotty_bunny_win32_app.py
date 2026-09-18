@@ -518,13 +518,25 @@ class SpottyBunnyWin32Controller:
 
         self._io.submit(work, on_done)
 
+    def refresh_agent_installed(self) -> None:
+        """Sync ``_agent_installed`` with the real Scheduled Task state.
+
+        Called once at startup so the tray menu offers Uninstall/Upgrade
+        (not Install) when this process was itself launched by an
+        already-registered task -- e.g. at logon.
+        """
+        from app.spotty_bunny_agent_win32 import is_agent_installed
+
+        self._agent_installed = is_agent_installed()
+
     def install_spotty_bunny(self) -> None:
         """Install, then quit so the Scheduled Task owns the overlay.
 
-        Only quits on success -- like macOS's ``_install_ready``, a failure
-        (missing rights, #427's stub not implemented yet, ...) leaves this
-        process running with the failure surfaced in the status line,
-        rather than killing the only running overlay over a failed install.
+        Only quits on success -- like macOS's ``_install_ready``, a
+        failure (missing rights, schtasks unavailable, the overlay never
+        coming up, ...) leaves this process running with the failure
+        surfaced in the status line, rather than killing the only running
+        overlay over a failed install.
         """
         from app.spotty_bunny_agent_win32 import install_agent
 
@@ -650,6 +662,7 @@ def run_spotty_bunny_win32_app() -> int:
 
     controller = SpottyBunnyWin32Controller()
     controller.resolve_and_set_chord_vks()
+    controller.refresh_agent_installed()
 
     hwnd = _create_overlay_window(controller, win32gui=win32gui, win32con=win32con)
     controller.hwnd = hwnd
