@@ -482,7 +482,13 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             calls.append(list(argv))
             return subprocess.CompletedProcess(argv, 0, "", "")
 
-        self.assertTrue(handle_about_link_click("file:///tmp/bookmarks.json", run=run))
+        # sys.platform is pinned so this exercises the ``open -t`` branch
+        # regardless of which OS actually runs the test suite (the win32
+        # start_file branch has its own tests, pinned the other way).
+        with patch("app.spotty_bunny_about_info.sys.platform", "darwin"):
+            self.assertTrue(
+                handle_about_link_click("file:///tmp/bookmarks.json", run=run)
+            )
         self.assertEqual(calls, [["open", "-t", "/tmp/bookmarks.json"]])
 
     def test_load_about_runtime_info_local_server_and_file_link(self) -> None:
@@ -732,7 +738,8 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             return subprocess.CompletedProcess(argv, 0, "", "")
 
         path = Path("/tmp/bookmarks.json")
-        self.assertTrue(open_path_in_text_editor(path, run=run))
+        with patch("app.spotty_bunny_about_info.sys.platform", "darwin"):
+            self.assertTrue(open_path_in_text_editor(path, run=run))
         self.assertEqual(calls, [["open", "-t", path.as_posix()]])
 
     def test_open_path_in_text_editor_windows_uses_start_file(self) -> None:
