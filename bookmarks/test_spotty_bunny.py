@@ -482,7 +482,13 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             calls.append(list(argv))
             return subprocess.CompletedProcess(argv, 0, "", "")
 
-        self.assertTrue(handle_about_link_click("file:///tmp/bookmarks.json", run=run))
+        # sys.platform is pinned so this exercises the ``open -t`` branch
+        # regardless of which OS actually runs the test suite (the win32
+        # start_file branch has its own tests, pinned the other way).
+        with patch("app.spotty_bunny_about_info.sys.platform", "darwin"):
+            self.assertTrue(
+                handle_about_link_click("file:///tmp/bookmarks.json", run=run)
+            )
         self.assertEqual(calls, [["open", "-t", "/tmp/bookmarks.json"]])
 
     def test_load_about_runtime_info_local_server_and_file_link(self) -> None:
@@ -732,8 +738,53 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             return subprocess.CompletedProcess(argv, 0, "", "")
 
         path = Path("/tmp/bookmarks.json")
-        self.assertTrue(open_path_in_text_editor(path, run=run))
+        with patch("app.spotty_bunny_about_info.sys.platform", "darwin"):
+            self.assertTrue(open_path_in_text_editor(path, run=run))
         self.assertEqual(calls, [["open", "-t", path.as_posix()]])
+
+    def test_open_path_in_text_editor_windows_uses_start_file(self) -> None:
+        from app.spotty_bunny_about_info import open_path_in_text_editor
+
+        calls: list[Path] = []
+
+        def start_file(path: Path) -> None:
+            calls.append(path)
+
+        path = Path("C:\\Users\\a\\bookmarks.json")
+        with patch("app.spotty_bunny_about_info.sys.platform", "win32"):
+            self.assertTrue(open_path_in_text_editor(path, start_file=start_file))
+        self.assertEqual(calls, [path])
+
+    def test_open_path_in_text_editor_windows_start_file_oserror_returns_false(
+        self,
+    ) -> None:
+        from app.spotty_bunny_about_info import open_path_in_text_editor
+
+        def start_file(_path: Path) -> None:
+            raise OSError("no handler")
+
+        with patch("app.spotty_bunny_about_info.sys.platform", "win32"):
+            self.assertFalse(
+                open_path_in_text_editor(
+                    Path("C:\\Users\\a\\bookmarks.json"), start_file=start_file
+                )
+            )
+
+    def test_handle_about_link_click_threads_start_file_on_windows(self) -> None:
+        from app.spotty_bunny_about_info import handle_about_link_click
+
+        calls: list[Path] = []
+
+        def start_file(path: Path) -> None:
+            calls.append(path)
+
+        with patch("app.spotty_bunny_about_info.sys.platform", "win32"):
+            self.assertTrue(
+                handle_about_link_click(
+                    "file:///C:/Users/a/bookmarks.json", start_file=start_file
+                )
+            )
+        self.assertEqual(calls, [Path("C:/Users/a/bookmarks.json")])
 
     def test_path_from_file_uri_decodes_path(self) -> None:
         from app.spotty_bunny_about_info import path_from_file_uri
@@ -743,6 +794,23 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             Path("/tmp/bookmarks.json"),
         )
         self.assertIsNone(path_from_file_uri("https://example.com/x"))
+
+    def test_path_from_file_uri_strips_leading_slash_before_a_drive_letter(
+        self,
+    ) -> None:
+        from app.spotty_bunny_about_info import path_from_file_uri
+
+        self.assertEqual(
+            path_from_file_uri("file:///C:/Users/a/bookmarks.json"),
+            Path("C:/Users/a/bookmarks.json"),
+        )
+        # A regular path segment that merely starts with a drive-letter-like
+        # pattern deeper in the tree (not right after the leading slash)
+        # keeps its slash.
+        self.assertEqual(
+            path_from_file_uri("file:///home/c/bookmarks.json"),
+            Path("/home/c/bookmarks.json"),
+        )
 
     def test_server_skew_message_local_names_restart_without_agent(self) -> None:
         from app.spotty_bunny_about_info import server_skew_message

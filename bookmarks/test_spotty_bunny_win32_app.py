@@ -273,13 +273,60 @@ class ShowHideToggleTests(SimpleTestCase):
         controller.dismiss_with_escape()
         self.assertFalse(controller.visible)
 
-    def test_show_about_stub_does_not_set_about_open(self) -> None:
-        # Regression: the stub must not set a real invariant (WM_ACTIVATE
-        # gating, dismiss_with_escape's precedence) with nothing but
-        # hide()/hide_about() ever able to clear it again.
+    def test_show_about_sets_about_open_and_creates_the_window(self) -> None:
         controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
         controller.show_about()
+        self.assertTrue(controller.about_open)
+        self.assertEqual(controller.about_hwnd, 99)
+        controller.create_about_window.assert_called_once()
+
+    def test_show_about_is_idempotent_while_already_open(self) -> None:
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
+        controller.show_about()
+        controller.show_about()
+        controller.create_about_window.assert_called_once()
+
+    def test_hide_about_destroys_the_window(self) -> None:
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
+        controller.destroy_about_window = MagicMock()
+        controller.show_about()
+        controller.hide_about()
+        controller.destroy_about_window.assert_called_once_with(99)
+        self.assertIsNone(controller.about_hwnd)
         self.assertFalse(controller.about_open)
+
+    def test_hide_about_without_a_window_is_a_no_op(self) -> None:
+        controller = _make_controller()
+        controller.destroy_about_window = MagicMock()
+        controller.hide_about()
+        controller.destroy_about_window.assert_not_called()
+        self.assertFalse(controller.about_open)
+
+    def test_show_about_raising_leaves_about_open_false(self) -> None:
+        """Regression: about_open must not be set before create_about_
+        window() actually returns -- a raise there must not permanently
+        suppress the overlay's auto-hide gate or future show_about() calls."""
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(side_effect=OSError("boom"))
+        with self.assertRaises(OSError):
+            controller.show_about()
+        self.assertFalse(controller.about_open)
+        self.assertIsNone(controller.about_hwnd)
+
+    def test_hide_about_raising_still_clears_the_flags(self) -> None:
+        """Regression: a raise from destroy_about_window() must not leave
+        about_open stuck True with a dead/absent hwnd."""
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
+        controller.destroy_about_window = MagicMock(side_effect=OSError("boom"))
+        controller.show_about()
+        with self.assertRaises(OSError):
+            controller.hide_about()
+        self.assertFalse(controller.about_open)
+        self.assertIsNone(controller.about_hwnd)
 
 
 class HandleEditKeydownTests(SimpleTestCase):
