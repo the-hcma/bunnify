@@ -19,6 +19,7 @@ from app.spotty_bunny_win32_app import (
     WM_APP_COMPLETIONS_READY,
     WM_APP_RESOLVE_READY,
     WM_APP_TOGGLE,
+    WM_APP_TRAY,
     SpottyBunnyWin32Controller,
     _handle_tray_message,
     _make_overlay_wndproc,
@@ -859,6 +860,30 @@ class OverlayWndProcTests(SimpleTestCase):
         self.assertFalse(controller.visible)
         wndproc(1, WM_APP_TOGGLE, 0, 0)
         self.assertTrue(controller.visible)
+
+    def test_wm_app_tray_routes_lparam_to_handle_tray_message(self) -> None:
+        # Regression: Shell_NotifyIcon's callback message delivers the
+        # mouse-event code in lparam, not wparam -- passing the wrong one
+        # (or deleting this branch) would leave the suite green while the
+        # tray icon's left/right-click silently stopped working.
+        controller = _make_controller()
+        controller.show_about = MagicMock()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, WM_APP_TRAY, 0, _FakeWin32Con.WM_LBUTTONUP)
+        controller.show_about.assert_called_once()
+
+    def test_wm_app_tray_right_click_shows_context_menu(self) -> None:
+        controller = _make_controller()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        with patch("app.spotty_bunny_win32_app._show_context_menu") as show_menu:
+            wndproc(1, WM_APP_TRAY, 0, _FakeWin32Con.WM_RBUTTONUP)
+        show_menu.assert_called_once()
 
     def test_unhandled_message_falls_through_to_def_window_proc(self) -> None:
         controller = _make_controller()
