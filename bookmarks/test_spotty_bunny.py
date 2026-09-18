@@ -274,7 +274,21 @@ class SpottyBunnyCliTests(SimpleTestCase):
         spotty.assert_called_once_with([])
 
     def test_install_subcommand_does_not_start_overlay(self) -> None:
-        with patch("app.spotty_bunny_agent.install_agent", return_value=0) as inst:
+        # sys.platform is pinned so this exercises the non-Windows dispatch
+        # branch regardless of which OS actually runs the test suite (the
+        # Windows counterpart below covers the win32 branch).
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.install_agent", return_value=0) as inst,
+        ):
+            self.assertEqual(main(["install"]), 0)
+        inst.assert_called_once_with()
+
+    def test_install_subcommand_dispatches_to_win32_agent_on_windows(self) -> None:
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch("app.spotty_bunny_agent_win32.install_agent", return_value=0) as inst,
+        ):
             self.assertEqual(main(["install"]), 0)
         inst.assert_called_once_with()
 
