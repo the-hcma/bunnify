@@ -76,19 +76,24 @@ def to_syslink_markup(text: str, links: tuple[tuple[str, str], ...]) -> str:
 
     A literal ``&``/``<``/``>`` in a path or URL can't otherwise break
     SysLink's own markup parser -- both the plain-text runs and the link
-    text are HTML-escaped; only the URL attribute value is left for
-    ``html.escape(..., quote=True)`` to quote-escape separately.
+    text are HTML-escaped, but with ``quote=False``: they're not inside
+    an attribute, and SysLink only decodes the named entities it
+    documents (``&amp;``/``&lt;``/``&gt;``/``&quot;``), not the numeric
+    character references (``&#x27;``) ``html.escape``'s default
+    ``quote=True`` would emit for a literal apostrophe or quote. Only
+    the ``HREF`` attribute value is quote-escaped.
     """
     parts: list[str] = []
     cursor = 0
     for start, length, url in about_link_spans(text, links):
-        parts.append(html.escape(text[cursor:start]))
+        parts.append(html.escape(text[cursor:start], quote=False))
         link_text = text[start : start + length]
         parts.append(
-            f'<A HREF="{html.escape(url, quote=True)}">{html.escape(link_text)}</A>'
+            f'<A HREF="{html.escape(url, quote=True)}">'
+            f"{html.escape(link_text, quote=False)}</A>"
         )
         cursor = start + length
-    parts.append(html.escape(text[cursor:]))
+    parts.append(html.escape(text[cursor:], quote=False))
     return "".join(parts)
 
 

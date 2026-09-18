@@ -64,6 +64,20 @@ class ToSyslinkMarkupTests(SimpleTestCase):
         self.assertIn("a &amp; b", markup)
         self.assertNotIn("a & b", markup)
 
+    def test_apostrophe_in_plain_text_is_not_numeric_escaped(self) -> None:
+        """Regression: html.escape's default quote=True would emit &#x27;,
+        which SysLink's markup parser (named entities only) doesn't decode."""
+        markup = to_syslink_markup("GitHub's thehcma", ())
+        self.assertEqual(markup, "GitHub's thehcma")
+        self.assertNotIn("&#x27;", markup)
+
+    def test_apostrophe_in_link_text_is_not_numeric_escaped(self) -> None:
+        markup = to_syslink_markup(
+            "click's here", (("click's here", "https://example.com"),)
+        )
+        self.assertNotIn("&#x27;", markup)
+        self.assertIn(">click's here</A>", markup)
+
     def test_escapes_special_characters_inside_link_text(self) -> None:
         markup = to_syslink_markup("<link>", (("<link>", "https://example.com"),))
         self.assertIn("&lt;link&gt;", markup)
@@ -71,6 +85,31 @@ class ToSyslinkMarkupTests(SimpleTestCase):
 
     def test_no_links_returns_fully_escaped_text(self) -> None:
         self.assertEqual(to_syslink_markup("plain text", ()), "plain text")
+
+
+class WindowsApiConstantsTests(SimpleTestCase):
+    """Pins the commctrl.h literal values directly -- the behavioral tests
+    elsewhere in this file compare against these same module constants,
+    so they'd stay green even if a regression reverted one of these to
+    a previously-wrong value (e.g. _ICC_LINK_CLASS back to
+    ICC_INTERNET_CLASSES, or _NM_RETURN back to NM_DBLCLK's -3)."""
+
+    def test_notification_codes(self) -> None:
+        from app.spotty_bunny_about_win32 import _NM_CLICK, _NM_DBLCLK, _NM_RETURN
+
+        self.assertEqual(_NM_CLICK, -2)
+        self.assertEqual(_NM_DBLCLK, -3)
+        self.assertEqual(_NM_RETURN, -4)
+
+    def test_icc_link_class(self) -> None:
+        from app.spotty_bunny_about_win32 import _ICC_LINK_CLASS
+
+        self.assertEqual(_ICC_LINK_CLASS, 0x00008000)
+
+    def test_lm_getitem(self) -> None:
+        from app.spotty_bunny_about_win32 import _LM_GETITEM
+
+        self.assertEqual(_LM_GETITEM, 0x0703)
 
 
 class UrlFromNotifyTests(SimpleTestCase):
@@ -198,6 +237,34 @@ class AboutWndProcTests(SimpleTestCase):
             result = wndproc(123, win32con.WM_NOTIFY, 0, ctypes.addressof(link))
         handle.assert_called_once_with("https://example.com")
         self.assertEqual(result, 0)
+
+    def test_wm_notify_falls_back_to_lm_getitem_through_the_full_wndproc(
+        self,
+    ) -> None:
+        """Pins the wndproc -> win32gui plumbing for the LM_GETITEM
+        fallback: dropping _url_from_notify's win32gui=win32gui argument,
+        or the SendMessage round-trip itself, must fail this test even
+        though the szUrl-populated tests above stay green either way."""
+        from app.spotty_bunny_about_win32 import _LITEM, _LM_GETITEM
+
+        win32con = self._fake_win32con()
+        win32gui = MagicMock()
+
+        def fake_send_message(_hwnd_from, msg, _wparam, lparam) -> int:
+            self.assertEqual(msg, _LM_GETITEM)
+            ctypes.cast(lparam, ctypes.POINTER(_LITEM))[
+                0
+            ].szUrl = "https://example.com/fallback"
+            return 1
+
+        win32gui.SendMessage.side_effect = fake_send_message
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        link = _NMLINK()
+        link.hdr.code = _NM_CLICK
+        link.item.szUrl = ""
+        with patch("app.spotty_bunny_about_win32._handle_link_click") as handle:
+            wndproc(123, win32con.WM_NOTIFY, 0, ctypes.addressof(link))
+        handle.assert_called_once_with("https://example.com/fallback")
 
     def test_wm_notify_for_unrelated_code_does_not_dispatch(self) -> None:
         win32con = self._fake_win32con()
@@ -599,3 +666,6 @@ class InitSyslinkClassTests(SimpleTestCase):
         (icc_ptr,) = windll.comctl32.InitCommonControlsEx.call_args.args
         icc = icc_ptr._obj
         self.assertEqual(icc.dwICC, _ICC_LINK_CLASS)
+        # Also pinned against the commctrl.h literal (0x00008000, i.e.
+        # ICC_LINK_CLASS) -- see WindowsApiConstantsTests.
+        self.assertEqual(icc.dwICC, 0x00008000)
