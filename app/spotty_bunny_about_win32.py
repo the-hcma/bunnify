@@ -66,6 +66,9 @@ _ICC_LINK_CLASS = 0x00008000
 _NM_CLICK = -2
 _NM_DBLCLK = -3
 _NM_RETURN = -4
+_LIF_ITEMINDEX = 0x00000001
+_LIF_URL = 0x00000004
+_LM_GETITEM = 0x0400 + 0x0303  # WM_USER + 0x0303 (commctrl.h)
 
 
 def to_syslink_markup(text: str, links: tuple[tuple[str, str], ...]) -> str:
@@ -280,19 +283,36 @@ def _handle_link_click(
         logger.warning("could not open About link: %s", url)
 
 
-def _url_from_notify(lparam: int) -> str | None:
+def _url_from_notify(lparam: int, *, win32gui=None) -> str | None:
     """Extract a ``SysLink``'s clicked URL from a ``WM_NOTIFY`` lParam.
 
     None when *lparam* isn't a link-click notification (``NM_CLICK`` /
     ``NM_RETURN``) -- every other ``WM_NOTIFY`` reuses the same ``NMHDR``
     prefix, so the header is read first to check ``code`` before treating
     the payload as an ``NMLINK``.
+
+    The documented MSDN ``SysLink`` sample reads ``item.szUrl`` straight
+    off the ``NMLINK`` the notification already carries; some other
+    references claim ``szUrl``/``szID`` are left unfilled and that a
+    ``LM_GETITEM`` round-trip (via ``item.iLink``) is required instead.
+    Unverifiable without a real Windows machine either way, so this
+    tries the direct read first and only falls back to ``LM_GETITEM``
+    when it comes back empty -- correct (and a no-op) if the direct
+    read already works, and a real fallback if it doesn't.
     """
     header = ctypes.cast(lparam, ctypes.POINTER(_NMHDR))[0]
     if header.code not in (_NM_CLICK, _NM_RETURN):
         return None
     link = ctypes.cast(lparam, ctypes.POINTER(_NMLINK))[0]
-    return link.item.szUrl
+    if link.item.szUrl:
+        return link.item.szUrl
+    if win32gui is None:
+        return None
+    item = _LITEM()
+    item.mask = _LIF_ITEMINDEX | _LIF_URL
+    item.iLink = link.item.iLink
+    win32gui.SendMessage(header.hwndFrom, _LM_GETITEM, 0, ctypes.addressof(item))
+    return item.szUrl or None
 
 
 def _init_syslink_class() -> None:
@@ -411,7 +431,7 @@ def _register_about_class(
 def _make_about_wndproc(*, win32gui, win32con):
     def _wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
         if msg == win32con.WM_NOTIFY:
-            url = _url_from_notify(lparam)
+            url = _url_from_notify(lparam, win32gui=win32gui)
             if url is not None:
                 _handle_link_click(url)
             return 0
@@ -421,6 +441,16 @@ def _make_about_wndproc(*, win32gui, win32con):
         if msg == win32con.WM_ACTIVATE and wparam == win32con.WA_INACTIVE:
             _hide_current_about()
             return 0
+        if msg == win32con.WM_DESTROY:
+            # Any destruction not routed through hide_about() (Alt+F4 ->
+            # WM_CLOSE -> DefWindowProc's default WM_DESTROY, since this
+            # class doesn't set CS_NOCLOSE) must still sync the
+            # controller's flags -- otherwise about_open stays True with
+            # a dead hwnd, permanently blocking every later show_about()
+            # and the overlay's own WM_ACTIVATE auto-hide gate. A no-op
+            # when hide_about() already cleared them.
+            _clear_current_about_flags()
+            return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
 
     return _wndproc
@@ -429,6 +459,12 @@ def _make_about_wndproc(*, win32gui, win32con):
 def _hide_current_about() -> None:
     if _about_wndproc_controller is not None:
         _about_wndproc_controller.hide_about()
+
+
+def _clear_current_about_flags() -> None:
+    if _about_wndproc_controller is not None:
+        _about_wndproc_controller.about_hwnd = None
+        _about_wndproc_controller.about_open = False
 
 
 class _INITCOMMONCONTROLSEX(ctypes.Structure):

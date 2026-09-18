@@ -96,6 +96,35 @@ class UrlFromNotifyTests(SimpleTestCase):
         link.item.szUrl = "https://example.com"
         self.assertIsNone(_url_from_notify(ctypes.addressof(link)))
 
+    def test_falls_back_to_lm_getitem_when_szurl_is_empty(self) -> None:
+        from app.spotty_bunny_about_win32 import _LITEM, _LM_GETITEM
+
+        link = _NMLINK()
+        link.hdr.code = _NM_CLICK
+        link.item.iLink = 2
+        link.item.szUrl = ""
+
+        def fake_send_message(_hwnd_from, msg, _wparam, lparam) -> int:
+            self.assertEqual(msg, _LM_GETITEM)
+            item_ptr = ctypes.cast(lparam, ctypes.POINTER(_LITEM))
+            self.assertEqual(item_ptr[0].iLink, 2)
+            item_ptr[0].szUrl = "https://example.com/from-lm-getitem"
+            return 1
+
+        win32gui = MagicMock()
+        win32gui.SendMessage.side_effect = fake_send_message
+
+        self.assertEqual(
+            _url_from_notify(ctypes.addressof(link), win32gui=win32gui),
+            "https://example.com/from-lm-getitem",
+        )
+
+    def test_returns_none_when_szurl_empty_and_no_win32gui_given(self) -> None:
+        link = _NMLINK()
+        link.hdr.code = _NM_CLICK
+        link.item.szUrl = ""
+        self.assertIsNone(_url_from_notify(ctypes.addressof(link)))
+
 
 class HandleLinkClickTests(SimpleTestCase):
     def test_local_file_is_opened_via_handle_about_link_click(self) -> None:
@@ -155,6 +184,7 @@ class AboutWndProcTests(SimpleTestCase):
         con.VK_ESCAPE = 0x1B
         con.WM_ACTIVATE = 0x0006
         con.WA_INACTIVE = 0
+        con.WM_DESTROY = 0x0002
         return con
 
     def test_wm_notify_link_click_dispatches_to_handle_link_click(self) -> None:
@@ -231,6 +261,37 @@ class AboutWndProcTests(SimpleTestCase):
         wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
         result = wndproc(123, 0x9999, 0, 0)
         self.assertEqual(result, 42)
+
+    def test_wm_destroy_syncs_flags_when_closed_outside_hide_about(self) -> None:
+        """Regression: Alt+F4 -> WM_CLOSE -> DefWindowProc's default
+        WM_DESTROY (this class has no CS_NOCLOSE) must still clear the
+        controller's flags, not just the hide_about()-initiated path."""
+        controller = MagicMock()
+        controller.about_open = True
+        controller.about_hwnd = 123
+        win32con = self._fake_win32con()
+        win32gui = MagicMock()
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        with patch(
+            "app.spotty_bunny_about_win32._about_wndproc_controller", controller
+        ):
+            wndproc(123, win32con.WM_DESTROY, 0, 0)
+        self.assertFalse(controller.about_open)
+        self.assertIsNone(controller.about_hwnd)
+
+    def test_wm_destroy_is_a_no_op_when_flags_already_cleared(self) -> None:
+        controller = MagicMock()
+        controller.about_open = False
+        controller.about_hwnd = None
+        win32con = self._fake_win32con()
+        win32gui = MagicMock()
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        with patch(
+            "app.spotty_bunny_about_win32._about_wndproc_controller", controller
+        ):
+            wndproc(123, win32con.WM_DESTROY, 0, 0)
+        self.assertFalse(controller.about_open)
+        self.assertIsNone(controller.about_hwnd)
 
 
 class RegisterAboutClassTests(SimpleTestCase):
@@ -449,6 +510,45 @@ class BuildAboutWindowTests(SimpleTestCase):
 
         self.assertEqual(len(created), 7)
         self.assertEqual(created[6]["text"], "Update available: 2.0.0")
+
+    def test_adds_a_skew_row_when_self_stale(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+        from app.spotty_bunny_about_win32 import build_about_window
+        from app.spotty_bunny_update import UpdateStatus
+
+        win32gui, win32con, win32api, created = self._fake_win32()
+        runtime = _about_runtime(self_stale=True)
+        with (
+            patch("app.spotty_bunny_about_win32._init_syslink_class"),
+            patch(
+                "app.spotty_bunny_about_win32.load_about_runtime_info",
+                return_value=runtime,
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.read_cached_update_status",
+                return_value=UpdateStatus(
+                    checked_at=0.0, current="1.0.0", latest=None, outdated=False
+                ),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.get_build_info",
+                return_value=("1.2.3", "abc1234"),
+            ),
+        ):
+            build_about_window(
+                MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
+            )
+
+        self.assertEqual(len(created), 7)
+        self.assertEqual(created[6]["text"], server_skew_message(runtime))
+
+    def test_shows_and_focuses_the_window(self) -> None:
+        win32gui, win32con, win32api, created = self._fake_win32()
+        hwnd = self._build(win32gui, win32con, win32api)
+
+        win32gui.ShowWindow.assert_called_once_with(hwnd, win32con.SW_SHOWNORMAL)
+        win32gui.SetForegroundWindow.assert_called_once_with(hwnd)
+        win32gui.SetFocus.assert_called_once_with(hwnd)
 
     def test_class_registration_is_memoized_across_two_calls(self) -> None:
         win32gui, win32con, win32api, _created = self._fake_win32()
