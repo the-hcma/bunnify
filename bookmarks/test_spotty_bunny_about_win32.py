@@ -295,15 +295,12 @@ class BuildAboutWindowTests(SimpleTestCase):
         self._about_win32 = about_win32
         self._previous_registered = about_win32._about_class_registered
         self._previous_controller = about_win32._about_wndproc_controller
-        self._previous_font = about_win32._title_font
         about_win32._about_class_registered = False
         about_win32._about_wndproc_controller = None
-        about_win32._title_font = None
 
     def tearDown(self) -> None:
         self._about_win32._about_class_registered = self._previous_registered
         self._about_win32._about_wndproc_controller = self._previous_controller
-        self._about_win32._title_font = self._previous_font
 
     def _fake_win32(
         self,
@@ -453,7 +450,7 @@ class BuildAboutWindowTests(SimpleTestCase):
         self.assertEqual(len(created), 7)
         self.assertEqual(created[6]["text"], "Update available: 2.0.0")
 
-    def test_registration_and_bold_font_are_memoized_across_two_calls(self) -> None:
+    def test_class_registration_is_memoized_across_two_calls(self) -> None:
         win32gui, win32con, win32api, _created = self._fake_win32()
         self._build(win32gui, win32con, win32api)
         win32gui2, win32con2, win32api2, _created2 = self._fake_win32()
@@ -461,5 +458,44 @@ class BuildAboutWindowTests(SimpleTestCase):
 
         win32gui.RegisterClass.assert_called_once()
         win32gui2.RegisterClass.assert_not_called()
-        win32gui.CreateFont.assert_called_once()
-        win32gui2.CreateFont.assert_not_called()
+
+    def test_calls_init_syslink_class(self) -> None:
+        from app.spotty_bunny_about_win32 import build_about_window
+        from app.spotty_bunny_update import UpdateStatus
+
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        with (
+            patch("app.spotty_bunny_about_win32._init_syslink_class") as init,
+            patch(
+                "app.spotty_bunny_about_win32.load_about_runtime_info",
+                return_value=_about_runtime(),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.read_cached_update_status",
+                return_value=UpdateStatus(
+                    checked_at=0.0, current="1.0.0", latest=None, outdated=False
+                ),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.get_build_info",
+                return_value=("1.2.3", "abc1234"),
+            ),
+        ):
+            build_about_window(
+                MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
+            )
+        init.assert_called_once()
+
+
+class InitSyslinkClassTests(SimpleTestCase):
+    def test_requests_the_link_common_control_class(self) -> None:
+        from app.spotty_bunny_about_win32 import _ICC_LINK_CLASS, _init_syslink_class
+
+        windll = MagicMock()
+        with patch("ctypes.windll", windll, create=True):
+            _init_syslink_class()
+
+        windll.comctl32.InitCommonControlsEx.assert_called_once()
+        (icc_ptr,) = windll.comctl32.InitCommonControlsEx.call_args.args
+        icc = icc_ptr._obj
+        self.assertEqual(icc.dwICC, _ICC_LINK_CLASS)

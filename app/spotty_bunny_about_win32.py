@@ -50,15 +50,22 @@ ABOUT_WINDOW_CLASS = "BunnifySpottyBunnyAbout"
 ABOUT_WIDTH = 440
 ABOUT_PAD = 12
 ABOUT_ROW_GAP = 6
+# ABOUT_SUMMARY_WIN32 wraps to ~5-6 lines inside inner_width at the
+# default GUI font (~16px/line) -- tall enough for the whole paragraph
+# to render with no scrolling/clipping.
+ABOUT_SUMMARY_HEIGHT = 108
 # about_details_text_and_links() emits 6-7 lines (Repository/License/
-# Bookmarks/GitHub/server/Server build); tall enough for all of them to
-# wrap inside inner_width at the default GUI font, with no scrolling.
+# Bookmarks/GitHub/server/Server build); same ~16px/line basis.
 ABOUT_DETAILS_HEIGHT = 112
+# server_skew_message()'s longest (self-stale) sentence wraps to ~3
+# lines at this width.
+ABOUT_SKEW_HEIGHT = 56
 
 _SYSLINK_CLASS = "SysLink"
 _ICC_LINK_CLASS = 0x00008000
 _NM_CLICK = -2
-_NM_RETURN = -3
+_NM_DBLCLK = -3
+_NM_RETURN = -4
 
 
 def to_syslink_markup(text: str, links: tuple[tuple[str, str], ...]) -> str:
@@ -124,18 +131,17 @@ def build_about_window(
                 height=24,
                 win32gui=win32gui,
                 win32con=win32con,
-                bold=True,
             ),
         ),
         (
-            54,
+            ABOUT_SUMMARY_HEIGHT,
             lambda hwnd, y: _create_static(
                 hwnd,
                 ABOUT_SUMMARY_WIN32,
                 x=ABOUT_PAD,
                 y=y,
                 width=inner_width,
-                height=54,
+                height=ABOUT_SUMMARY_HEIGHT,
                 win32gui=win32gui,
                 win32con=win32con,
             ),
@@ -201,14 +207,14 @@ def build_about_window(
     if skew_text is not None:
         rows.append(
             (
-                36,
+                ABOUT_SKEW_HEIGHT,
                 lambda hwnd, y: _create_static(
                     hwnd,
                     skew_text,
                     x=ABOUT_PAD,
                     y=y,
                     width=inner_width,
-                    height=36,
+                    height=ABOUT_SKEW_HEIGHT,
                     win32gui=win32gui,
                     win32con=win32con,
                 ),
@@ -310,10 +316,19 @@ def _create_static(
     height: int,
     win32gui,
     win32con,
-    bold: bool = False,
 ) -> int:
+    """Create a plain ``STATIC`` label.
+
+    No bold title font: pywin32's real font-creation API for a raw
+    ``win32gui``-only window (as opposed to ``win32ui``'s dict-based
+    ``CreateFont``, already used by ``spotty_bunny_icon_win32.py`` for
+    the tray icon's glyph) isn't something that can be confirmed
+    without a real Windows machine, and getting it wrong would raise
+    out of every ``build_about_window()`` call -- the whole About
+    popup failing to appear is a worse outcome than a plain title.
+    """
     style = win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT
-    child = win32gui.CreateWindowEx(
+    return win32gui.CreateWindowEx(
         0,
         "STATIC",
         text,
@@ -327,32 +342,6 @@ def _create_static(
         win32gui.GetModuleHandle(None),
         None,
     )
-    if bold:
-        win32gui.SendMessage(
-            child, win32con.WM_SETFONT, _bold_title_font(win32gui, win32con), True
-        )
-    return child
-
-
-_title_font: int | None = None
-
-
-def _bold_title_font(win32gui, win32con) -> int:
-    """Return a shared bold title font, created once per process.
-
-    Not deleted on About-window teardown -- created at most once per
-    process (memoized here, same as :func:`_register_about_class`), not
-    once per ``show_about()``, so there's nothing to leak across repeat
-    opens.
-    """
-    global _title_font
-    font = _title_font
-    if font is None:
-        font = win32gui.CreateFont(
-            (18, 0, 0, 0, win32con.FW_BOLD, 0, 0, 0, 0, 0, 0, 0, 0, "")
-        )
-        _title_font = font
-    return font
 
 
 def _create_syslink(
