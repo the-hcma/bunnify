@@ -397,6 +397,20 @@ class _CapturingIo:
 
 
 class SubmitQueryCancellationTests(SimpleTestCase):
+    def test_empty_field_return_dismisses_without_resolving(self) -> None:
+        # No existing test reaches this branch without either a non-empty
+        # field or a selected completion row -- without it, deleting the
+        # `if not query: self.hide(); return` guard would send an empty
+        # query through lookup_resolved_url's non-strict fallback instead.
+        controller = _make_controller()
+        controller.show()
+        controller.set_field_text("")
+        open_url_fn = MagicMock()
+        controller._open_url_fn = open_url_fn
+        controller.handle_edit_keydown(VK_RETURN)
+        self.assertFalse(controller.visible)
+        open_url_fn.assert_not_called()
+
     def test_hide_before_resolve_completes_skips_opener_and_appender(self) -> None:
         # Regression: hide()'s _resolve_seq += 1 is the only thing stopping
         # a resolve that finishes after hide() from opening a browser and
