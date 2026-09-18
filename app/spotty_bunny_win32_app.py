@@ -117,6 +117,8 @@ UNINSTALL_INFORMATIVE_WIN32 = (
     "Bookmarks and config.toml are kept."
 )
 
+_LBN_SELCHANGE = 1  # winuser.h: fired when a LISTBOX's selection changes.
+
 
 def _selector_for_vk(vk_code: int) -> str | None:
     """Map an Edit-control keydown to the Cocoa-selector-name strings that
@@ -188,6 +190,7 @@ class SpottyBunnyWin32Controller:
         self._left_vk: int | None = None
         self._right_vk: int | None = None
         self.request_quit: Callable[[], None] = lambda: None
+        self.focus_field: Callable[[], None] = lambda: None
 
     # -- show/hide/toggle --------------------------------------------------
 
@@ -348,6 +351,27 @@ class SpottyBunnyWin32Controller:
             self.set_field_text(text)
         finally:
             self._applying_completion = False
+
+    def handle_completion_selected(self, index: int) -> None:
+        """A mouse click selected LISTBOX row *index* (LBN_SELCHANGE).
+
+        Clicking a Windows LISTBOX gives it keyboard focus as a side effect
+        of the click itself -- without explicitly focusing the field back,
+        every subsequent keystroke (including Escape) would go to the
+        listbox instead of the subclassed Edit control, leaving the
+        overlay with no way to dismiss it from the keyboard.
+        """
+        if index < 0 or index >= len(self._completion_rows):
+            self.focus_field()
+            return
+        self._completion_index = index
+        self.set_completion_index(index)
+        if not completion_browse_all(self._completion_prefix):
+            row = self._completion_rows[index]
+            self._apply_field_text_from_completion(
+                apply_completion(self._completion_prefix, row)
+            )
+        self.focus_field()
 
     def handle_field_changed(self) -> None:
         """Drop stale completion rows once the field no longer matches any
@@ -790,6 +814,7 @@ def _create_overlay_window(
             win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
 
     controller.set_window_visible = _set_window_visible
+    controller.focus_field = lambda: win32gui.SetFocus(edit_hwnd)
     _subclass_edit_control(edit_hwnd, controller, win32gui=win32gui, win32con=win32con)
     return hwnd
 
@@ -843,15 +868,18 @@ def _make_overlay_wndproc(
             if not controller.about_open:
                 controller.hide()
             return 0
-        if (
-            msg == win32con.WM_COMMAND
-            and ((wparam >> 16) & 0xFFFF) == win32con.EN_CHANGE
-        ):
-            # EN_CHANGE's notification code (0x0300) doesn't overlap the
-            # LISTBOX's LBN_* codes, so no need to also check lparam's
-            # control HWND against edit_hwnd here.
-            controller.handle_field_changed()
-            return 0
+        if msg == win32con.WM_COMMAND:
+            # EN_CHANGE's (0x0300) and LBN_SELCHANGE's (1) notification
+            # codes don't overlap, so no need to also check lparam's
+            # control HWND against a specific edit/listbox handle here.
+            notify_code = (wparam >> 16) & 0xFFFF
+            if notify_code == win32con.EN_CHANGE:
+                controller.handle_field_changed()
+                return 0
+            if notify_code == _LBN_SELCHANGE:
+                index = win32gui.SendMessage(lparam, win32con.LB_GETCURSEL, 0, 0)
+                controller.handle_completion_selected(index)
+                return 0
         if msg == win32con.WM_DESTROY:
             win32gui.PostQuitMessage(0)
             return 0

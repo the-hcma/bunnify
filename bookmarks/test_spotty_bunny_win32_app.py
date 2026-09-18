@@ -594,6 +594,93 @@ class MoveCompletionTests(SimpleTestCase):
         self.assertEqual(indices, [1])
 
 
+class HandleCompletionSelectedTests(SimpleTestCase):
+    def test_click_writes_row_into_field_and_refocuses(self) -> None:
+        # Regression: clicking a LISTBOX row gives it keyboard focus as a
+        # side effect of the click -- without explicitly refocusing the
+        # field, Escape/Return would go to the listbox instead from then on.
+        controller = _make_controller()
+        controller._completion_rows = [
+            CompletionRow("gh", "", -1),
+            CompletionRow("gcal", "", -1),
+        ]
+        controller._completion_prefix = "g"
+        focus_calls = 0
+
+        def _focus() -> None:
+            nonlocal focus_calls
+            focus_calls += 1
+
+        controller.focus_field = _focus
+        controller.handle_completion_selected(1)
+        self.assertEqual(controller.get_field_text(), "gcal")
+        self.assertEqual(controller._completion_index, 1)
+        self.assertEqual(focus_calls, 1)
+
+    def test_browse_all_click_does_not_touch_field(self) -> None:
+        controller = _make_controller()
+        controller._completion_rows = [CompletionRow("gh", "", 0)]
+        controller._completion_prefix = ""
+        controller.set_field_text("")
+        controller.handle_completion_selected(0)
+        self.assertEqual(controller.get_field_text(), "")
+        self.assertEqual(controller._completion_index, 0)
+
+    def test_out_of_range_index_still_refocuses(self) -> None:
+        controller = _make_controller()
+        controller._completion_rows = [CompletionRow("gh", "", 0)]
+        focus_calls = 0
+
+        def _focus() -> None:
+            nonlocal focus_calls
+            focus_calls += 1
+
+        controller.focus_field = _focus
+        controller.handle_completion_selected(-1)
+        self.assertEqual(focus_calls, 1)
+
+
+class HandleFieldChangedTests(SimpleTestCase):
+    def test_diverging_text_hides_stale_rows(self) -> None:
+        controller = _make_controller()
+        controller._completion_rows = [
+            CompletionRow("gh", "", -1),
+            CompletionRow("gcal", "", -1),
+        ]
+        controller._completion_prefix = "g"
+        controller._completion_visible = True
+        controller.set_field_text("git")
+        rows_calls: list[list[CompletionRow]] = []
+        controller.set_completion_rows = rows_calls.append
+        controller.handle_field_changed()
+        self.assertEqual(controller._completion_rows, [])
+        self.assertFalse(controller._completion_visible)
+        self.assertEqual(rows_calls, [[]])
+
+    def test_text_still_matching_a_row_keeps_rows(self) -> None:
+        controller = _make_controller()
+        controller._completion_rows = [
+            CompletionRow("gh", "", -1),
+            CompletionRow("gcal", "", -1),
+        ]
+        controller._completion_prefix = "g"
+        controller._completion_visible = True
+        controller.set_field_text("gcal")
+        controller.handle_field_changed()
+        self.assertEqual(len(controller._completion_rows), 2)
+        self.assertTrue(controller._completion_visible)
+
+    def test_applying_completion_flag_suppresses_invalidation(self) -> None:
+        controller = _make_controller()
+        controller._completion_rows = [CompletionRow("gh", "", -1)]
+        controller._completion_prefix = "g"
+        controller._completion_visible = True
+        controller.set_field_text("unrelated-text")
+        controller._applying_completion = True
+        controller.handle_field_changed()
+        self.assertEqual(len(controller._completion_rows), 1)
+
+
 class ResolveAndSetChordVksTests(SimpleTestCase):
     def test_valid_choice_is_applied(self) -> None:
         controller = _make_controller()
@@ -653,6 +740,7 @@ class _FakeWin32Con:
     WA_INACTIVE = 0
     WM_COMMAND = 0x0111
     EN_CHANGE = 0x0300
+    LB_GETCURSEL = 0x0188
     WM_DESTROY = 0x0002
     WM_LBUTTONUP = 0x0202
     WM_RBUTTONUP = 0x0205
@@ -722,6 +810,22 @@ class OverlayWndProcTests(SimpleTestCase):
         wparam = (_FakeWin32Con.EN_CHANGE << 16) | 0
         wndproc(1, _FakeWin32Con.WM_COMMAND, wparam, 0)
         controller.handle_field_changed.assert_called_once()
+
+    def test_wm_command_lbn_selchange_reads_listbox_selection(self) -> None:
+        controller = _make_controller()
+        controller.handle_completion_selected = MagicMock()
+        win32gui = _make_fake_win32gui()
+        win32gui.SendMessage = MagicMock(return_value=1)
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        list_hwnd = 555
+        wparam = (1 << 16) | 0  # LBN_SELCHANGE == 1
+        wndproc(1, _FakeWin32Con.WM_COMMAND, wparam, list_hwnd)
+        win32gui.SendMessage.assert_called_once_with(
+            list_hwnd, _FakeWin32Con.LB_GETCURSEL, 0, 0
+        )
+        controller.handle_completion_selected.assert_called_once_with(1)
 
     def test_wm_destroy_posts_quit_message(self) -> None:
         controller = _make_controller()
