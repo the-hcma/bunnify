@@ -282,28 +282,18 @@ def pump_hook_messages() -> None:
     win32gui.PumpMessages()
 
 
-def run_console_listener() -> None:
-    """Manual smoke test: print to stdout on each chord, run until Ctrl+C.
-
-    Not wired into the ``spotty-bunny`` CLI yet (the tray/overlay UI,
-    https://github.com/the-hcma/bunnify/issues/426, owns that). Run
-    directly with ``python -m app.spotty_bunny_hook_win32`` on Windows to
-    confirm the hook fires before that UI lands.
+def install_console_quit_handler(thread_id: int) -> Callable[[], None]:
+    """Post ``WM_QUIT`` to *thread_id* on Ctrl+C; return an unregister callable.
 
     ``win32gui.PumpMessages()`` blocks inside ``GetMessage`` until a
-    ``WM_QUIT`` is posted to this thread's message queue. Ctrl+C in a
+    ``WM_QUIT`` is posted to the target thread's message queue. Ctrl+C in a
     console is a *console control event*, not a window message — Python's
-    SIGINT handler never runs while the thread is parked in that call, so
+    SIGINT handler never runs while a thread is parked in that call, so
     nothing would ever post ``WM_QUIT`` and Ctrl+C would appear to do
     nothing. ``SetConsoleCtrlHandler`` runs its callback on a separate OS
-    thread specifically so it can interrupt a blocked thread like this one;
-    the handler posts ``WM_QUIT`` to this thread by id, letting
-    ``pump_hook_messages()`` return and the ``finally`` below actually run.
+    thread specifically so it can interrupt a blocked thread like this one.
     """
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
-    main_thread_id = kernel32.GetCurrentThreadId()
-
     ctrl_handler_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
     kernel32.SetConsoleCtrlHandler.restype = wintypes.BOOL
     kernel32.SetConsoleCtrlHandler.argtypes = (ctrl_handler_type, wintypes.BOOL)
@@ -317,11 +307,30 @@ def run_console_listener() -> None:
             wintypes.WPARAM,
             wintypes.LPARAM,
         )
-        user32.PostThreadMessageW(main_thread_id, WM_QUIT, 0, 0)
+        user32.PostThreadMessageW(thread_id, WM_QUIT, 0, 0)
         return True
 
     ctrl_handler = ctrl_handler_type(_on_console_ctrl)
     kernel32.SetConsoleCtrlHandler(ctrl_handler, True)
+
+    def _unregister() -> None:
+        kernel32.SetConsoleCtrlHandler(ctrl_handler, False)
+
+    return _unregister
+
+
+def run_console_listener() -> None:
+    """Manual smoke test: print to stdout on each chord, run until Ctrl+C.
+
+    Not wired into the ``spotty-bunny`` CLI yet (the tray/overlay UI,
+    https://github.com/the-hcma/bunnify/issues/426, owns that). Run
+    directly with ``python -m app.spotty_bunny_hook_win32`` on Windows to
+    confirm the hook fires before that UI lands.
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+    main_thread_id = kernel32.GetCurrentThreadId()
+    unregister = install_console_quit_handler(main_thread_id)
 
     tracker = ChordTracker()
     hook = install_chord_hook(tracker, on_chord=lambda: print("chord!", flush=True))
@@ -329,7 +338,7 @@ def run_console_listener() -> None:
     try:
         pump_hook_messages()
     finally:
-        kernel32.SetConsoleCtrlHandler(ctrl_handler, False)
+        unregister()
         hook.uninstall()
 
 

@@ -74,7 +74,11 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.addCleanup(data_patch.stop)
 
     def tearDown(self) -> None:
-        for name in ("app.spotty_bunny_app", "app.spotty_bunny_cli"):
+        for name in (
+            "app.spotty_bunny_app",
+            "app.spotty_bunny_cli",
+            "app.spotty_bunny_win32_app",
+        ):
             logger = logging.getLogger(name)
             for handler in logger.handlers:
                 handler.close()
@@ -187,17 +191,69 @@ class SpottyBunnyCliTests(SimpleTestCase):
             self.assertEqual(main([]), 1)
         self.assertIn("only available on macOS", stderr.getvalue())
 
-    def test_windows_prints_not_yet_supported_hint(self) -> None:
+    def test_windows_dispatches_to_win32_app(self) -> None:
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_win32_app",
+                return_value=lambda: 0,
+            ),
+        ):
+            self.assertEqual(run_spotty_bunny(), 0)
+
+    def test_windows_missing_pywin32_prints_extra_hint(self) -> None:
+        def boom() -> int:
+            raise ImportError("No module named 'win32api'")
+
         stderr = StringIO()
         with (
             patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_win32_app",
+                side_effect=boom,
+            ),
             patch("app.spotty_bunny_cli.sys.stderr", stderr),
         ):
-            self.assertEqual(main([]), 1)
+            self.assertEqual(run_spotty_bunny(), 1)
         text = stderr.getvalue()
-        self.assertIn("Windows support is in progress", text)
-        self.assertIn("issues/410", text)
-        self.assertNotIn("only available on macOS", text)
+        self.assertIn("bunnify[windows]", text)
+        self.assertIn("--force", text)
+
+    def test_windows_hook_error_prints_hook_failed_message(self) -> None:
+        from app.spotty_bunny_cli import SpottyBunnyHookError
+
+        def boom() -> int:
+            raise SpottyBunnyHookError("nope")
+
+        stderr = StringIO()
+        with (
+            patch("app.spotty_bunny_cli.sys.platform", "win32"),
+            patch(
+                "app.spotty_bunny_cli._load_run_spotty_bunny_win32_app",
+                return_value=boom,
+            ),
+            patch("app.spotty_bunny_cli.sys.stderr", stderr),
+        ):
+            self.assertEqual(run_spotty_bunny(), 1)
+        self.assertIn("could not listen for the hotkey chord", stderr.getvalue())
+
+    def test_pid_tracking_runs_on_darwin_and_win32_not_elsewhere(self) -> None:
+        # write_spotty_bunny_pid is mocked throughout -- a real call would
+        # write to the developer's actual data dir (see issue #433).
+        for platform, should_track in (
+            ("darwin", True),
+            ("win32", True),
+            ("linux", False),
+        ):
+            with (
+                self.subTest(platform=platform),
+                patch("app.spotty_bunny_cli.sys.platform", platform),
+                patch("app.spotty_bunny_cli.run_spotty_bunny", return_value=0),
+                patch("app.spotty_bunny_cli.write_spotty_bunny_pid") as write_pid,
+                patch("app.spotty_bunny_cli.atexit.register"),
+            ):
+                self.assertEqual(main([]), 0)
+            self.assertEqual(write_pid.called, should_track)
 
     def test_spotty_bunny_shortcut_dispatches_extra_args(self) -> None:
         from app.cli import main as cli_main
@@ -3914,6 +3970,131 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         self.assertIn(
             "_resolve_configured_chord(controller)", check_event_tap_health_body
         )
+
+
+class SpottyBunnyWin32ProcessTests(SimpleTestCase):
+    """_win32_process_alive/_win32_terminate_pid/_process_exists (issue #431/#426).
+
+    ctypes.WinDLL only exists on real Windows, so a fake stands in here --
+    same recipe as test_spotty_bunny_hook_win32.py's install_chord_hook
+    tests.
+    """
+
+    def _fake_kernel32(self) -> MagicMock:
+        kernel32 = MagicMock()
+        kernel32.CloseHandle = MagicMock(return_value=True)
+        return kernel32
+
+    def test_process_alive_false_when_open_process_fails_not_access_denied(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with (
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("ctypes.get_last_error", return_value=87, create=True),
+        ):
+            self.assertFalse(_win32_process_alive(4242))
+
+    def test_process_alive_true_when_open_process_denied(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with (
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("ctypes.get_last_error", return_value=5, create=True),
+        ):
+            self.assertTrue(_win32_process_alive(4242))
+
+    def test_process_alive_true_when_exit_code_still_active(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 259  # STILL_ACTIVE
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertTrue(_win32_process_alive(4242))
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_process_alive_false_when_exit_code_not_still_active(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 0
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertFalse(_win32_process_alive(4242))
+
+    def test_terminate_pid_returns_false_and_does_not_call_terminate_when_denied(
+        self,
+    ) -> None:
+        from app.spotty_bunny_launch import _win32_terminate_pid
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        kernel32.TerminateProcess = MagicMock()
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertFalse(_win32_terminate_pid(4242))
+        kernel32.TerminateProcess.assert_not_called()
+
+    def test_terminate_pid_calls_terminate_process_and_returns_true(self) -> None:
+        from app.spotty_bunny_launch import _win32_terminate_pid
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+        kernel32.TerminateProcess = MagicMock(return_value=True)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertTrue(_win32_terminate_pid(4242))
+        kernel32.TerminateProcess.assert_called_once_with(99, 1)
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_process_exists_on_windows_never_calls_os_kill(self) -> None:
+        """Pins the regression this PR fixes: os.kill(pid, 0) on Windows
+        calls TerminateProcess(handle, 0), not a harmless probe."""
+        from app.spotty_bunny_launch import _process_exists
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _get_exit_code(_handle: int, out_ptr: object) -> bool:
+            out_ptr._obj.value = 259
+            return True
+
+        kernel32.GetExitCodeProcess = MagicMock(side_effect=_get_exit_code)
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("os.kill") as os_kill,
+        ):
+            self.assertTrue(_process_exists(4242))
+        os_kill.assert_not_called()
+
+    def test_terminate_pid_skips_wait_when_termination_not_issued(self) -> None:
+        """A denied TerminateProcess must not stall for the full timeout."""
+        from app.spotty_bunny_launch import _terminate_pid
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel32, create=True),
+            patch("app.spotty_bunny_launch._wait_for_exit") as wait_for_exit,
+        ):
+            _terminate_pid(4242)
+        wait_for_exit.assert_not_called()
 
 
 class SpottyBunnyResolveTests(SimpleTestCase):

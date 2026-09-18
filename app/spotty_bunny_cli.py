@@ -46,15 +46,29 @@ MACOS_EXTRA_HINT = f"""\
 
 NOT_MACOS_MESSAGE = f"{COMMAND_NAME}: this command is only available on macOS."
 
-WINDOWS_NOT_YET_SUPPORTED_MESSAGE = f"""\
-{COMMAND_NAME}: Windows support is in progress and not yet available.
+WINDOWS_EXTRA_HINT = f"""\
+{COMMAND_NAME}: pywin32 is required (optional extra 'windows').
 
-Track progress: https://github.com/the-hcma/bunnify/issues/410
+  pipx install --force 'bunnify[windows]'
+  # development checkout:
+  uv sync --extra windows
+"""
+
+
+WINDOWS_HOOK_FAILED_MESSAGE = f"""\
+{COMMAND_NAME}: could not listen for the hotkey chord.
+
+Check that no security software is blocking a low-level keyboard hook
+(WH_KEYBOARD_LL), then re-run.
 """
 
 
 class SpottyBunnyEventTapError(RuntimeError):
     """Raised when a listen-only Control chord tap cannot be created."""
+
+
+class SpottyBunnyHookError(RuntimeError):
+    """Raised when the Windows WH_KEYBOARD_LL chord hook cannot be created."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -137,11 +151,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{COMMAND_NAME}: logging to {active_log}", file=sys.stderr)
     else:
         print(f"{COMMAND_NAME}: logging to stderr only", file=sys.stderr)
-    # PID tracking is platform-agnostic (spotty_bunny_launch.py), but only
-    # gated on to a platform once that platform actually runs the app below
-    # — see run_spotty_bunny(). Extend this alongside the win32 branch there
-    # when https://github.com/the-hcma/bunnify/issues/426 lands.
-    if sys.platform == "darwin":
+    # PID tracking is platform-agnostic (spotty_bunny_launch.py).
+    if sys.platform in ("darwin", "win32"):
         write_spotty_bunny_pid(os.getpid())
         pid = os.getpid()
         atexit.register(lambda: clear_spotty_bunny_pid(only_pid=pid))
@@ -152,8 +163,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 def run_spotty_bunny() -> int:
     """Start Spotty Bunny, or exit with an install / permission hint."""
     if sys.platform == "win32":
-        print(WINDOWS_NOT_YET_SUPPORTED_MESSAGE, file=sys.stderr)
-        return 1
+        try:
+            run_win32_app = _load_run_spotty_bunny_win32_app()
+            return run_win32_app()
+        except ImportError:
+            logging.getLogger(__name__).exception("pywin32 import failed")
+            print(WINDOWS_EXTRA_HINT, file=sys.stderr)
+            return 1
+        except SpottyBunnyHookError:
+            logging.getLogger(__name__).exception("keyboard hook was not created")
+            print(WINDOWS_HOOK_FAILED_MESSAGE, file=sys.stderr)
+            return 1
     if sys.platform != "darwin":
         print(NOT_MACOS_MESSAGE, file=sys.stderr)
         return 1
@@ -203,7 +223,11 @@ def _configure_spotty_bunny_logging(log_level: str, log_file: Path) -> Path | No
     stream_handler.setFormatter(formatter)
     stream_handler.setLevel(level)
     handlers.append(stream_handler)
-    for name in ("app.spotty_bunny_app", "app.spotty_bunny_cli"):
+    for name in (
+        "app.spotty_bunny_app",
+        "app.spotty_bunny_cli",
+        "app.spotty_bunny_win32_app",
+    ):
         logger = logging.getLogger(name)
         for handler in logger.handlers:
             handler.close()
@@ -219,6 +243,12 @@ def _load_run_spotty_bunny_app() -> Callable[[], int]:
     from app.spotty_bunny_app import run_spotty_bunny_app
 
     return run_spotty_bunny_app
+
+
+def _load_run_spotty_bunny_win32_app() -> Callable[[], int]:
+    from app.spotty_bunny_win32_app import run_spotty_bunny_win32_app
+
+    return run_spotty_bunny_win32_app
 
 
 def _spotty_bunny_log_file(explicit: Path | None) -> Path:
