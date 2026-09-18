@@ -10,6 +10,7 @@ coming up.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -317,8 +318,15 @@ def _rollback_failed_install(
     """
     previous_runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
     stale_pid = previous_runtime[0] if previous_runtime is not None else None
-    stop_spotty_bunny(pid_dir=pid_dir)
-    clear_spotty_bunny_pid(pid_dir=pid_dir)
+    if stale_pid is not None and stale_pid != os.getpid():
+        # Never touch the pid file's own recorded process when it's *us*:
+        # install/upgrade is often menu-triggered from within the running
+        # overlay itself, and stop_spotty_bunny() would send this very
+        # process a TerminateProcess before install_agent's caller can
+        # print the failure message that led to this rollback in the
+        # first place.
+        stop_spotty_bunny(pid_dir=pid_dir)
+        clear_spotty_bunny_pid(pid_dir=pid_dir)
     if previous_xml is None:
         remove_task(schtasks=schtasks)
         return False

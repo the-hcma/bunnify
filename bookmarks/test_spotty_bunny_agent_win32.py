@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -432,6 +433,43 @@ class StatusAgentTests(SimpleTestCase):
                 platform="win32", print_fn=lambda _line: None, schtasks=fake
             )
         self.assertEqual(code, 1)
+
+
+class RollbackFailedInstallTests(SimpleTestCase):
+    def test_does_not_terminate_the_calling_process(self) -> None:
+        """Regression: install/upgrade is often menu-triggered from within
+        the running overlay itself, so the pid file's recorded pid can be
+        this very process -- stop_spotty_bunny()/clear_spotty_bunny_pid()
+        must be skipped rather than tearing down the caller mid-rollback."""
+        from app.spotty_bunny_agent_win32 import _rollback_failed_install
+
+        with (
+            patch(
+                "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                return_value=(os.getpid(), "test"),
+            ),
+            patch("app.spotty_bunny_agent_win32.stop_spotty_bunny") as stop,
+            patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid") as clear,
+        ):
+            _rollback_failed_install(None, pid_dir=None, schtasks=_FakeSchtasks())
+        stop.assert_not_called()
+        clear.assert_not_called()
+
+    def test_terminates_a_recorded_process_that_is_not_the_caller(self) -> None:
+        from app.spotty_bunny_agent_win32 import _rollback_failed_install
+
+        other_pid = os.getpid() + 1
+        with (
+            patch(
+                "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                return_value=(other_pid, "test"),
+            ),
+            patch("app.spotty_bunny_agent_win32.stop_spotty_bunny") as stop,
+            patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid") as clear,
+        ):
+            _rollback_failed_install(None, pid_dir=None, schtasks=_FakeSchtasks())
+        stop.assert_called_once_with(pid_dir=None)
+        clear.assert_called_once_with(pid_dir=None)
 
 
 class WaitForManagedOverlayTests(SimpleTestCase):

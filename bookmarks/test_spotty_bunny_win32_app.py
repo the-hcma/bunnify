@@ -126,6 +126,25 @@ class MenuDispatchTests(SimpleTestCase):
         self.assertTrue(any("failed" in s.lower() for s in statuses))
 
 
+class RefreshAgentInstalledTests(SimpleTestCase):
+    def test_sets_true_when_task_is_registered(self) -> None:
+        controller = _make_controller()
+        with patch(
+            "app.spotty_bunny_agent_win32.is_agent_installed", return_value=True
+        ):
+            controller.refresh_agent_installed()
+        self.assertTrue(controller._agent_installed)
+
+    def test_sets_false_when_task_is_not_registered(self) -> None:
+        controller = _make_controller()
+        controller._agent_installed = True
+        with patch(
+            "app.spotty_bunny_agent_win32.is_agent_installed", return_value=False
+        ):
+            controller.refresh_agent_installed()
+        self.assertFalse(controller._agent_installed)
+
+
 class CheckForUpdatesTests(SimpleTestCase):
     def test_outdated_transition_calls_set_icon_outdated(self) -> None:
         controller = _make_controller()
