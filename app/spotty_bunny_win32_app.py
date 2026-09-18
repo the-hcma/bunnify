@@ -165,6 +165,10 @@ class SpottyBunnyWin32Controller:
         self._completion_index = 0
         self._completion_visible = False
         self._completion_prefix = ""
+        # Guards handle_field_changed() against reacting to our own
+        # set_field_text() calls below (auto-insert, arrow-selection) --
+        # mirrors macOS's controlTextDidChange_/_applying_completion.
+        self._applying_completion = False
         self._resolve_seq = 0
         self._completion_seq = 0
         self._pending_resolves: dict[int, object] = {}
@@ -311,7 +315,7 @@ class SpottyBunnyWin32Controller:
         self._completion_index = 0
         if should_auto_insert_completion(self._completion_prefix, rows):
             applied = apply_completion(self.get_field_text(), rows[0])
-            self.set_field_text(applied)
+            self._apply_field_text_from_completion(applied)
         self._completion_visible = completion_table_should_show(
             self._completion_prefix, rows
         )
@@ -332,7 +336,40 @@ class SpottyBunnyWin32Controller:
         if completion_browse_all(self._completion_prefix):
             return
         row = self._completion_rows[self._completion_index]
-        self.set_field_text(apply_completion(self._completion_prefix, row))
+        self._apply_field_text_from_completion(
+            apply_completion(self._completion_prefix, row)
+        )
+
+    def _apply_field_text_from_completion(self, text: str) -> None:
+        """set_field_text(), without handle_field_changed() invalidating
+        the very completion rows this write is applying."""
+        self._applying_completion = True
+        try:
+            self.set_field_text(text)
+        finally:
+            self._applying_completion = False
+
+    def handle_field_changed(self) -> None:
+        """Drop stale completion rows once the field no longer matches any
+        of them (EN_CHANGE from the Edit control).
+
+        Without this, arrow-key navigation or Return after further typing
+        would keep acting on rows computed for a prefix the user has since
+        changed -- see app/spotty_bunny_app.py's controlTextDidChange_,
+        which this mirrors.
+        """
+        if self._applying_completion:
+            return
+        self.set_status_text("")
+        if not self._completion_rows:
+            return
+        text = self.get_field_text()
+        if any(
+            apply_completion(self._completion_prefix, row) == text
+            for row in self._completion_rows
+        ):
+            return
+        self._hide_completions()
 
     def _hide_completions(self) -> None:
         self._completion_rows = []
@@ -805,6 +842,15 @@ def _make_overlay_wndproc(
         if msg == win32con.WM_ACTIVATE and wparam == win32con.WA_INACTIVE:
             if not controller.about_open:
                 controller.hide()
+            return 0
+        if (
+            msg == win32con.WM_COMMAND
+            and ((wparam >> 16) & 0xFFFF) == win32con.EN_CHANGE
+        ):
+            # EN_CHANGE's notification code (0x0300) doesn't overlap the
+            # LISTBOX's LBN_* codes, so no need to also check lparam's
+            # control HWND against edit_hwnd here.
+            controller.handle_field_changed()
             return 0
         if msg == win32con.WM_DESTROY:
             win32gui.PostQuitMessage(0)

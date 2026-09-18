@@ -8,6 +8,8 @@ from app.spotty_bunny_complete import CompletionRow
 from app.spotty_bunny_io import ImmediateIo
 from app.spotty_bunny_menu import logo_menu_specs
 from app.spotty_bunny_win32_app import (
+    TIMER_ID_HEALTH,
+    TIMER_ID_UPDATE,
     VK_DOWN,
     VK_ESCAPE,
     VK_PRIOR,
@@ -18,7 +20,10 @@ from app.spotty_bunny_win32_app import (
     WM_APP_RESOLVE_READY,
     WM_APP_TOGGLE,
     SpottyBunnyWin32Controller,
+    _handle_tray_message,
+    _make_overlay_wndproc,
     _selector_for_vk,
+    _show_context_menu,
 )
 
 
@@ -141,6 +146,28 @@ class CheckForUpdatesTests(SimpleTestCase):
             patch("app.spotty_bunny_win32_app.summarize_update_check", return_value=""),
         ):
             controller.check_for_updates()
+        self.assertEqual(calls, [])
+
+    def test_failure_sets_status_and_leaves_icon_and_outdated_untouched(self) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        controller._outdated = False
+        calls: list[bool] = []
+        controller.set_icon_outdated = calls.append
+        statuses: list[str] = []
+        controller.set_status_text = statuses.append
+
+        def boom(**_kwargs: object) -> object:
+            raise ConnectionError("unreachable")
+
+        with patch(
+            "app.spotty_bunny_win32_app.refresh_update_status", side_effect=boom
+        ):
+            controller.check_for_updates()
+        # First call is CHECK_FOR_UPDATES_STATUS ("Checking..."); the second
+        # (final) one must be the failure message.
+        self.assertEqual(statuses[-1], "Could not check for updates.")
+        self.assertFalse(controller._outdated)
         self.assertEqual(calls, [])
 
 
@@ -398,6 +425,27 @@ class SubmitQueryCancellationTests(SimpleTestCase):
         open_url_fn.assert_not_called()
         append_history_fn.assert_not_called()
 
+    def test_second_return_while_resolving_does_not_queue_another_job(self) -> None:
+        # Regression: nothing previously asserted the _resolving re-entrancy
+        # guard, so a double-tap of Return could queue two resolves.
+        controller = _make_controller()
+        controller.set_field_text("gh")
+        io = _CapturingIo()
+        controller._io = io
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.lookup_resolved_url",
+                return_value="https://github.com",
+            ),
+            patch("app.spotty_bunny_win32_app.resolve_base_url", return_value="u"),
+        ):
+            controller.handle_edit_keydown(VK_RETURN)
+            self.assertEqual(len(io.jobs), 1)
+            resolve_seq_after_first = controller._resolve_seq
+            controller.handle_edit_keydown(VK_RETURN)
+        self.assertEqual(len(io.jobs), 1)
+        self.assertEqual(controller._resolve_seq, resolve_seq_after_first)
+
 
 class LoadCompleterAsyncTests(SimpleTestCase):
     """Exercises the real _load_completer_async, not the _make_controller stub."""
@@ -595,3 +643,169 @@ class CheckEventTapHealthTests(SimpleTestCase):
             controller.check_event_tap_health()
         resolve_vks.assert_called_once()
         reinstall.assert_called_once()
+
+
+class _FakeWin32Con:
+    """Real winuser.h values, hardcoded (win32con isn't importable off Windows)."""
+
+    WM_TIMER = 0x0113
+    WM_ACTIVATE = 0x0006
+    WA_INACTIVE = 0
+    WM_COMMAND = 0x0111
+    EN_CHANGE = 0x0300
+    WM_DESTROY = 0x0002
+    WM_LBUTTONUP = 0x0202
+    WM_RBUTTONUP = 0x0205
+    MF_STRING = 0x0000
+    TPM_LEFTALIGN = 0x0000
+    TPM_RETURNCMD = 0x0100
+
+
+def _make_fake_win32gui() -> MagicMock:
+    win32gui = MagicMock()
+    win32gui.DefWindowProc = MagicMock(return_value=0)
+    return win32gui
+
+
+class OverlayWndProcTests(SimpleTestCase):
+    def test_wm_timer_update_calls_check_for_updates(self) -> None:
+        controller = _make_controller()
+        controller.check_for_updates = MagicMock()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, _FakeWin32Con.WM_TIMER, TIMER_ID_UPDATE, 0)
+        controller.check_for_updates.assert_called_once()
+
+    def test_wm_timer_health_calls_check_event_tap_health(self) -> None:
+        controller = _make_controller()
+        controller.check_event_tap_health = MagicMock()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, _FakeWin32Con.WM_TIMER, TIMER_ID_HEALTH, 0)
+        controller.check_event_tap_health.assert_called_once()
+
+    def test_wm_activate_inactive_hides_when_about_not_open(self) -> None:
+        controller = _make_controller()
+        controller.about_open = False
+        controller.hide = MagicMock()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, _FakeWin32Con.WM_ACTIVATE, _FakeWin32Con.WA_INACTIVE, 0)
+        controller.hide.assert_called_once()
+
+    def test_wm_activate_inactive_leaves_overlay_up_when_about_open(self) -> None:
+        # Pins the exact invariant show_about()'s stub docstring says it
+        # deliberately avoids breaking.
+        controller = _make_controller()
+        controller.about_open = True
+        controller.hide = MagicMock()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, _FakeWin32Con.WM_ACTIVATE, _FakeWin32Con.WA_INACTIVE, 0)
+        controller.hide.assert_not_called()
+
+    def test_wm_command_en_change_calls_handle_field_changed(self) -> None:
+        controller = _make_controller()
+        controller.handle_field_changed = MagicMock()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wparam = (_FakeWin32Con.EN_CHANGE << 16) | 0
+        wndproc(1, _FakeWin32Con.WM_COMMAND, wparam, 0)
+        controller.handle_field_changed.assert_called_once()
+
+    def test_wm_destroy_posts_quit_message(self) -> None:
+        controller = _make_controller()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, _FakeWin32Con.WM_DESTROY, 0, 0)
+        win32gui.PostQuitMessage.assert_called_once_with(0)
+
+    def test_app_toggle_message_routes_through_handle_app_message(self) -> None:
+        controller = _make_controller()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        self.assertFalse(controller.visible)
+        wndproc(1, WM_APP_TOGGLE, 0, 0)
+        self.assertTrue(controller.visible)
+
+    def test_unhandled_message_falls_through_to_def_window_proc(self) -> None:
+        controller = _make_controller()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, 0x9999, 2, 3)
+        win32gui.DefWindowProc.assert_called_once_with(1, 0x9999, 2, 3)
+
+
+class TrayMessageTests(SimpleTestCase):
+    def test_left_click_calls_show_about(self) -> None:
+        controller = _make_controller()
+        controller.show_about = MagicMock()
+        win32gui = _make_fake_win32gui()
+        _handle_tray_message(
+            controller,
+            _FakeWin32Con.WM_LBUTTONUP,
+            win32gui=win32gui,
+            win32con=_FakeWin32Con,
+        )
+        controller.show_about.assert_called_once()
+
+    def test_right_click_shows_context_menu(self) -> None:
+        controller = _make_controller()
+        with patch("app.spotty_bunny_win32_app._show_context_menu") as show_menu:
+            _handle_tray_message(
+                controller,
+                _FakeWin32Con.WM_RBUTTONUP,
+                win32gui=_make_fake_win32gui(),
+                win32con=_FakeWin32Con,
+            )
+        show_menu.assert_called_once()
+
+
+class ShowContextMenuTests(SimpleTestCase):
+    def test_selected_action_is_dispatched(self) -> None:
+        controller = _make_controller()
+        controller.hwnd = 42
+        controller.dispatch_menu_action = MagicMock()
+        win32gui = _make_fake_win32gui()
+        win32gui.CreatePopupMenu = MagicMock(return_value=7)
+        win32gui.GetCursorPos = MagicMock(return_value=(10, 20))
+        # First appended item (index 0) is returned as "selected".
+        win32gui.TrackPopupMenu = MagicMock(return_value=1000)
+        with patch(
+            "app.spotty_bunny_win32_app.logo_menu_specs",
+            return_value=(("Quit", "quitSpottyBunny:"),),
+        ):
+            _show_context_menu(controller, win32gui=win32gui, win32con=_FakeWin32Con)
+        controller.dispatch_menu_action.assert_called_once_with("quitSpottyBunny:")
+        win32gui.DestroyMenu.assert_called_once_with(7)
+
+    def test_dismissed_menu_dispatches_nothing(self) -> None:
+        controller = _make_controller()
+        controller.hwnd = 42
+        controller.dispatch_menu_action = MagicMock()
+        win32gui = _make_fake_win32gui()
+        win32gui.CreatePopupMenu = MagicMock(return_value=7)
+        win32gui.GetCursorPos = MagicMock(return_value=(10, 20))
+        win32gui.TrackPopupMenu = MagicMock(return_value=0)
+        with patch(
+            "app.spotty_bunny_win32_app.logo_menu_specs",
+            return_value=(("Quit", "quitSpottyBunny:"),),
+        ):
+            _show_context_menu(controller, win32gui=win32gui, win32con=_FakeWin32Con)
+        controller.dispatch_menu_action.assert_not_called()
