@@ -273,12 +273,36 @@ class ShowHideToggleTests(SimpleTestCase):
         controller.dismiss_with_escape()
         self.assertFalse(controller.visible)
 
-    def test_show_about_stub_does_not_set_about_open(self) -> None:
-        # Regression: the stub must not set a real invariant (WM_ACTIVATE
-        # gating, dismiss_with_escape's precedence) with nothing but
-        # hide()/hide_about() ever able to clear it again.
+    def test_show_about_sets_about_open_and_creates_the_window(self) -> None:
         controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
         controller.show_about()
+        self.assertTrue(controller.about_open)
+        self.assertEqual(controller.about_hwnd, 99)
+        controller.create_about_window.assert_called_once()
+
+    def test_show_about_is_idempotent_while_already_open(self) -> None:
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
+        controller.show_about()
+        controller.show_about()
+        controller.create_about_window.assert_called_once()
+
+    def test_hide_about_destroys_the_window(self) -> None:
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(return_value=99)
+        controller.destroy_about_window = MagicMock()
+        controller.show_about()
+        controller.hide_about()
+        controller.destroy_about_window.assert_called_once_with(99)
+        self.assertIsNone(controller.about_hwnd)
+        self.assertFalse(controller.about_open)
+
+    def test_hide_about_without_a_window_is_a_no_op(self) -> None:
+        controller = _make_controller()
+        controller.destroy_about_window = MagicMock()
+        controller.hide_about()
+        controller.destroy_about_window.assert_not_called()
         self.assertFalse(controller.about_open)
 
 

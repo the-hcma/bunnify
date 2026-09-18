@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -162,15 +163,20 @@ def handle_about_link_click(
     link: str,
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    start_file: Callable[[Path], None] | None = None,
 ) -> bool:
     """Handle an About-panel click. True when a local file was opened.
 
-    Returning False leaves http(s) links to AppKit's default URL handler.
+    Returning False means *link* wasn't a local ``file:`` URI -- the
+    caller is expected to fall back to its platform's own link opener
+    (AppKit's default URL handler on macOS; Windows has no such built-in
+    for a ``SysLink`` control, so ``app.spotty_bunny_about_win32`` opens
+    it explicitly).
     """
     path = path_from_file_uri(str(link))
     if path is None:
         return False
-    return open_path_in_text_editor(path, run=run)
+    return open_path_in_text_editor(path, run=run, start_file=start_file)
 
 
 def load_about_runtime_info(
@@ -251,8 +257,21 @@ def open_path_in_text_editor(
     path: Path,
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    start_file: Callable[[Path], None] | None = None,
 ) -> bool:
-    """Open *path* in the default text editor (``open -t`` on macOS)."""
+    """Open *path* in the default text editor (``open -t`` on macOS).
+
+    On Windows, ``os.startfile`` has no ``CompletedProcess`` return (it
+    just launches the registered handler), so it gets its own injectable
+    seam rather than being unified with *run*.
+    """
+    if sys.platform == "win32":
+        starter = start_file if start_file is not None else os.startfile
+        try:
+            starter(path)
+        except OSError:
+            return False
+        return True
     runner = run if run is not None else subprocess.run
     try:
         # ``open`` only exists on macOS, so as_posix() keeps this argument

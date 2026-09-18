@@ -735,6 +735,50 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         self.assertTrue(open_path_in_text_editor(path, run=run))
         self.assertEqual(calls, [["open", "-t", path.as_posix()]])
 
+    def test_open_path_in_text_editor_windows_uses_start_file(self) -> None:
+        from app.spotty_bunny_about_info import open_path_in_text_editor
+
+        calls: list[Path] = []
+
+        def start_file(path: Path) -> None:
+            calls.append(path)
+
+        path = Path("C:\\Users\\a\\bookmarks.json")
+        with patch("app.spotty_bunny_about_info.sys.platform", "win32"):
+            self.assertTrue(open_path_in_text_editor(path, start_file=start_file))
+        self.assertEqual(calls, [path])
+
+    def test_open_path_in_text_editor_windows_start_file_oserror_returns_false(
+        self,
+    ) -> None:
+        from app.spotty_bunny_about_info import open_path_in_text_editor
+
+        def start_file(_path: Path) -> None:
+            raise OSError("no handler")
+
+        with patch("app.spotty_bunny_about_info.sys.platform", "win32"):
+            self.assertFalse(
+                open_path_in_text_editor(
+                    Path("C:\\Users\\a\\bookmarks.json"), start_file=start_file
+                )
+            )
+
+    def test_handle_about_link_click_threads_start_file_on_windows(self) -> None:
+        from app.spotty_bunny_about_info import handle_about_link_click
+
+        calls: list[Path] = []
+
+        def start_file(path: Path) -> None:
+            calls.append(path)
+
+        with patch("app.spotty_bunny_about_info.sys.platform", "win32"):
+            self.assertTrue(
+                handle_about_link_click(
+                    "file:///C:/Users/a/bookmarks.json", start_file=start_file
+                )
+            )
+        self.assertEqual(calls, [Path("/C:/Users/a/bookmarks.json")])
+
     def test_path_from_file_uri_decodes_path(self) -> None:
         from app.spotty_bunny_about_info import path_from_file_uri
 

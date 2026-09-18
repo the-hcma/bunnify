@@ -12,8 +12,8 @@ coordinate.
 Styling is deliberately plain/native (standard system font and colors, a
 borderless topmost popup) rather than a pixel-clone of macOS's custom
 rounded blue/cream chrome -- lower risk without a Windows machine to look at
-it, and more idiomatic for Windows users. The About panel (a stub here,
-replaced by #428) follows the same principle.
+it, and more idiomatic for Windows users. The About panel (``app.spotty_
+bunny_about_win32``) follows the same principle.
 
 As much logic as possible lives in plain methods that take/return plain
 values (selector mapping, menu dispatch, completion/history/resolve
@@ -31,6 +31,7 @@ from typing import Any
 from app.cli import open_url
 from app.client import fetch_key_entries
 from app.config import load_spotty_bunny_hotkey, resolve_base_url
+from app.spotty_bunny_about_win32 import build_about_window
 from app.spotty_bunny_cli import SpottyBunnyHookError
 from app.spotty_bunny_complete import (
     CompletionRow,
@@ -186,11 +187,14 @@ class SpottyBunnyWin32Controller:
         self.hwnd: int | None = None
         self.tray_hwnd: int | None = None
         self.icon_handle: int | None = None
+        self.about_hwnd: int | None = None
         self._hook: InstalledHook | None = None
         self._left_vk: int | None = None
         self._right_vk: int | None = None
         self.request_quit: Callable[[], None] = lambda: None
         self.focus_field: Callable[[], None] = lambda: None
+        self.create_about_window: Callable[[], int] = lambda: 0
+        self.destroy_about_window: Callable[[int], None] = lambda _hwnd: None
 
     # -- show/hide/toggle --------------------------------------------------
 
@@ -233,18 +237,20 @@ class SpottyBunnyWin32Controller:
             return
         self.hide()
 
-    # -- About stub (real dialog lands in #428) -----------------------------
+    # -- About panel ---------------------------------------------------------
 
     def show_about(self) -> None:
-        # No real panel exists yet, so this deliberately does NOT set
-        # about_open = True: that flag is a real invariant elsewhere (the
-        # WM_ACTIVATE/WA_INACTIVE handler skips auto-hide while it's set,
-        # and dismiss_with_escape() special-cases it) -- setting it here
-        # with nothing to ever clear it outside hide()/hide_about() would
-        # leave the always-on-top overlay stuck open after a click-away.
-        logger.info("About panel requested; lands in #428")
+        """Create the real About popup (idempotent while already open)."""
+        if self.about_open:
+            return
+        self.about_open = True
+        self.about_hwnd = self.create_about_window()
+        logger.info("show About panel")
 
     def hide_about(self) -> None:
+        if self.about_hwnd is not None:
+            self.destroy_about_window(self.about_hwnd)
+            self.about_hwnd = None
         self.about_open = False
 
     # -- key handling --------------------------------------------------------
@@ -677,6 +683,10 @@ def run_spotty_bunny_win32_app() -> int:
         hwnd, message, wparam, lparam
     )
     controller.request_quit = win32gui.PostQuitMessage
+    controller.create_about_window = lambda: build_about_window(
+        controller, win32gui=win32gui, win32con=win32con, win32api=win32api
+    )
+    controller.destroy_about_window = win32gui.DestroyWindow
 
     icon_state: dict[str, int] = {"handle": make_spotty_bunny_icon_win32(16)}
     controller.icon_handle = icon_state["handle"]
