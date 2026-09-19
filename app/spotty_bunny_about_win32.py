@@ -255,9 +255,27 @@ def build_about_window(
         y += row_height + ABOUT_ROW_GAP
 
     win32gui.ShowWindow(hwnd, win32con.SW_SHOWNORMAL)
-    win32gui.SetForegroundWindow(hwnd)
-    win32gui.SetFocus(hwnd)
+    _focus_about_window(hwnd, win32gui=win32gui)
     return hwnd
+
+
+def _focus_about_window(hwnd: int, *, win32gui) -> None:
+    """Give the About popup the foreground and focus, best effort.
+
+    Windows' foreground lock refuses a background process, and pywin32 then
+    raises ``pywintypes.error (0, ...)`` (the #477 failure). By this point the
+    popup is already visible, so letting that escape ``build_about_window``
+    would keep ``show_about`` from ever recording the window: it would stay
+    up, untracked, and the next tray click would build a second one.
+    """
+    try:
+        win32gui.SetForegroundWindow(hwnd)
+    except win32gui.error:
+        logger.warning("SetForegroundWindow refused for the About window; continuing")
+    try:
+        win32gui.SetFocus(hwnd)
+    except win32gui.error:
+        logger.warning("SetFocus failed for the About window; continuing")
 
 
 def _anchor_near_cursor(width: int, height: int, *, win32api) -> tuple[int, int]:
