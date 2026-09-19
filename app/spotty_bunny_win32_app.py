@@ -786,10 +786,8 @@ def run_spotty_bunny_win32_app() -> int:
     if controller._hook is None:
         raise SpottyBunnyHookError("could not listen for the hotkey chord")
 
-    win32gui.SetTimer(
-        hwnd, TIMER_ID_HEALTH, int(TAP_HEALTH_CHECK_INTERVAL_S * 1000), None
-    )
-    win32gui.SetTimer(hwnd, TIMER_ID_UPDATE, UPDATE_CHECK_INTERVAL_MS, None)
+    _set_window_timer(hwnd, TIMER_ID_HEALTH, int(TAP_HEALTH_CHECK_INTERVAL_S * 1000))
+    _set_window_timer(hwnd, TIMER_ID_UPDATE, UPDATE_CHECK_INTERVAL_MS)
 
     unregister_quit_handler = install_console_quit_handler(
         win32api.GetCurrentThreadId()
@@ -991,6 +989,28 @@ def _handle_tray_message(
         return
     if lparam == win32con.WM_RBUTTONUP:
         _show_context_menu(controller, win32gui=win32gui, win32con=win32con)
+
+
+def _set_window_timer(hwnd: int, timer_id: int, interval_ms: int) -> None:
+    """Start a ``WM_TIMER`` timer on *hwnd*.
+
+    pywin32 312 exposes no ``SetTimer`` (``win32gui.SetTimer`` raises
+    ``AttributeError``), so call ``user32.SetTimer`` directly. Raises
+    ``OSError`` when Windows refuses (for example an invalid *hwnd*).
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.SetTimer.argtypes = [
+        wintypes.HWND,
+        ctypes.c_size_t,
+        wintypes.UINT,
+        ctypes.c_void_p,
+    ]
+    user32.SetTimer.restype = ctypes.c_size_t
+    if not user32.SetTimer(hwnd, timer_id, interval_ms, None):
+        raise ctypes.WinError(ctypes.get_last_error())
 
 
 def _show_context_menu(
