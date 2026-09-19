@@ -95,6 +95,7 @@ TIMER_ID_HEALTH = 1
 TIMER_ID_UPDATE = 2
 UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
+OVERLAY_TOP_FRACTION = 0.45
 OVERLAY_WINDOW_CLASS = "BunnifySpottyBunnyOverlay"
 TRAY_WINDOW_CLASS = "BunnifySpottyBunnyTray"
 TRAY_ICON_ID = 1
@@ -722,6 +723,24 @@ class SpottyBunnyWin32Controller:
         self._field_text = text
 
 
+def overlay_origin(
+    work_area: tuple[int, int, int, int], width: int, height: int
+) -> tuple[int, int]:
+    """Top-left corner for a *width* x *height* overlay inside *work_area*.
+
+    Mirrors macOS ``SpottyBunnyController._center_panel``: centered
+    horizontally, and vertically the panel's origin sits 55% up the free
+    height (measured from the bottom), i.e. its top edge is
+    ``OVERLAY_TOP_FRACTION`` (45%) of the free height below the top of the
+    work area. *work_area* is ``(left, top, right, bottom)`` and excludes the
+    taskbar. An overlay larger than the work area is pinned to its top-left.
+    """
+    left, top, right, bottom = work_area
+    x = left + max(0, (right - left - width) // 2)
+    y = top + max(0, int((bottom - top - height) * OVERLAY_TOP_FRACTION))
+    return x, y
+
+
 def run_spotty_bunny_win32_app() -> int:
     """Build the tray icon + overlay, install the chord hook, and run.
 
@@ -802,6 +821,31 @@ def run_spotty_bunny_win32_app() -> int:
         win32gui.DestroyIcon(icon_state["handle"])
         win32gui.DestroyWindow(hwnd)
     return 0
+
+
+def _center_overlay(hwnd: int, *, win32api, win32con, win32gui) -> None:
+    """Move *hwnd* to :func:`overlay_origin` on the primary monitor.
+
+    Repeated on every show, because the window's height changes with the
+    status line and completion list. Leaves the window where it is if the
+    monitor or window geometry cannot be read.
+    """
+    try:
+        monitor = win32api.MonitorFromPoint((0, 0), win32con.MONITOR_DEFAULTTOPRIMARY)
+        work_area = win32api.GetMonitorInfo(monitor)["Work"]
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        x, y = overlay_origin(work_area, right - left, bottom - top)
+        win32gui.SetWindowPos(
+            hwnd,
+            win32con.HWND_TOPMOST,
+            x,
+            y,
+            0,
+            0,
+            win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+        )
+    except win32gui.error:
+        logger.warning("could not center the overlay; leaving it where it is")
 
 
 def _create_overlay_window(
@@ -1056,7 +1100,8 @@ def _show_context_menu(
 def _show_overlay_window(
     hwnd: int, edit_hwnd: int, *, win32api, win32con, win32gui, win32process
 ) -> None:
-    """Show the overlay and give its text box keyboard focus, best effort."""
+    """Center the overlay, show it, and give its text box focus, best effort."""
+    _center_overlay(hwnd, win32api=win32api, win32con=win32con, win32gui=win32gui)
     win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
     _take_foreground(
         hwnd, win32api=win32api, win32gui=win32gui, win32process=win32process
