@@ -12,6 +12,7 @@ from app.spotty_bunny_icon_win32 import (
     _rgb,
     make_spotty_bunny_icon_win32,
 )
+from bookmarks.win32_test_support import real_win32_available
 
 
 class RgbTests(SimpleTestCase):
@@ -171,7 +172,7 @@ class MakeSpottyBunnyIconWin32Tests(SimpleTestCase):
         win32gui.RoundRect.assert_called_once()
 
 
-@skipUnless(sys.platform == "win32", "needs the real Win32 GDI")
+@skipUnless(real_win32_available(), "needs Windows with pywin32 (the windows extra)")
 class RealWin32IconTests(SimpleTestCase):
     """Run the actual GDI calls -- the fakes above cannot see invalid handles."""
 
