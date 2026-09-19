@@ -131,7 +131,41 @@ class InstallAgentTests(SimpleTestCase):
             )
         self.assertEqual(code, 1)
         self.assertIn("schtasks /Create failed", stderr.getvalue())
-        self.assertIn("removed the non-functional Scheduled Task", stderr.getvalue())
+        self.assertIn("schtasks said: ERROR: Access is denied.", stderr.getvalue())
+        self.assertIn("no Scheduled Task was registered", stderr.getvalue())
+        self.assertNotIn("non-functional", stderr.getvalue())
+
+    def test_create_failure_over_an_existing_task_says_it_was_kept(self) -> None:
+        # An upgrade whose /Create fails leaves the previous task registered,
+        # so the outcome must not claim "no Scheduled Task was registered":
+        # the "is a task still installed" check has to win over task_created.
+        from app.spotty_bunny_agent_win32 import install_agent
+
+        fake = _FakeSchtasks()
+        fake.registered = True
+        fake.registered_xml = format_task_xml(
+            program_arguments=["C:\\bin\\spotty-bunny.exe"]
+        )
+        fake.create_should_fail = True
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = _write_executable(home / "spotty-bunny.exe")
+            stderr = StringIO()
+            code = install_agent(
+                pid_dir=home / "run",
+                platform="win32",
+                print_err=stderr.write,
+                program=program,
+                schtasks=fake,
+            )
+        self.assertEqual(code, 1)
+        self.assertTrue(fake.registered)
+        self.assertIn(
+            "kept the previous Scheduled Task configuration registered",
+            stderr.getvalue(),
+        )
+        self.assertNotIn("no Scheduled Task was registered", stderr.getvalue())
+        self.assertIn("schtasks said: ERROR: Access is denied.", stderr.getvalue())
 
     def test_removes_task_when_fresh_install_never_becomes_healthy(self) -> None:
         from app.spotty_bunny_agent_win32 import install_agent
