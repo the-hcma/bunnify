@@ -1567,14 +1567,18 @@ class CreateFontTests(SimpleTestCase):
 class CreateOverlayWindowTests(SimpleTestCase):
     """Drive the real ``_create_overlay_window`` against a recording fake."""
 
-    def _create(self):
+    def _create(self, *, fonts: list[int] | None = None):
         controller = _make_controller()
         win32gui = _make_theme_win32gui()
         win32gui.error = _FakeGuiError
         handles = iter(range(100, 200))
         win32gui.CreateWindowEx = MagicMock(side_effect=lambda *_a: next(handles))
         win32gui.GetWindowRect = MagicMock(return_value=(640, 400, 1280, 476))
-        win32gui.CreateFontIndirect = MagicMock(return_value=321)
+        win32gui.CreateFontIndirect = (
+            MagicMock(side_effect=list(fonts))
+            if fonts is not None
+            else MagicMock(return_value=321)
+        )
         win32gui.SendMessage = MagicMock(return_value=0)
         win32gui.SetWindowLong = MagicMock(return_value="original-proc")
         win32con = MagicMock()
@@ -1599,6 +1603,56 @@ class CreateOverlayWindowTests(SimpleTestCase):
         self.assertEqual(creates[2].args[4:8], layout.logo)
         self.assertEqual(creates[3].args[4:8], layout.status)
         self.assertEqual(creates[4].args[4:8], layout.rows)
+
+    def test_the_status_line_is_shown_only_while_it_has_text(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        # 100 overlay, 101 edit, 102 logo, 103 status, 104 list.
+        controller.set_status_text("Unknown shortcut")
+        win32gui.ShowWindow.assert_any_call(103, con.SW_SHOW)
+        win32gui.ShowWindow.reset_mock()
+        controller.set_status_text("")
+        win32gui.ShowWindow.assert_any_call(103, con.SW_HIDE)
+        self.assertNotIn(
+            ((103, con.SW_SHOW),), [c.args for c in win32gui.ShowWindow.call_args_list]
+        )
+
+    def test_the_completion_list_is_shown_only_while_it_has_rows(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        controller.set_completion_rows([CompletionRow("gh", "GitHub", 0)])
+        win32gui.ShowWindow.assert_any_call(104, con.SW_SHOW)
+        win32gui.ShowWindow.reset_mock()
+        controller.set_completion_rows([])
+        win32gui.ShowWindow.assert_any_call(104, con.SW_HIDE)
+
+    def test_status_and_list_start_hidden(self) -> None:
+        _controller, win32gui, con, _hwnd, _icon = self._create()
+        win32gui.ShowWindow.assert_any_call(103, con.SW_HIDE)
+        win32gui.ShowWindow.assert_any_call(104, con.SW_HIDE)
+
+    def test_the_status_line_and_list_toggle_independently(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        controller.set_status_text("x")
+        win32gui.ShowWindow.reset_mock()
+        controller.set_completion_rows([CompletionRow("gh", "GitHub", 0)])
+        # Showing the list must not hide the status line that is still up.
+        win32gui.ShowWindow.assert_any_call(103, con.SW_SHOW)
+        win32gui.ShowWindow.assert_any_call(104, con.SW_SHOW)
+
+    def test_the_text_box_and_the_placeholder_share_one_font(self) -> None:
+        # The placeholder is painted into the same box the user types in, so
+        # it must use the Edit's own font, not the smaller status/list one.
+        controller, win32gui, con, _hwnd, _icon = self._create(fonts=[901, 902])
+        edit, status, rows = 101, 103, 104
+        win32gui.SendMessage.assert_any_call(edit, con.WM_SETFONT, 901, True)
+        win32gui.SendMessage.assert_any_call(status, con.WM_SETFONT, 902, True)
+        win32gui.SendMessage.assert_any_call(rows, con.WM_SETFONT, 902, True)
+        con.WM_PAINT = 0x000F
+        con.WM_KEYDOWN = 0x0100
+        subclass_proc = win32gui.SetWindowLong.call_args.args[2]
+        win32gui.CallWindowProc = MagicMock(return_value=0)
+        with patch("app.spotty_bunny_win32_app._draw_placeholder") as draw:
+            subclass_proc(edit, con.WM_PAINT, 0, 0)
+        draw.assert_called_once_with(edit, 901, win32con=con, win32gui=win32gui)
 
     def test_the_panel_is_rounded_to_its_size(self) -> None:
         _controller, win32gui, _con, hwnd, _icon = self._create()
