@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import sys
 import time
 from unittest import skipUnless
@@ -1448,5 +1449,59 @@ class SetWindowTimerTests(SimpleTestCase):
             win32gui.DestroyWindow(hwnd)
 
     def test_an_invalid_window_raises_os_error(self) -> None:
-        with self.assertRaises(OSError):
+        with self.assertRaises(OSError) as caught:
             _set_window_timer(0xDEAD, 7, 30)
+        # Pin the code, not just the type: without use_last_error the saved
+        # error is 0 and WinError(0) would still raise, but as "[WinError 0]
+        # The operation completed successfully".
+        self.assertEqual(caught.exception.winerror, 1400)  # ERROR_INVALID_WINDOW_HANDLE
+
+
+class SetWindowTimerWiringTests(SimpleTestCase):
+    """The ctypes wiring, on any platform, against a fake ``user32``."""
+
+    @staticmethod
+    def _user32(*, result: int) -> MagicMock:
+        user32 = MagicMock()
+        user32.SetTimer = MagicMock(return_value=result)
+        return user32
+
+    def test_calls_user32_settimer_with_a_null_callback(self) -> None:
+        user32 = self._user32(result=7)
+        with patch("ctypes.WinDLL", return_value=user32, create=True) as win_dll:
+            _set_window_timer(123, 7, 30)
+        user32.SetTimer.assert_called_once_with(123, 7, 30, None)
+        win_dll.assert_called_once_with("user32", use_last_error=True)
+
+    def test_declares_pointer_sized_argument_and_result_types(self) -> None:
+        # A 64-bit HWND/UINT_PTR must not be truncated to a C int.
+        user32 = self._user32(result=7)
+        with patch("ctypes.WinDLL", return_value=user32, create=True):
+            _set_window_timer(123, 7, 30)
+        self.assertEqual(user32.SetTimer.restype, ctypes.c_size_t)
+        self.assertEqual(len(user32.SetTimer.argtypes), 4)
+        self.assertEqual(user32.SetTimer.argtypes[1], ctypes.c_size_t)
+
+    def test_a_refusal_raises_winerror_with_the_saved_last_error(self) -> None:
+        user32 = self._user32(result=0)
+        with (
+            patch("ctypes.WinDLL", return_value=user32, create=True),
+            patch("ctypes.get_last_error", return_value=1400, create=True),
+            patch(
+                "ctypes.WinError",
+                return_value=OSError(1400, "Invalid window handle."),
+                create=True,
+            ) as win_error,
+            self.assertRaises(OSError),
+        ):
+            _set_window_timer(123, 7, 30)
+        win_error.assert_called_once_with(1400)
+
+    def test_success_never_builds_an_error(self) -> None:
+        user32 = self._user32(result=7)
+        with (
+            patch("ctypes.WinDLL", return_value=user32, create=True),
+            patch("ctypes.WinError", create=True) as win_error,
+        ):
+            _set_window_timer(123, 7, 30)
+        win_error.assert_not_called()
