@@ -112,12 +112,18 @@ def install_agent(
     previous_pid = previous_runtime[0] if previous_runtime is not None else None
     previous_xml = task_xml(schtasks=schtasks)
     xml = format_task_xml(program_arguments=program_argv)
-    if not create_or_update_task(xml, schtasks=schtasks):
+    create_errors: list[str] = []
+    if not create_or_update_task(xml, on_error=create_errors.append, schtasks=schtasks):
         restored = _rollback_failed_install(
             previous_xml, pid_dir=pid_dir, schtasks=schtasks
         )
-        err(f"{COMMAND_NAME}: {_rollback_outcome_message(restored, schtasks=schtasks)}")
+        outcome = _rollback_outcome_message(
+            restored, schtasks=schtasks, task_created=False
+        )
+        err(f"{COMMAND_NAME}: {outcome}")
         err(f"{COMMAND_NAME}: schtasks /Create failed for '{TASK_NAME}'.")
+        for detail in create_errors:
+            err(f"{COMMAND_NAME}: schtasks said: {detail}")
         return 1
     run_task_once(schtasks=schtasks)
     if not _wait_for_managed_overlay(
@@ -338,7 +344,9 @@ def _rollback_failed_install(
     )
 
 
-def _rollback_outcome_message(restored: bool, *, schtasks: SchtasksFn | None) -> str:
+def _rollback_outcome_message(
+    restored: bool, *, schtasks: SchtasksFn | None, task_created: bool = True
+) -> str:
     if restored:
         return "restored the previous Scheduled Task configuration."
     if is_task_installed(schtasks=schtasks):
@@ -346,6 +354,8 @@ def _rollback_outcome_message(restored: bool, *, schtasks: SchtasksFn | None) ->
             "kept the previous Scheduled Task configuration registered "
             f"for retry; the overlay is now down. Run: {COMMAND_NAME} install"
         )
+    if not task_created:
+        return f"no Scheduled Task was registered. Run: {COMMAND_NAME} install"
     return (
         "removed the non-functional Scheduled Task; "
         f"the overlay is now down. Run: {COMMAND_NAME} install"

@@ -11,7 +11,9 @@ launchd's unconditional respawn.
 
 from __future__ import annotations
 
+import getpass
 import logging
+import os
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
@@ -32,10 +34,12 @@ _TASK_XML_TEMPLATE = """\
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <UserId>__USER_ID__</UserId>
     </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
+      <UserId>__USER_ID__</UserId>
       <LogonType>InteractiveToken</LogonType>
     </Principal>
   </Principals>
@@ -59,8 +63,16 @@ _TASK_XML_TEMPLATE = """\
 """
 
 
-def format_task_xml(*, program_arguments: Sequence[str]) -> str:
+def format_task_xml(
+    *, program_arguments: Sequence[str], user_id: str | None = None
+) -> str:
     """Return the Scheduled Task XML for *program_arguments*.
+
+    The ``LogonTrigger`` and ``Principal`` are scoped to *user_id* (default:
+    the current ``DOMAIN\\user``). A ``LogonTrigger`` with no ``UserId``
+    means "when any user logs on", which Windows only lets an elevated
+    account register -- scoping it to the current user lets a standard
+    account install Spotty Bunny without "Access is denied".
 
     ``program_arguments[0]`` becomes the Action's ``Command`` (the raw
     executable path, unquoted -- Task Scheduler treats ``Command`` as a
@@ -75,13 +87,25 @@ def format_task_xml(*, program_arguments: Sequence[str]) -> str:
     ``<Command>``/``<Arguments>`` straight out of the XML avoids that.)
     """
     command, *rest = program_arguments
-    return _TASK_XML_TEMPLATE.replace("__COMMAND__", escape(command)).replace(
-        "__ARGUMENTS__", escape(subprocess.list2cmdline(rest))
+    account = user_id if user_id is not None else _current_user_id()
+    return (
+        _TASK_XML_TEMPLATE.replace("__COMMAND__", escape(command))
+        .replace("__ARGUMENTS__", escape(subprocess.list2cmdline(rest)))
+        .replace("__USER_ID__", escape(account))
     )
 
 
-def create_or_update_task(xml: str, *, schtasks: SchtasksFn | None = None) -> bool:
-    """Register (or replace) the Scheduled Task from *xml*. Returns success."""
+def create_or_update_task(
+    xml: str,
+    *,
+    on_error: Callable[[str], None] | None = None,
+    schtasks: SchtasksFn | None = None,
+) -> bool:
+    """Register (or replace) the Scheduled Task from *xml*. Returns success.
+
+    On failure, ``schtasks``' own message (for example ``ERROR: Access is
+    denied.``) is logged and passed to *on_error* so callers can show why.
+    """
     handle = tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".xml",
@@ -95,6 +119,11 @@ def create_or_update_task(xml: str, *, schtasks: SchtasksFn | None = None) -> bo
             ["/Create", "/TN", TASK_NAME, "/XML", handle.name, "/F"],
             schtasks=schtasks,
         )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            logger.warning("schtasks /Create failed: %s", detail)
+            if on_error is not None and detail:
+                on_error(detail)
         return completed.returncode == 0
     finally:
         Path(handle.name).unlink(missing_ok=True)
@@ -148,6 +177,13 @@ def task_program_arguments(*, schtasks: SchtasksFn | None = None) -> list[str] |
     if xml is None:
         return None
     return _program_arguments_from_xml(xml)
+
+
+def _current_user_id() -> str:
+    """The logged-on account as ``DOMAIN\\user`` (bare ``user`` without a domain)."""
+    user = getpass.getuser()
+    domain = os.environ.get("USERDOMAIN")
+    return f"{domain}\\{user}" if domain else user
 
 
 def _program_arguments_from_xml(xml: str) -> list[str] | None:

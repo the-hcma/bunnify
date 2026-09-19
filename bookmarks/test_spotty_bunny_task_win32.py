@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest import mock
+from xml.etree import ElementTree
 
 from django.test import SimpleTestCase
 
@@ -30,6 +32,46 @@ class FormatTaskXmlTests(SimpleTestCase):
         self.assertIn("<Interval>PT1M</Interval>", xml)
         self.assertIn("<Count>999</Count>", xml)
         self.assertIn("<LogonType>InteractiveToken</LogonType>", xml)
+
+    def test_logon_trigger_and_principal_are_scoped_to_the_user(self) -> None:
+        # Without a UserId the LogonTrigger means "any user logs on", which
+        # only an elevated account may register ("Access is denied").
+        xml = format_task_xml(
+            program_arguments=["C:\\bin\\spotty-bunny.exe"], user_id="HOST\\alice"
+        )
+        ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+        root = ElementTree.fromstring(xml)
+        self.assertEqual(
+            root.findtext("t:Triggers/t:LogonTrigger/t:UserId", namespaces=ns),
+            "HOST\\alice",
+        )
+        self.assertEqual(
+            root.findtext("t:Principals/t:Principal/t:UserId", namespaces=ns),
+            "HOST\\alice",
+        )
+
+    def test_user_id_defaults_to_the_current_domain_and_user(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"USERDOMAIN": "CORP"}),
+            mock.patch("getpass.getuser", return_value="bob"),
+        ):
+            xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
+        self.assertEqual(xml.count("<UserId>CORP\\bob</UserId>"), 2)
+
+    def test_user_id_without_a_domain_is_the_bare_user_name(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("getpass.getuser", return_value="bob"),
+        ):
+            xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
+        self.assertEqual(xml.count("<UserId>bob</UserId>"), 2)
+
+    def test_user_id_special_characters_are_escaped(self) -> None:
+        xml = format_task_xml(
+            program_arguments=["C:\\bin\\spotty-bunny.exe"], user_id="A&B\\o<k>"
+        )
+        self.assertIn("<UserId>A&amp;B\\o&lt;k&gt;</UserId>", xml)
+        ElementTree.fromstring(xml)
 
     def test_command_is_the_first_argument_unquoted(self) -> None:
         xml = format_task_xml(
@@ -141,6 +183,25 @@ class CreateOrUpdateTaskTests(SimpleTestCase):
         xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
         self.assertFalse(create_or_update_task(xml, schtasks=fake))
         self.assertFalse(fake.last_xml_path.exists())
+
+    def test_failure_reports_schtasks_own_message(self) -> None:
+        fake = _FakeSchtasks()
+        fake.create_should_fail = True
+        xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
+        details: list[str] = []
+        self.assertFalse(
+            create_or_update_task(xml, on_error=details.append, schtasks=fake)
+        )
+        self.assertEqual(details, ["ERROR: Access is denied."])
+
+    def test_success_does_not_call_on_error(self) -> None:
+        fake = _FakeSchtasks()
+        xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
+        details: list[str] = []
+        self.assertTrue(
+            create_or_update_task(xml, on_error=details.append, schtasks=fake)
+        )
+        self.assertEqual(details, [])
 
 
 class RemoveTaskTests(SimpleTestCase):

@@ -131,7 +131,9 @@ class InstallAgentTests(SimpleTestCase):
             )
         self.assertEqual(code, 1)
         self.assertIn("schtasks /Create failed", stderr.getvalue())
-        self.assertIn("removed the non-functional Scheduled Task", stderr.getvalue())
+        self.assertIn("schtasks said: ERROR: Access is denied.", stderr.getvalue())
+        self.assertIn("no Scheduled Task was registered", stderr.getvalue())
+        self.assertNotIn("non-functional", stderr.getvalue())
 
     def test_removes_task_when_fresh_install_never_becomes_healthy(self) -> None:
         from app.spotty_bunny_agent_win32 import install_agent
