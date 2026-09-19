@@ -393,7 +393,14 @@ def _create_syslink(
     silently degrading -- fall back to *plain_text* in a ``STATIC`` label
     (no clickable links, but a working About panel) instead of letting
     that exception kill the whole tray process on the first click.
+
+    Catches both ``OSError`` and ``pywintypes.error``: pywin32 wrappers
+    like ``win32gui.CreateWindowEx`` raise the latter, and whether it
+    derives from the former isn't something to bet the fallback on --
+    catching both is correct regardless of which one is true.
     """
+    import pywintypes  # pyright: ignore[reportMissingModuleSource]
+
     try:
         return win32gui.CreateWindowEx(
             0,
@@ -409,7 +416,7 @@ def _create_syslink(
             win32gui.GetModuleHandle(None),
             None,
         )
-    except OSError:
+    except OSError, pywintypes.error:
         logger.warning("SysLink control unavailable; falling back to a plain label")
         return _create_static(
             hwnd,
