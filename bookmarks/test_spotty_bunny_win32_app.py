@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -7,6 +8,7 @@ from django.test import SimpleTestCase
 from app.spotty_bunny_complete import CompletionRow
 from app.spotty_bunny_io import ImmediateIo
 from app.spotty_bunny_menu import logo_menu_specs
+from app.spotty_bunny_update import UpdateStatus
 from app.spotty_bunny_win32_app import (
     TIMER_ID_HEALTH,
     TIMER_ID_UPDATE,
@@ -48,6 +50,15 @@ def _make_controller() -> SpottyBunnyWin32Controller:
     # loading itself (that's covered by app.spotty_bunny_complete's own
     # tests), so stub it out to keep this suite offline and fast.
     controller._load_completer_async = lambda: None
+    # show() also triggers a background PyPI refresh when the on-disk
+    # update-status cache is stale, which it always is on a machine with
+    # no cache file (the common case in CI/dev sandboxes). Give the
+    # controller a freshly-"checked" status so plain show()/hide() tests
+    # don't inadvertently kick off a real network call; StartupUpdateStatusTests
+    # below exercises the stale-cache path directly.
+    controller._update_status = UpdateStatus(
+        checked_at=time.time(), current="0.0.0", latest=None, outdated=False
+    )
     return controller
 
 
@@ -203,6 +214,89 @@ class CheckForUpdatesTests(SimpleTestCase):
         self.assertEqual(statuses[-1], "Could not check for updates.")
         self.assertFalse(controller._outdated)
         self.assertEqual(calls, [])
+
+
+class StartupUpdateStatusTests(SimpleTestCase):
+    def test_init_seeds_outdated_from_cached_status(self) -> None:
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
+        ):
+            controller = SpottyBunnyWin32Controller(io=ImmediateIo())
+        self.assertIs(controller._update_status, status)
+        self.assertTrue(controller._outdated)
+
+    def test_init_not_outdated_when_cache_says_current(self) -> None:
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=False),
+        ):
+            controller = SpottyBunnyWin32Controller(io=ImmediateIo())
+        self.assertFalse(controller._outdated)
+
+    def test_show_refreshes_in_background_when_cache_is_stale(self) -> None:
+        controller = _make_controller()
+        calls: list[tuple[bool, bool]] = []
+        controller._refresh_update_status = lambda *, force, announce: calls.append(
+            (force, announce)
+        )
+        with patch("app.spotty_bunny_win32_app.cache_is_stale", return_value=True):
+            controller.show()
+        self.assertEqual(calls, [(False, False)])
+
+    def test_show_does_not_refresh_when_cache_is_fresh(self) -> None:
+        controller = _make_controller()
+        calls: list[tuple[bool, bool]] = []
+        controller._refresh_update_status = lambda *, force, announce: calls.append(
+            (force, announce)
+        )
+        with patch("app.spotty_bunny_win32_app.cache_is_stale", return_value=False):
+            controller.show()
+        self.assertEqual(calls, [])
+
+    def test_refresh_update_status_quiet_updates_icon_without_status_text(
+        self,
+    ) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        icon_calls: list[bool] = []
+        controller.set_icon_outdated = icon_calls.append
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.refresh_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
+        ):
+            controller._refresh_update_status(force=False, announce=False)
+        self.assertEqual(icon_calls, [True])
+        self.assertEqual(status_calls, [])
+
+    def test_refresh_update_status_quiet_failure_does_not_set_status(self) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
+
+        def boom(**_kwargs: object) -> object:
+            raise ConnectionError("unreachable")
+
+        with patch(
+            "app.spotty_bunny_win32_app.refresh_update_status", side_effect=boom
+        ):
+            controller._refresh_update_status(force=False, announce=False)
+        self.assertEqual(status_calls, [])
 
 
 class ShowHideToggleTests(SimpleTestCase):
