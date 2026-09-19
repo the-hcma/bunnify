@@ -699,9 +699,12 @@ def run_upgrade(
     """Upgrade the pipx install and report from/to versions with commits.
 
     When *refresh_launch_agents* is True (CLI default), rewrite and bounce both
-    macOS LaunchAgents after a successful pipx upgrade. Pass ``\"server\"`` from
-    the Spotty Bunny overlay so only the server agent is bounced (the overlay
-    refreshes its own plist and quits for relaunch).
+    macOS LaunchAgents (or, on Windows, just the Spotty Bunny Scheduled Task --
+    there is no Windows server-as-a-service equivalent yet) after a successful
+    pipx upgrade. Pass ``\"server\"`` from the Spotty Bunny overlay so only the
+    server agent is bounced (the overlay refreshes its own plist/Scheduled
+    Task and quits for relaunch); on Windows that value is a no-op here since
+    there's no separate server agent to bounce.
     """
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
@@ -799,6 +802,8 @@ def run_upgrade(
             print_fn=log,
             theme=colors,
         )
+    elif refresh_launch_agents is True and sys.platform == "win32":
+        _refresh_windows_spotty_bunny_task(print_fn=log, theme=colors)
     _report_post_upgrade_coherence(
         print_fn=log,
         theme=colors,
@@ -1549,6 +1554,37 @@ def _refresh_macos_launch_agents(
                     "run: bunnify spotty-bunny upgrade"
                 )
             )
+
+
+def _refresh_windows_spotty_bunny_task(
+    *, print_fn: Callable[[str], None], theme: Theme
+) -> None:
+    """Rewrite and restart the Spotty Bunny Scheduled Task after a pipx
+    upgrade -- the Windows counterpart of the Spotty Bunny half of
+    :func:`_refresh_macos_launch_agents`. There is no Windows equivalent
+    of the Bunnify server LaunchAgent refresh (no server-as-a-service
+    feature on Windows yet), so only Spotty Bunny is handled here.
+    """
+    from app.spotty_bunny_agent_win32 import (
+        is_agent_installed as spotty_agent_installed,
+    )
+    from app.spotty_bunny_agent_win32 import (
+        upgrade_agent as upgrade_spotty_agent,
+    )
+
+    if not spotty_agent_installed():
+        return
+    print_fn(theme.dim("Refreshing Spotty Bunny Scheduled Task…"))
+    code = upgrade_spotty_agent(print_err=print_fn)
+    if code == 0:
+        print_fn(theme.ok("✓ Spotty Bunny Scheduled Task refreshed"))
+    else:
+        print_fn(
+            theme.warn(
+                "Spotty Bunny Scheduled Task refresh failed; "
+                "run: bunnify spotty-bunny upgrade"
+            )
+        )
 
 
 def _retry_requested(prompt_fn: Callable[[str], str], message: str) -> bool:

@@ -4719,6 +4719,106 @@ class ConfigUnitTests(TestCase):
         spotty_installed.assert_not_called()
         spotty_upgrade.assert_not_called()
 
+    def test_refresh_windows_spotty_bunny_task_when_installed(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _refresh_windows_spotty_bunny_task
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.spotty_bunny_agent_win32.is_agent_installed", return_value=True),
+            patch(
+                "app.spotty_bunny_agent_win32.upgrade_agent", return_value=0
+            ) as spotty,
+        ):
+            _refresh_windows_spotty_bunny_task(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+            )
+        spotty.assert_called_once()
+        self.assertIn("Spotty Bunny Scheduled Task refreshed", "\n".join(messages))
+
+    def test_refresh_windows_spotty_bunny_task_skips_when_not_installed(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _refresh_windows_spotty_bunny_task
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch(
+                "app.spotty_bunny_agent_win32.is_agent_installed", return_value=False
+            ),
+            patch("app.spotty_bunny_agent_win32.upgrade_agent") as spotty,
+        ):
+            _refresh_windows_spotty_bunny_task(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+            )
+        spotty.assert_not_called()
+        self.assertEqual(messages, [])
+
+    def test_refresh_windows_spotty_bunny_task_warns_on_failure(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _refresh_windows_spotty_bunny_task
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.spotty_bunny_agent_win32.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_agent_win32.upgrade_agent", return_value=1),
+        ):
+            _refresh_windows_spotty_bunny_task(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+            )
+        joined = "\n".join(messages)
+        self.assertIn("Scheduled Task refresh failed", joined)
+        self.assertIn("bunnify spotty-bunny upgrade", joined)
+
+    def test_upgrade_refreshes_windows_spotty_bunny_task(self) -> None:
+        """Regression (#467): `bunnify upgrade` rewrote the macOS LaunchAgent
+        after a pipx upgrade but left the Windows Scheduled Task untouched."""
+        import subprocess
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import main
+
+        completed = subprocess.CompletedProcess(
+            ["pipx", "upgrade", "bunnify"], 0, "", ""
+        )
+        with (
+            patch("app.cli.sys.platform", "win32"),
+            patch("app.cli.is_source_checkout", return_value=False),
+            patch("app.cli.shutil.which", return_value="C:\\pipx\\pipx.exe"),
+            patch("app.cli._pypi_latest_version", return_value="0.5.0"),
+            patch(
+                "app.cli._pipx_bunnify_path",
+                return_value=Path("C:/Users/me/.local/bin/bunnify.exe"),
+            ),
+            patch(
+                "app.cli._read_executable_build",
+                side_effect=["0.4.0 (oldoldoldold)", "0.5.0 (newnewnewnew)"],
+            ),
+            patch("app.cli.subprocess.run", return_value=completed),
+            patch(
+                "app.cli._refresh_windows_spotty_bunny_task"
+            ) as refresh_windows_spotty,
+            patch("app.cli._refresh_macos_launch_agents") as refresh_macos,
+            # Not under test here -- avoids a real network call through
+            # ssl's Windows-cert-store code path, which this Linux test
+            # box can't satisfy once sys.platform is faked to "win32".
+            patch("app.cli._report_post_upgrade_coherence"),
+        ):
+            result = CliRunner().invoke(main, ["upgrade"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        refresh_windows_spotty.assert_called_once()
+        refresh_macos.assert_not_called()
+
     def test_report_post_upgrade_coherence_uses_upgraded_build_label(self) -> None:
         from unittest.mock import patch
 

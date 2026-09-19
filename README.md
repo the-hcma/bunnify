@@ -79,9 +79,9 @@ bare `pipx upgrade bunnify` so you can see when PATH is still a git checkout.
 On **macOS**, `bunnify upgrade` also refreshes installed server and Spotty Bunny
 LaunchAgents when their plists are present (or run `bunnify-server upgrade` /
 `bunnify spotty-bunny upgrade` manually). On **Windows**, `bunnify upgrade`
-does not touch the Spotty Bunny Scheduled Task — run
-`bunnify spotty-bunny upgrade` yourself afterward so the task picks up the
-new build.
+also refreshes an installed Spotty Bunny Scheduled Task the same way — there
+is no Windows equivalent of the server LaunchAgent yet, so only Spotty Bunny
+is refreshed.
 
 `pipx upgrade` only updates `~/.local/bin/bunnify`. If `bunnify --version` still
 shows a checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv`.
@@ -301,14 +301,16 @@ subcommand) still runs in the **foreground** for debugging.
 ### Upgrade
 
 ```powershell
-bunnify upgrade                 # pipx package; does not touch the Scheduled Task
+bunnify upgrade                 # pipx package; also refreshes an installed task
 bunnify spotty-bunny upgrade    # re-register the task for the current binary
 ```
 
-`bunnify spotty-bunny upgrade` rewrites the Scheduled Task and re-runs it. A
-failed upgrade restores the previous task configuration when one existed
-(or removes the non-functional registration when it didn't) rather than
-silently leaving a broken task behind.
+`bunnify upgrade` refreshes an already-installed Scheduled Task automatically
+after the pipx package upgrade (skip this with `bunnify spotty-bunny upgrade`
+if you only need to re-register the task by itself). Either way, a failed
+upgrade restores the previous task configuration when one existed (or removes
+the non-functional registration when it didn't) rather than silently leaving
+a broken task behind.
 
 ### Uninstall
 

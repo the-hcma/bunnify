@@ -352,13 +352,15 @@ line the way macOS's `status` has, since neither concept applies here.
 ### Upgrade
 
 ```powershell
-bunnify upgrade                    # pipx package; does not touch the Scheduled Task
-bunnify spotty-bunny upgrade       # re-register the task + bounce it
+bunnify upgrade                    # pipx package; also refreshes an installed task
+bunnify spotty-bunny upgrade       # re-register the task + bounce it, by itself
 ```
 
-`bunnify upgrade` does not refresh the Windows Scheduled Task the way it
-refreshes macOS LaunchAgents — run `bunnify spotty-bunny upgrade` yourself
-afterward. `upgrade` rewrites the task for the current binary, runs it once,
+`bunnify upgrade` refreshes an already-installed Windows Scheduled Task
+automatically after the pipx package upgrade, the same way it refreshes macOS
+LaunchAgents — `bunnify spotty-bunny upgrade` is only needed if you want to
+re-register the task on its own, without also upgrading the pipx package.
+Either way, `upgrade` rewrites the task for the current binary, runs it once,
 and waits for the new instance to come up, with the same rollback-on-failure
 behavior as `install`.
 
