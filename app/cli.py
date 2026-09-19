@@ -446,7 +446,7 @@ def run_setup(
                 log(colors.header("Browser"))
                 for line in format_browser_setup_text(base_url).splitlines():
                     log(line)
-                _ensure_local_spotty_after_setup(
+                _ensure_spotty_after_setup(
                     print_fn=log,
                     prompt_fn=ask,
                     theme=colors,
@@ -532,6 +532,11 @@ def run_setup(
         log(colors.header("Browser"))
         for line in format_browser_setup_text(base_url).splitlines():
             log(line)
+        _ensure_spotty_after_setup(
+            print_fn=log,
+            prompt_fn=ask,
+            theme=colors,
+        )
         return base_url
 
 
@@ -815,24 +820,66 @@ def run_upgrade(
             log(colors.dim("Run `bunnify setup` when ready to reconfigure."))
 
 
-def _ensure_local_spotty_after_setup(
+def _spotty_bunny_agent_installed() -> bool:
+    """True when the current platform's Spotty Bunny agent is registered."""
+    if sys.platform == "win32":
+        from app.spotty_bunny_agent_win32 import is_agent_installed
+    else:
+        from app.spotty_bunny_agent import is_agent_installed
+
+    return is_agent_installed()
+
+
+def _install_spotty_bunny_agent(
+    *, print_fn: Callable[[str], None], prompt_fn: Callable[[str], str]
+) -> int:
+    """Install the Spotty Bunny overlay for the current platform."""
+    if sys.platform == "win32":
+        from app.spotty_bunny_agent_win32 import install_agent
+
+        return install_agent(print_err=print_fn)
+    from app.spotty_bunny_agent import install_agent
+
+    return install_agent(print_err=print_fn, prompt_fn=prompt_fn)
+
+
+def _ensure_spotty_after_setup(
     *,
     print_fn: Callable[[str], None],
     prompt_fn: Callable[[str], str],
     theme: Theme,
 ) -> None:
-    """Install or restart Spotty Bunny to match this CLI after local setup."""
-    if sys.platform != "darwin":
+    """Offer to install, or restart to match this CLI, Spotty Bunny.
+
+    Runs after both local and remote setup on macOS and Windows -- the
+    overlay isn't tied to which Bunnify server mode is configured. Once
+    installed, the older restart-to-match-CLI alignment below only has a
+    real implementation on macOS (:func:`ensure_local_spotty_aligned` is
+    darwin-only, LaunchAgent-specific bounce logic); Windows gets the
+    install offer but not yet the auto-realign-on-setup follow-up.
+    """
+    if sys.platform not in ("darwin", "win32"):
         return
-    from app.spotty_bunny_agent import is_agent_installed
     from app.spotty_bunny_launch import spotty_bunny_is_running
 
-    if not is_agent_installed() and not spotty_bunny_is_running():
-        print_fn(
-            theme.dim(
-                "Spotty Bunny is not installed. Optional: bunnify spotty-bunny install"
+    if not _spotty_bunny_agent_installed() and not spotty_bunny_is_running():
+        if _retry_requested(prompt_fn, "Install Spotty Bunny now? [Y/n]: "):
+            code = _install_spotty_bunny_agent(print_fn=print_fn, prompt_fn=prompt_fn)
+            if code == 0:
+                print_fn(theme.ok("✓ Spotty Bunny installed"))
+            else:
+                print_fn(
+                    theme.warn(
+                        "Spotty Bunny install failed; run: bunnify spotty-bunny install"
+                    )
+                )
+        else:
+            print_fn(
+                theme.dim("Skipped. Install later with: bunnify spotty-bunny install")
             )
-        )
+        return
+
+    if sys.platform != "darwin":
         return
 
     def offer_restart(recorded: str | None, current: str) -> bool:
@@ -1042,7 +1089,7 @@ def _complete_setup_keeping_preferences(
                 log(colors.header("Browser"))
                 for line in format_browser_setup_text(base_url).splitlines():
                     log(line)
-                _ensure_local_spotty_after_setup(
+                _ensure_spotty_after_setup(
                     print_fn=log,
                     prompt_fn=ask,
                     theme=colors,
@@ -1091,6 +1138,11 @@ def _complete_setup_keeping_preferences(
     log(colors.header("Browser"))
     for line in format_browser_setup_text(base_url).splitlines():
         log(line)
+    _ensure_spotty_after_setup(
+        print_fn=log,
+        prompt_fn=ask,
+        theme=colors,
+    )
     return base_url
 
 

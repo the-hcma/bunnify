@@ -9,7 +9,7 @@ from types import MappingProxyType
 from unittest.mock import ANY, MagicMock, patch
 
 from click.testing import CliRunner
-from django.test import Client, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 
 from app import interactive
 from app.cli import _run, matching_keys
@@ -743,6 +743,211 @@ class CliUnitTests(TestCase):
                     sys.modules[name] = module
 
 
+class EnsureSpottyAfterSetupTests(SimpleTestCase):
+    def test_ensure_spotty_after_setup_warns_when_still_mismatched(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
+            patch("app.cli.ensure_local_spotty_aligned"),
+            patch("app.cli.running_spotty_commit", return_value=(True, "oldspotty1")),
+            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
+        ):
+            _ensure_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "n",
+                theme=Theme(enabled=False),
+            )
+        joined = "\n".join(messages)
+        self.assertIn("still running an older build", joined)
+        self.assertNotIn("✓ Spotty Bunny is running", joined)
+
+    def test_ensure_spotty_after_setup_ok_when_aligned(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
+            patch("app.cli.ensure_local_spotty_aligned"),
+            patch(
+                "app.cli.running_spotty_commit",
+                return_value=(True, "newnewnewnew"),
+            ),
+            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
+        ):
+            _ensure_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "y",
+                theme=Theme(enabled=False),
+            )
+        self.assertIn("✓ Spotty Bunny is running", "\n".join(messages))
+
+    def test_ensure_spotty_after_setup_offers_install_when_missing_accepted(
+        self,
+    ) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=False),
+            patch(
+                "app.spotty_bunny_launch.spotty_bunny_is_running", return_value=False
+            ),
+            patch("app.spotty_bunny_agent.install_agent", return_value=0) as install,
+        ):
+            prompt_fn = lambda _message: "y"  # noqa: E731
+            _ensure_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=prompt_fn,
+                theme=Theme(enabled=False),
+            )
+        # Pins the macOS branch's contractual prompt_fn forwarding (TCC
+        # re-verification) -- a plain assert_called_once() would stay green
+        # even if this were silently dropped.
+        install.assert_called_once_with(print_err=messages.append, prompt_fn=prompt_fn)
+        self.assertIn("✓ Spotty Bunny installed", "\n".join(messages))
+
+    def test_ensure_spotty_after_setup_offers_install_when_missing_declined(
+        self,
+    ) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=False),
+            patch(
+                "app.spotty_bunny_launch.spotty_bunny_is_running", return_value=False
+            ),
+            patch("app.spotty_bunny_agent.install_agent") as install,
+        ):
+            _ensure_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "n",
+                theme=Theme(enabled=False),
+            )
+        install.assert_not_called()
+        self.assertIn("bunnify spotty-bunny install", "\n".join(messages))
+
+    def test_ensure_spotty_after_setup_install_failure_warns(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=False),
+            patch(
+                "app.spotty_bunny_launch.spotty_bunny_is_running", return_value=False
+            ),
+            patch("app.spotty_bunny_agent.install_agent", return_value=1),
+        ):
+            _ensure_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "y",
+                theme=Theme(enabled=False),
+            )
+        joined = "\n".join(messages)
+        self.assertIn("install failed", joined)
+        self.assertIn("bunnify spotty-bunny install", joined)
+
+    def test_ensure_spotty_after_setup_offers_install_on_windows(self) -> None:
+        """Regression (#467): this used to bail unconditionally on any
+        non-darwin platform, so Windows never got the install hint at all."""
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "win32"),
+            patch(
+                "app.spotty_bunny_agent_win32.is_agent_installed", return_value=False
+            ),
+            patch(
+                "app.spotty_bunny_launch.spotty_bunny_is_running", return_value=False
+            ),
+            patch(
+                "app.spotty_bunny_agent_win32.install_agent", return_value=0
+            ) as install,
+        ):
+            _ensure_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "y",
+                theme=Theme(enabled=False),
+            )
+        # Pins the win32 branch's call shape -- app.spotty_bunny_agent_win32.
+        # install_agent() has no prompt_fn parameter (no TCC equivalent), so
+        # a plain assert_called_once() would stay green even if the macOS
+        # kwargs were ever unified into this branch, which would crash
+        # `bunnify setup` on Windows with an unexpected-keyword-argument
+        # TypeError right after the config was saved.
+        install.assert_called_once_with(print_err=messages.append)
+        self.assertIn("✓ Spotty Bunny installed", "\n".join(messages))
+
+    def test_ensure_spotty_after_setup_windows_installed_skips_macos_realign(
+        self,
+    ) -> None:
+        """Windows has no equivalent to ensure_local_spotty_aligned() (macOS
+        LaunchAgent-bounce logic) yet -- it must not be reached at all."""
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "win32"),
+            patch("app.spotty_bunny_agent_win32.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
+            patch("app.cli.ensure_local_spotty_aligned") as aligned,
+        ):
+            _ensure_spotty_after_setup(
+                print_fn=messages.append,
+                prompt_fn=lambda _message: "y",
+                theme=Theme(enabled=False),
+            )
+        aligned.assert_not_called()
+        self.assertEqual(messages, [])
+
+    def test_ensure_spotty_after_setup_noop_off_macos_and_windows(self) -> None:
+        from unittest.mock import patch
+
+        from app.cli import _ensure_spotty_after_setup
+        from app.theme import Theme
+
+        def boom(_message: str) -> str:
+            raise AssertionError("prompt_fn must not be called on this platform")
+
+        with patch("app.cli.sys.platform", "linux"):
+            _ensure_spotty_after_setup(
+                print_fn=lambda _message: None,
+                prompt_fn=boom,
+                theme=Theme(enabled=False),
+            )
+
+
 class ConfigUnitTests(TestCase):
     def setUp(self) -> None:
         import os
@@ -750,6 +955,19 @@ class ConfigUnitTests(TestCase):
 
         import app.config as config_mod
 
+        # _ensure_spotty_after_setup() runs after every successful run_setup()
+        # (local/remote, fresh/kept) and, when Spotty Bunny isn't installed,
+        # blocks on an "Install Spotty Bunny now? [Y/n]:" prompt -- almost
+        # none of the many run_setup tests in this class script a response
+        # for that. On this dev/CI box (not darwin/win32) it's a no-op
+        # anyway, but the many tests here that fake sys.platform, and every
+        # test on real Windows CI (sys.platform is genuinely "win32", no
+        # faking needed), would otherwise exhaust their `responses` iterator.
+        # Tests that care about this behavior grab the mock via this attribute
+        # (or override the patch locally with their own).
+        self._ensure_spotty_mock = self.enterContext(
+            patch("app.cli._ensure_spotty_after_setup")
+        )
         # Isolate config/data dirs for the whole class so environ=None or partial
         # environ dicts cannot resolve persist_local_port to the real home.
         self._xdg_tmpdir = tempfile.TemporaryDirectory()
@@ -4099,6 +4317,76 @@ class ConfigUnitTests(TestCase):
             self.assertEqual(preferences.mode, "remote")
             self.assertEqual(preferences.base_url, "https://remote.example")
 
+    def test_setup_fresh_remote_offers_spotty_bunny(self) -> None:
+        """Regression (#467): a fresh remote-mode setup never offered to
+        install Spotty Bunny at all -- only local-mode setup did."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            responses = iter(["n", "remote", "https://remote.example/"])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+                patch("app.cli._ensure_spotty_after_setup") as ensure_spotty,
+            ):
+                run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+            ensure_spotty.assert_called_once()
+
+    def test_setup_kept_remote_offers_spotty_bunny(self) -> None:
+        """Regression (#467): re-confirming ('Keep this configuration?')
+        an existing remote setup also skipped the Spotty Bunny hint."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import run_setup
+        from app.client import HealthStatus
+        from app.config import ServerPreferences, save_preferences
+
+        matching = HealthStatus(ok=True, version="0.10.0", commit="abc123456789")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            save_preferences(
+                ServerPreferences(
+                    mode="remote",
+                    base_url="https://remote.example",
+                    local_port=None,
+                ),
+                env_path=path,
+                environ={},
+            )
+            responses = iter(["y"])
+            with (
+                patch("app.cli.check_health", return_value=True),
+                patch("app.cli.fetch_health", return_value=matching),
+                patch(
+                    "app.coherence.get_build_info",
+                    return_value=("0.10.0", "abc123456789"),
+                ),
+                patch("app.cli._ensure_spotty_after_setup") as ensure_spotty,
+            ):
+                run_setup(
+                    prompt_fn=lambda _message: next(responses),
+                    env_path=path,
+                    print_fn=lambda _message: None,
+                )
+            ensure_spotty.assert_called_once()
+
     def test_setup_remote_aborts_when_mismatch_declined(self) -> None:
         import tempfile
         from pathlib import Path
@@ -4576,55 +4864,6 @@ class ConfigUnitTests(TestCase):
             )
         assess.assert_not_called()
         self.assertIn("skipping version coherence checks", "\n".join(messages))
-
-    def test_ensure_local_spotty_after_setup_warns_when_still_mismatched(self) -> None:
-        from unittest.mock import patch
-
-        from app.cli import _ensure_local_spotty_after_setup
-        from app.theme import Theme
-
-        messages: list[str] = []
-        with (
-            patch("app.cli.sys.platform", "darwin"),
-            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
-            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
-            patch("app.cli.ensure_local_spotty_aligned"),
-            patch("app.cli.running_spotty_commit", return_value=(True, "oldspotty1")),
-            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
-        ):
-            _ensure_local_spotty_after_setup(
-                print_fn=messages.append,
-                prompt_fn=lambda _message: "n",
-                theme=Theme(enabled=False),
-            )
-        joined = "\n".join(messages)
-        self.assertIn("still running an older build", joined)
-        self.assertNotIn("✓ Spotty Bunny is running", joined)
-
-    def test_ensure_local_spotty_after_setup_ok_when_aligned(self) -> None:
-        from unittest.mock import patch
-
-        from app.cli import _ensure_local_spotty_after_setup
-        from app.theme import Theme
-
-        messages: list[str] = []
-        with (
-            patch("app.cli.sys.platform", "darwin"),
-            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
-            patch("app.spotty_bunny_launch.spotty_bunny_is_running", return_value=True),
-            patch("app.cli.ensure_local_spotty_aligned"),
-            patch(
-                "app.cli.running_spotty_commit",
-                return_value=(True, "newnewnewnew"),
-            ),
-            patch("app.cli.get_build_info", return_value=("0.10.0", "newnewnewnew")),
-        ):
-            _ensure_local_spotty_after_setup(
-                print_fn=messages.append,
-                prompt_fn=lambda _message: "y",
-                theme=Theme(enabled=False),
-            )
-        self.assertIn("✓ Spotty Bunny is running", "\n".join(messages))
 
     def test_ensure_local_server_for_setup_reuses_matching_build(self) -> None:
         from pathlib import Path
