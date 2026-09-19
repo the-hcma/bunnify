@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
+from unittest import skipUnless
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -10,10 +11,12 @@ from app.spotty_bunny_complete import CompletionRow
 from app.spotty_bunny_io import ImmediateIo
 from app.spotty_bunny_menu import CHECK_FOR_UPDATES_STATUS, logo_menu_specs
 from app.spotty_bunny_status import SHORTCUTS_LOAD_FAILED
+from app.spotty_bunny_tap_health import TAP_HEALTH_CHECK_INTERVAL_S
 from app.spotty_bunny_update import UpdateStatus
 from app.spotty_bunny_win32_app import (
     TIMER_ID_HEALTH,
     TIMER_ID_UPDATE,
+    UPDATE_CHECK_INTERVAL_MS,
     VK_DOWN,
     VK_ESCAPE,
     VK_PRIOR,
@@ -29,6 +32,7 @@ from app.spotty_bunny_win32_app import (
     _make_overlay_wndproc,
     _register_overlay_class,
     _selector_for_vk,
+    _set_window_timer,
     _show_context_menu,
     run_spotty_bunny_win32_app,
 )
@@ -1367,6 +1371,82 @@ class RunSpottyBunnyWin32AppTests(SimpleTestCase):
             ),
             patch("app.spotty_bunny_win32_app.pump_hook_messages"),
             patch("app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32", make_icon),
+            patch("app.spotty_bunny_win32_app._set_window_timer"),
         ):
             run_spotty_bunny_win32_app()
         make_icon.assert_any_call(16, outdated=True)
+
+    def test_timers_start_through_user32_not_win32gui(self) -> None:
+        # Regression: pywin32 312 has no win32gui.SetTimer, so startup died
+        # with AttributeError. A MagicMock win32gui accepts any attribute and
+        # hid that, hence the explicit assert_not_called.
+        win32gui = _make_fake_win32gui()
+        set_timer = MagicMock()
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "win32gui": win32gui,
+                    "win32con": MagicMock(),
+                    "win32api": MagicMock(),
+                },
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=MagicMock(),
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=False),
+            patch(
+                "app.spotty_bunny_win32_app._create_overlay_window", return_value=123
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.install_chord_hook",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.install_console_quit_handler",
+                return_value=lambda: None,
+            ),
+            patch("app.spotty_bunny_win32_app.pump_hook_messages"),
+            patch(
+                "app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32",
+                MagicMock(return_value=99),
+            ),
+            patch("app.spotty_bunny_win32_app._set_window_timer", set_timer),
+        ):
+            run_spotty_bunny_win32_app()
+        win32gui.SetTimer.assert_not_called()
+        set_timer.assert_any_call(
+            123, TIMER_ID_HEALTH, int(TAP_HEALTH_CHECK_INTERVAL_S * 1000)
+        )
+        set_timer.assert_any_call(123, TIMER_ID_UPDATE, UPDATE_CHECK_INTERVAL_MS)
+
+
+@skipUnless(sys.platform == "win32", "needs the real user32")
+class SetWindowTimerTests(SimpleTestCase):
+    def test_a_real_wm_timer_arrives(self) -> None:
+        import win32con  # pyright: ignore[reportMissingModuleSource]
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+
+        hwnd = win32gui.CreateWindowEx(
+            0, "STATIC", "t", win32con.WS_POPUP, 0, 0, 1, 1, 0, 0, 0, None
+        )
+        try:
+            _set_window_timer(hwnd, 7, 30)
+            deadline = time.monotonic() + 3.0
+            seen = False
+            while time.monotonic() < deadline and not seen:
+                message = win32gui.PeekMessage(
+                    hwnd, win32con.WM_TIMER, win32con.WM_TIMER, win32con.PM_REMOVE
+                )
+                seen = bool(message[0])
+                time.sleep(0.01)
+            self.assertTrue(seen, "no WM_TIMER within 3s")
+        finally:
+            # Destroying the window also kills its timers (win32gui has no
+            # KillTimer in pywin32 312 either).
+            win32gui.DestroyWindow(hwnd)
+
+    def test_an_invalid_window_raises_os_error(self) -> None:
+        with self.assertRaises(OSError):
+            _set_window_timer(0xDEAD, 7, 30)
