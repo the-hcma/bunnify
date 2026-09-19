@@ -35,8 +35,18 @@ def _outdated_badge_geometry(side: float) -> tuple[float, float, float]:
     return center, center, radius
 
 
-def make_spotty_bunny_icon_win32(size: int, *, outdated: bool = False) -> int:
-    """Return an ``HICON`` handle for the tray, *size*x*size* pixels.
+def make_spotty_bunny_icon_win32(
+    size: int,
+    *,
+    background_rgb: tuple[int, int, int] | None = None,
+    glyph_rgb: tuple[int, int, int] | None = None,
+    outdated: bool = False,
+) -> int:
+    """Return an ``HICON`` handle, *size*x*size* pixels.
+
+    *background_rgb* and *glyph_rgb* override the system window color and the
+    default text color, so the icon can sit on a colored panel instead of
+    showing a white square.
 
     The caller owns the returned handle and must destroy it (``win32gui
     .DestroyIcon``) once no longer needed (e.g. before replacing it via a
@@ -54,11 +64,17 @@ def make_spotty_bunny_icon_win32(size: int, *, outdated: bool = False) -> int:
     win32gui.ReleaseDC(0, screen_dc)
     try:
         win32gui.SelectObject(mem_dc, color_bitmap)
-        background = win32gui.GetSysColor(win32con.COLOR_WINDOW)
+        background = (
+            _rgb(*background_rgb)
+            if background_rgb is not None
+            else win32gui.GetSysColor(win32con.COLOR_WINDOW)
+        )
         brush = win32gui.CreateSolidBrush(background)
         win32gui.FillRect(mem_dc, (0, 0, side, side), brush)
         win32gui.DeleteObject(brush)
-        _draw_glyph_or_fallback(mem_dc, side, win32con=win32con, win32ui=win32ui)
+        _draw_glyph_or_fallback(
+            mem_dc, side, glyph_rgb=glyph_rgb, win32con=win32con, win32ui=win32ui
+        )
         if outdated:
             _draw_outdated_badge(mem_dc, side, win32gui=win32gui, win32con=win32con)
         # Compatible with mem_dc, not the already-released screen_dc (a
@@ -74,7 +90,14 @@ def make_spotty_bunny_icon_win32(size: int, *, outdated: bool = False) -> int:
         win32gui.DeleteDC(mem_dc)
 
 
-def _draw_glyph_or_fallback(mem_dc: int, side: int, *, win32con, win32ui) -> None:
+def _draw_glyph_or_fallback(
+    mem_dc: int,
+    side: int,
+    *,
+    glyph_rgb: tuple[int, int, int] | None = None,
+    win32con,
+    win32ui,
+) -> None:
     try:
         font = win32ui.CreateFont(
             {
@@ -93,13 +116,20 @@ def _draw_glyph_or_fallback(mem_dc: int, side: int, *, win32con, win32ui) -> Non
     # The wrapper only borrows mem_dc; the caller owns and deletes it. Calling
     # dc.DeleteDC() here would destroy that handle out from under the caller
     # ("The handle is invalid" on the next GDI call).
+    import win32gui  # pyright: ignore[reportMissingModuleSource]
+
     dc = win32ui.CreateDCFromHandle(mem_dc)
     dc.SelectObject(font)
     dc.SetBkMode(win32con.TRANSPARENT)
-    rect = (0, 0, side, side)
-    dc.DrawText(
+    if glyph_rgb is not None:
+        dc.SetTextColor(_rgb(*glyph_rgb))
+    # win32ui's DrawText takes ANSI text, which draws the emoji's UTF-8 bytes
+    # as mojibake ("ðŸ°"); win32gui.DrawText is the wide-character API.
+    win32gui.DrawText(
+        mem_dc,
         BUNNIFY_LOGO_EMOJI,
-        rect,
+        -1,
+        (0, 0, side, side),
         win32con.DT_CENTER | win32con.DT_VCENTER | win32con.DT_SINGLELINE,
     )
 
