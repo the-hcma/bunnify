@@ -1453,6 +1453,23 @@ class ShowOverlayWindowTests(SimpleTestCase):
         win32gui.SetForegroundWindow.assert_called_once_with(10)
         win32gui.SetFocus.assert_called_once_with(20)
 
+    def test_a_failed_detach_does_not_abort_showing(self) -> None:
+        # The attach succeeds and only the detach (attach=False) raises: it
+        # runs in a finally block, so an unguarded failure there would escape
+        # _take_foreground and abort showing the overlay -- the #477 failure.
+        win32gui, win32api, win32process = _make_focus_modules()
+
+        def attach_thread_input(_this_thread, _foreground_thread, attach):
+            if not attach:
+                raise _FakeGuiError(5, "AttachThreadInput", "")
+
+        win32process.AttachThreadInput = MagicMock(side_effect=attach_thread_input)
+        self._show(win32gui, win32api, win32process)
+        win32process.AttachThreadInput.assert_any_call(1, 555, True)
+        win32process.AttachThreadInput.assert_any_call(1, 555, False)
+        win32gui.SetForegroundWindow.assert_called_once_with(10)
+        win32gui.SetFocus.assert_called_once_with(20)
+
     def test_a_foreground_window_that_vanishes_does_not_abort_showing(self) -> None:
         # The foreground window can close between GetForegroundWindow and the
         # thread lookup; pywin32 raises the same (0, ...) shape as a refusal.
