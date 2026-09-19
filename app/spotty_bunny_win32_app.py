@@ -76,6 +76,8 @@ from app.spotty_bunny_status import format_spotty_bunny_status
 from app.spotty_bunny_tap_health import TAP_HEALTH_CHECK_INTERVAL_S
 from app.spotty_bunny_update import (
     badge_should_show,
+    cache_is_stale,
+    read_cached_update_status,
     refresh_update_status,
     summarize_update_check,
 )
@@ -176,8 +178,10 @@ class SpottyBunnyWin32Controller:
         self._completion_seq = 0
         self._pending_resolves: dict[int, object] = {}
         self._pending_completions: dict[int, object] = {}
-        self._update_status = None
-        self._outdated = False
+        self._update_status = read_cached_update_status()
+        self._outdated = bool(badge_should_show(self._update_status, self_stale=False))
+        self._update_check_pending = False
+        self._update_check_requeue = False
         self._agent_installed = False
         self._open_url_fn: Callable[[str], None] = open_url
         self._append_history_fn: Callable[[str], None] = append_history_line
@@ -210,6 +214,8 @@ class SpottyBunnyWin32Controller:
         self._load_completer_async()
         self.visible = True
         self.set_window_visible(True)
+        if cache_is_stale(self._update_status.checked_at):
+            self._refresh_update_status(force=False, announce=False)
         logger.info("show overlay")
 
     def hide(self) -> None:
@@ -522,20 +528,52 @@ class SpottyBunnyWin32Controller:
 
     def check_for_updates(self) -> None:
         self.set_status_text(CHECK_FOR_UPDATES_STATUS)
+        self._refresh_update_status(force=True, announce=True)
+
+    def _refresh_update_status(self, *, force: bool, announce: bool) -> None:
+        """Re-check the PyPI cache in the background.
+
+        ``announce=False`` mirrors macOS's quiet startup/stale-cache
+        recheck: the icon badge still updates, but no status text is
+        touched (there's nothing user-initiated to report on).
+
+        Only one refresh runs at a time (mirrors macOS's
+        ``_update_check_pending``/``_update_check_requeue``,
+        app/spotty_bunny_app.py:1086) -- otherwise a quiet background
+        refresh started while stale and a user-initiated "Check for
+        Updates" can race, and whichever's fetch resolves last silently
+        overwrites the other's more recent result.
+        """
+        if self._update_check_pending:
+            if force:
+                self._update_check_requeue = True
+            return
+        self._update_check_pending = True
 
         def work() -> object:
-            return refresh_update_status(force=True)
+            return refresh_update_status(force=force)
 
         def on_done(result: object) -> None:
+            self._update_check_pending = False
+            requeue = self._update_check_requeue
+            self._update_check_requeue = False
             if isinstance(result, BaseException):
-                self.set_status_text("Could not check for updates.")
-                return
-            self._update_status = result
-            outdated = bool(badge_should_show(result, self_stale=False))
-            if outdated != self._outdated:
-                self._outdated = outdated
-                self.set_icon_outdated(outdated)
-            self.set_status_text(summarize_update_check(result, self_stale=False))
+                logger.warning("update check failed: %s", result)
+                if announce:
+                    self.set_status_text("Could not check for updates.")
+            else:
+                self._update_status = result
+                outdated = bool(badge_should_show(result, self_stale=False))
+                if outdated != self._outdated:
+                    self._outdated = outdated
+                    self.set_icon_outdated(outdated)
+                if announce:
+                    self.set_status_text(
+                        summarize_update_check(result, self_stale=False)
+                    )
+            if requeue:
+                self.set_status_text(CHECK_FOR_UPDATES_STATUS)
+                self._refresh_update_status(force=True, announce=True)
 
         self._io.submit(work, on_done)
 
@@ -703,7 +741,9 @@ def run_spotty_bunny_win32_app() -> int:
     )
     controller.destroy_about_window = win32gui.DestroyWindow
 
-    icon_state: dict[str, int] = {"handle": make_spotty_bunny_icon_win32(16)}
+    icon_state: dict[str, int] = {
+        "handle": make_spotty_bunny_icon_win32(16, outdated=controller._outdated)
+    }
     controller.icon_handle = icon_state["handle"]
     win32gui.Shell_NotifyIcon(
         win32gui.NIM_ADD,

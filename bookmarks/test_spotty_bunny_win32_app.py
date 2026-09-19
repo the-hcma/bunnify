@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import sys
+import time
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
 from app.spotty_bunny_complete import CompletionRow
 from app.spotty_bunny_io import ImmediateIo
-from app.spotty_bunny_menu import logo_menu_specs
+from app.spotty_bunny_menu import CHECK_FOR_UPDATES_STATUS, logo_menu_specs
+from app.spotty_bunny_update import UpdateStatus
 from app.spotty_bunny_win32_app import (
     TIMER_ID_HEALTH,
     TIMER_ID_UPDATE,
@@ -25,6 +28,7 @@ from app.spotty_bunny_win32_app import (
     _make_overlay_wndproc,
     _selector_for_vk,
     _show_context_menu,
+    run_spotty_bunny_win32_app,
 )
 
 
@@ -48,6 +52,19 @@ def _make_controller() -> SpottyBunnyWin32Controller:
     # loading itself (that's covered by app.spotty_bunny_complete's own
     # tests), so stub it out to keep this suite offline and fast.
     controller._load_completer_async = lambda: None
+    # __init__ seeds _update_status/_outdated from the real on-disk PyPI
+    # cache (read_cached_update_status()), which isn't isolated in test
+    # settings -- on a machine whose cache reports the installed version
+    # as outdated, that would make _outdated start True and the
+    # transition assertions below environment-dependent. Also, show()
+    # triggers a background PyPI refresh whenever the cache is stale,
+    # which it always is with no cache file (the common CI/dev case).
+    # Pin both to deterministic, fresh values here; StartupUpdateStatusTests
+    # below exercises the real seeding/stale-cache paths directly.
+    controller._update_status = UpdateStatus(
+        checked_at=time.time(), current="0.0.0", latest=None, outdated=False
+    )
+    controller._outdated = False
     return controller
 
 
@@ -203,6 +220,135 @@ class CheckForUpdatesTests(SimpleTestCase):
         self.assertEqual(statuses[-1], "Could not check for updates.")
         self.assertFalse(controller._outdated)
         self.assertEqual(calls, [])
+
+
+class StartupUpdateStatusTests(SimpleTestCase):
+    def test_init_seeds_outdated_from_cached_status(self) -> None:
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
+        ):
+            controller = SpottyBunnyWin32Controller(io=ImmediateIo())
+        self.assertIs(controller._update_status, status)
+        self.assertTrue(controller._outdated)
+
+    def test_init_not_outdated_when_cache_says_current(self) -> None:
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=False),
+        ):
+            controller = SpottyBunnyWin32Controller(io=ImmediateIo())
+        self.assertFalse(controller._outdated)
+
+    def test_show_refreshes_in_background_when_cache_is_stale(self) -> None:
+        controller = _make_controller()
+        calls: list[tuple[bool, bool]] = []
+        controller._refresh_update_status = lambda *, force, announce: calls.append(
+            (force, announce)
+        )
+        with patch("app.spotty_bunny_win32_app.cache_is_stale", return_value=True):
+            controller.show()
+        self.assertEqual(calls, [(False, False)])
+
+    def test_show_does_not_refresh_when_cache_is_fresh(self) -> None:
+        controller = _make_controller()
+        calls: list[tuple[bool, bool]] = []
+        controller._refresh_update_status = lambda *, force, announce: calls.append(
+            (force, announce)
+        )
+        with patch("app.spotty_bunny_win32_app.cache_is_stale", return_value=False):
+            controller.show()
+        self.assertEqual(calls, [])
+
+    def test_refresh_update_status_quiet_updates_icon_without_status_text(
+        self,
+    ) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        icon_calls: list[bool] = []
+        controller.set_icon_outdated = icon_calls.append
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
+        status = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.refresh_update_status",
+                return_value=status,
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
+        ):
+            controller._refresh_update_status(force=False, announce=False)
+        self.assertEqual(icon_calls, [True])
+        self.assertEqual(status_calls, [])
+
+    def test_refresh_update_status_quiet_failure_does_not_set_status(self) -> None:
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
+
+        def boom(**_kwargs: object) -> object:
+            raise ConnectionError("unreachable")
+
+        with patch(
+            "app.spotty_bunny_win32_app.refresh_update_status", side_effect=boom
+        ):
+            controller._refresh_update_status(force=False, announce=False)
+        self.assertEqual(status_calls, [])
+        # A failed refresh must still clear the in-flight guard -- otherwise
+        # one transient PyPI failure would permanently block every later
+        # update check (both the manual menu item and the 24h timer tick).
+        self.assertFalse(controller._update_check_pending)
+
+    def test_manual_check_during_quiet_refresh_is_requeued_not_racy(self) -> None:
+        # Regression: without a pending/requeue guard, a quiet show()-time
+        # refresh and a manual "Check for Updates" click can run
+        # concurrently; whichever's fetch resolves last silently overwrites
+        # the other's result (see macOS's own _update_check_pending guard,
+        # app/spotty_bunny_app.py:1086, for the same race).
+        controller = _make_controller()
+        controller._io = _CapturingIo()
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
+
+        controller._refresh_update_status(force=False, announce=False)
+        self.assertEqual(len(controller._io.jobs), 1)
+
+        controller.check_for_updates()
+        # The click's own status shows immediately, but no second
+        # refresh_update_status() job is submitted while one is in flight.
+        self.assertEqual(status_calls, [CHECK_FOR_UPDATES_STATUS])
+        self.assertEqual(len(controller._io.jobs), 1)
+        self.assertTrue(controller._update_check_requeue)
+
+        # The in-flight (quiet) job's own possibly-stale result resolves...
+        _work, on_done = controller._io.jobs[0]
+        on_done(
+            UpdateStatus(checked_at=1.0, current="1.0.0", latest=None, outdated=False)
+        )
+
+        # ...and the requeued manual check fires immediately afterwards
+        # (now itself in flight as job 2), instead of the click being
+        # silently dropped.
+        self.assertEqual(len(controller._io.jobs), 2)
+        # The full sequence, not just the last entry -- the requeue branch
+        # must make its own set_status_text(CHECK_FOR_UPDATES_STATUS) call
+        # (app/spotty_bunny_win32_app.py's _refresh_update_status), not just
+        # rely on check_for_updates()'s earlier one still being the last
+        # item by coincidence.
+        self.assertEqual(
+            status_calls, [CHECK_FOR_UPDATES_STATUS, CHECK_FOR_UPDATES_STATUS]
+        )
+        self.assertTrue(controller._update_check_pending)
+        self.assertFalse(controller._update_check_requeue)
 
 
 class ShowHideToggleTests(SimpleTestCase):
@@ -1109,3 +1255,44 @@ class ShowContextMenuTests(SimpleTestCase):
         ):
             _show_context_menu(controller, win32gui=win32gui, win32con=_FakeWin32Con)
         controller.dispatch_menu_action.assert_not_called()
+
+
+class RunSpottyBunnyWin32AppTests(SimpleTestCase):
+    def test_tray_icon_created_with_initial_outdated_state(self) -> None:
+        # Regression: the tray icon is created (icon_state = {"handle":
+        # make_spotty_bunny_icon_win32(16, ...)}) before set_icon_outdated
+        # is wired up to the controller, so unlike every later re-render,
+        # nothing else will ever correct this first icon's badge state --
+        # it must already reflect __init__'s cache-derived _outdated, or a
+        # real launch shows "current" for up to a day even when the
+        # on-disk cache already says otherwise.
+        win32gui = _make_fake_win32gui()
+        win32con = MagicMock()
+        win32api = MagicMock()
+        make_icon = MagicMock(return_value=99)
+        with (
+            patch.dict(
+                sys.modules,
+                {"win32gui": win32gui, "win32con": win32con, "win32api": win32api},
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=MagicMock(),
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
+            patch(
+                "app.spotty_bunny_win32_app._create_overlay_window", return_value=123
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.install_chord_hook",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.install_console_quit_handler",
+                return_value=lambda: None,
+            ),
+            patch("app.spotty_bunny_win32_app.pump_hook_messages"),
+            patch("app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32", make_icon),
+        ):
+            run_spotty_bunny_win32_app()
+        make_icon.assert_any_call(16, outdated=True)
