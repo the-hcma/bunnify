@@ -159,6 +159,7 @@ def build_about_window(
             lambda hwnd, y: _create_syslink(
                 hwnd,
                 to_syslink_markup(version_text, version_links),
+                version_text,
                 x=ABOUT_PAD,
                 y=y,
                 width=inner_width,
@@ -174,6 +175,7 @@ def build_about_window(
                 to_syslink_markup(
                     ABOUT_COPYRIGHT, ((ABOUT_GITHUB_HANDLE, ABOUT_GITHUB_PROFILE_URL),)
                 ),
+                ABOUT_COPYRIGHT,
                 x=ABOUT_PAD,
                 y=y,
                 width=inner_width,
@@ -187,6 +189,7 @@ def build_about_window(
             lambda hwnd, y: _create_syslink(
                 hwnd,
                 to_syslink_markup(details_text, details_links),
+                details_text,
                 x=ABOUT_PAD,
                 y=y,
                 width=inner_width,
@@ -372,6 +375,7 @@ def _create_static(
 def _create_syslink(
     hwnd: int,
     markup: str,
+    plain_text: str,
     *,
     x: int,
     y: int,
@@ -380,20 +384,50 @@ def _create_syslink(
     win32gui,
     win32con,
 ) -> int:
-    return win32gui.CreateWindowEx(
-        0,
-        _SYSLINK_CLASS,
-        markup,
-        win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.WS_TABSTOP,
-        x,
-        y,
-        width,
-        height,
-        hwnd,
-        0,
-        win32gui.GetModuleHandle(None),
-        None,
-    )
+    """Create a ``SysLink`` control, falling back to a plain label.
+
+    ``SysLink`` is a comctl32-v6 control (see :func:`_init_syslink_class`);
+    whether a bare pipx-installed process actually gets a v6 activation
+    context is unverifiable without a real Windows machine (issue #441).
+    If ``CreateWindowEx`` can't find the class, it raises rather than
+    silently degrading -- fall back to *plain_text* in a ``STATIC`` label
+    (no clickable links, but a working About panel) instead of letting
+    that exception kill the whole tray process on the first click.
+
+    Catches both ``OSError`` and ``pywintypes.error``: pywin32 wrappers
+    like ``win32gui.CreateWindowEx`` raise the latter, and whether it
+    derives from the former isn't something to bet the fallback on --
+    catching both is correct regardless of which one is true.
+    """
+    import pywintypes  # pyright: ignore[reportMissingModuleSource]
+
+    try:
+        return win32gui.CreateWindowEx(
+            0,
+            _SYSLINK_CLASS,
+            markup,
+            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.WS_TABSTOP,
+            x,
+            y,
+            width,
+            height,
+            hwnd,
+            0,
+            win32gui.GetModuleHandle(None),
+            None,
+        )
+    except OSError, pywintypes.error:
+        logger.warning("SysLink control unavailable; falling back to a plain label")
+        return _create_static(
+            hwnd,
+            plain_text,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            win32gui=win32gui,
+            win32con=win32con,
+        )
 
 
 _about_class_registered = False

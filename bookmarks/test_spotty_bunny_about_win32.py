@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ctypes
+import sys
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -14,6 +16,7 @@ from app.spotty_bunny_about_win32 import (
     _NM_CLICK,
     _NM_RETURN,
     _NMLINK,
+    ABOUT_COPYRIGHT,
     _anchor_near_cursor,
     _handle_link_click,
     _make_about_wndproc,
@@ -39,6 +42,15 @@ def _about_runtime(**overrides: object) -> AboutRuntimeInfo:
     }
     defaults.update(overrides)
     return AboutRuntimeInfo(**defaults)  # type: ignore[arg-type]
+
+
+def _fake_pywintypes() -> ModuleType:
+    """A stand-in for the real ``pywintypes`` module (not installed off
+    Windows): ``_create_syslink`` does a deferred ``import pywintypes``
+    to catch its ``error`` exception type alongside ``OSError``."""
+    module = ModuleType("pywintypes")
+    module.error = type("error", (Exception,), {})  # type: ignore[attr-defined]
+    return module
 
 
 class ToSyslinkMarkupTests(SimpleTestCase):
@@ -98,6 +110,99 @@ class ToSyslinkMarkupTests(SimpleTestCase):
             ' · commit <A HREF="https://github.com/the-hcma/bunnify/commit/'
             'abcdef1">abcdef1</A>',
         )
+
+
+class CreateSyslinkFallbackTests(SimpleTestCase):
+    """Issue #441: SysLink is a comctl32-v6 control that may not be
+    available under a bare pipx install; _create_syslink() must degrade
+    to a plain label instead of letting CreateWindowEx's exception kill
+    the whole tray process on the first About-panel click."""
+
+    def setUp(self) -> None:
+        # _create_syslink does a deferred `import pywintypes`, which
+        # isn't installed off Windows.
+        self.enterContext(patch.dict(sys.modules, {"pywintypes": _fake_pywintypes()}))
+
+    def test_creates_a_syslink_when_available(self) -> None:
+        from app.spotty_bunny_about_win32 import _create_syslink
+
+        win32gui = MagicMock()
+        win32gui.CreateWindowEx.return_value = 7
+        win32con = MagicMock()
+
+        result = _create_syslink(
+            1,
+            '<A HREF="https://example.com">click</A>',
+            "click",
+            x=0,
+            y=0,
+            width=100,
+            height=20,
+            win32gui=win32gui,
+            win32con=win32con,
+        )
+
+        self.assertEqual(result, 7)
+        win32gui.CreateWindowEx.assert_called_once()
+        self.assertEqual(win32gui.CreateWindowEx.call_args.args[1], "SysLink")
+
+    def test_falls_back_to_plain_static_when_syslink_creation_raises_oserror(
+        self,
+    ) -> None:
+        self._assert_falls_back(OSError("Cannot find window class."))
+
+    def test_falls_back_to_plain_static_when_syslink_creation_raises_pywintypes_error(
+        self,
+    ) -> None:
+        """Regression: pywin32 wrappers like CreateWindowEx raise their own
+        pywintypes.error, not a stdlib OSError -- whether that derives from
+        OSError isn't something to bet the fallback on. A fake win32gui
+        that only ever raised OSError (as the sibling test above does)
+        can't tell the difference between catching this for real and an
+        accidental narrower `except OSError` that happens to also work."""
+        import sys as _sys
+
+        pywintypes_error = _sys.modules["pywintypes"].error
+        self._assert_falls_back(pywintypes_error("Cannot find window class."))
+
+    def _assert_falls_back(self, exc: Exception) -> None:
+        from app.spotty_bunny_about_win32 import _create_syslink
+
+        win32gui = MagicMock()
+        win32con = MagicMock()
+        win32con.WS_CHILD = 0x40000000
+        win32con.WS_VISIBLE = 0x10000000
+        win32con.WS_TABSTOP = 0x00010000
+        win32con.SS_LEFT = 0x00000000
+
+        def create_window_ex(_ex_style, class_name, *_rest):
+            if class_name == "SysLink":
+                raise exc
+            return 42
+
+        win32gui.CreateWindowEx.side_effect = create_window_ex
+        win32gui.GetModuleHandle.return_value = 1
+
+        with self.assertLogs("app.spotty_bunny_about_win32", level="WARNING"):
+            result = _create_syslink(
+                1,
+                '<A HREF="https://example.com">click</A>',
+                "click",
+                x=0,
+                y=0,
+                width=100,
+                height=20,
+                win32gui=win32gui,
+                win32con=win32con,
+            )
+
+        self.assertEqual(result, 42)
+        self.assertEqual(win32gui.CreateWindowEx.call_count, 2)
+        fallback_call = win32gui.CreateWindowEx.call_args_list[1]
+        self.assertEqual(fallback_call.args[1], "STATIC")
+        # Plain text, not the <A HREF> markup -- SysLink's markup would
+        # render literally (tags and all) in a plain STATIC label.
+        self.assertEqual(fallback_call.args[2], "click")
 
 
 class WindowsApiConstantsTests(SimpleTestCase):
@@ -453,6 +558,9 @@ class BuildAboutWindowTests(SimpleTestCase):
         self._previous_controller = about_win32._about_wndproc_controller
         about_win32._about_class_registered = False
         about_win32._about_wndproc_controller = None
+        # _create_syslink does a deferred `import pywintypes`, which isn't
+        # installed off Windows.
+        self.enterContext(patch.dict(sys.modules, {"pywintypes": _fake_pywintypes()}))
 
     def tearDown(self) -> None:
         self._about_win32._about_class_registered = self._previous_registered
@@ -712,6 +820,50 @@ class BuildAboutWindowTests(SimpleTestCase):
                 MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
             )
         init.assert_called_once()
+
+    def test_still_builds_every_row_when_syslink_is_unavailable(self) -> None:
+        """Issue #441: on a machine where CreateWindowEx("SysLink", ...)
+        raises (no comctl32-v6 activation context), the whole About panel
+        must still appear -- degraded to plain labels -- rather than the
+        exception propagating out of build_about_window() and killing the
+        tray process on the first click."""
+        win32gui, win32con, win32api, created = self._fake_win32()
+
+        def create_window_ex(
+            ex_style, class_name, text, style, x, y, width, height, *_rest
+        ):
+            if class_name == "SysLink":
+                raise OSError("Cannot find window class.")
+            created.append(
+                {
+                    "class_name": class_name,
+                    "text": text,
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                    "style": style,
+                    "ex_style": ex_style,
+                }
+            )
+            return len(created)
+
+        win32gui.CreateWindowEx.side_effect = create_window_ex
+
+        with self.assertLogs("app.spotty_bunny_about_win32", level="WARNING"):
+            self._build(win32gui, win32con, win32api)
+
+        self.assertEqual(len(created), 6)
+        for row in created[3:6]:
+            self.assertEqual(row["class_name"], "STATIC")
+        # The un-marked-up source text, not the <A HREF> markup -- a plain
+        # STATIC label would otherwise render the literal tags rather than
+        # degrading to plain, readable text.
+        version_text, _ = about_version_text_and_links("1.2.3", "abc1234")
+        details_text, _ = about_details_text_and_links(_about_runtime())
+        self.assertEqual(created[3]["text"], version_text)
+        self.assertEqual(created[4]["text"], ABOUT_COPYRIGHT)
+        self.assertEqual(created[5]["text"], details_text)
 
 
 class InitSyslinkClassTests(SimpleTestCase):
