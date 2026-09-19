@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import time
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,7 @@ from app.spotty_bunny_win32_app import (
     _make_overlay_wndproc,
     _selector_for_vk,
     _show_context_menu,
+    run_spotty_bunny_win32_app,
 )
 
 
@@ -1242,3 +1244,44 @@ class ShowContextMenuTests(SimpleTestCase):
         ):
             _show_context_menu(controller, win32gui=win32gui, win32con=_FakeWin32Con)
         controller.dispatch_menu_action.assert_not_called()
+
+
+class RunSpottyBunnyWin32AppTests(SimpleTestCase):
+    def test_tray_icon_created_with_initial_outdated_state(self) -> None:
+        # Regression: the tray icon is created (icon_state = {"handle":
+        # make_spotty_bunny_icon_win32(16, ...)}) before set_icon_outdated
+        # is wired up to the controller, so unlike every later re-render,
+        # nothing else will ever correct this first icon's badge state --
+        # it must already reflect __init__'s cache-derived _outdated, or a
+        # real launch shows "current" for up to a day even when the
+        # on-disk cache already says otherwise.
+        win32gui = _make_fake_win32gui()
+        win32con = MagicMock()
+        win32api = MagicMock()
+        make_icon = MagicMock(return_value=99)
+        with (
+            patch.dict(
+                sys.modules,
+                {"win32gui": win32gui, "win32con": win32con, "win32api": win32api},
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=MagicMock(),
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
+            patch(
+                "app.spotty_bunny_win32_app._create_overlay_window", return_value=123
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.install_chord_hook",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.install_console_quit_handler",
+                return_value=lambda: None,
+            ),
+            patch("app.spotty_bunny_win32_app.pump_hook_messages"),
+            patch("app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32", make_icon),
+        ):
+            run_spotty_bunny_win32_app()
+        make_icon.assert_any_call(16, outdated=True)

@@ -558,6 +558,7 @@ class SpottyBunnyWin32Controller:
             requeue = self._update_check_requeue
             self._update_check_requeue = False
             if isinstance(result, BaseException):
+                logger.warning("update check failed: %s", result)
                 if announce:
                     self.set_status_text("Could not check for updates.")
             else:
