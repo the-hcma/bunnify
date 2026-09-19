@@ -7,7 +7,7 @@ from django.test import SimpleTestCase
 
 from app.spotty_bunny_complete import CompletionRow
 from app.spotty_bunny_io import ImmediateIo
-from app.spotty_bunny_menu import logo_menu_specs
+from app.spotty_bunny_menu import CHECK_FOR_UPDATES_STATUS, logo_menu_specs
 from app.spotty_bunny_update import UpdateStatus
 from app.spotty_bunny_win32_app import (
     TIMER_ID_HEALTH,
@@ -50,15 +50,19 @@ def _make_controller() -> SpottyBunnyWin32Controller:
     # loading itself (that's covered by app.spotty_bunny_complete's own
     # tests), so stub it out to keep this suite offline and fast.
     controller._load_completer_async = lambda: None
-    # show() also triggers a background PyPI refresh when the on-disk
-    # update-status cache is stale, which it always is on a machine with
-    # no cache file (the common case in CI/dev sandboxes). Give the
-    # controller a freshly-"checked" status so plain show()/hide() tests
-    # don't inadvertently kick off a real network call; StartupUpdateStatusTests
-    # below exercises the stale-cache path directly.
+    # __init__ seeds _update_status/_outdated from the real on-disk PyPI
+    # cache (read_cached_update_status()), which isn't isolated in test
+    # settings -- on a machine whose cache reports the installed version
+    # as outdated, that would make _outdated start True and the
+    # transition assertions below environment-dependent. Also, show()
+    # triggers a background PyPI refresh whenever the cache is stale,
+    # which it always is with no cache file (the common CI/dev case).
+    # Pin both to deterministic, fresh values here; StartupUpdateStatusTests
+    # below exercises the real seeding/stale-cache paths directly.
     controller._update_status = UpdateStatus(
         checked_at=time.time(), current="0.0.0", latest=None, outdated=False
     )
+    controller._outdated = False
     return controller
 
 
@@ -297,6 +301,41 @@ class StartupUpdateStatusTests(SimpleTestCase):
         ):
             controller._refresh_update_status(force=False, announce=False)
         self.assertEqual(status_calls, [])
+
+    def test_manual_check_during_quiet_refresh_is_requeued_not_racy(self) -> None:
+        # Regression: without a pending/requeue guard, a quiet show()-time
+        # refresh and a manual "Check for Updates" click can run
+        # concurrently; whichever's fetch resolves last silently overwrites
+        # the other's result (see macOS's own _update_check_pending guard,
+        # app/spotty_bunny_app.py:1086, for the same race).
+        controller = _make_controller()
+        controller._io = _CapturingIo()
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
+
+        controller._refresh_update_status(force=False, announce=False)
+        self.assertEqual(len(controller._io.jobs), 1)
+
+        controller.check_for_updates()
+        # The click's own status shows immediately, but no second
+        # refresh_update_status() job is submitted while one is in flight.
+        self.assertEqual(status_calls, [CHECK_FOR_UPDATES_STATUS])
+        self.assertEqual(len(controller._io.jobs), 1)
+        self.assertTrue(controller._update_check_requeue)
+
+        # The in-flight (quiet) job's own possibly-stale result resolves...
+        _work, on_done = controller._io.jobs[0]
+        on_done(
+            UpdateStatus(checked_at=1.0, current="1.0.0", latest=None, outdated=False)
+        )
+
+        # ...and the requeued manual check fires immediately afterwards
+        # (now itself in flight as job 2), instead of the click being
+        # silently dropped.
+        self.assertEqual(len(controller._io.jobs), 2)
+        self.assertEqual(status_calls[-1], CHECK_FOR_UPDATES_STATUS)
+        self.assertTrue(controller._update_check_pending)
+        self.assertFalse(controller._update_check_requeue)
 
 
 class ShowHideToggleTests(SimpleTestCase):

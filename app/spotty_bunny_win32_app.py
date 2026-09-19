@@ -180,6 +180,8 @@ class SpottyBunnyWin32Controller:
         self._pending_completions: dict[int, object] = {}
         self._update_status = read_cached_update_status()
         self._outdated = bool(badge_should_show(self._update_status, self_stale=False))
+        self._update_check_pending = False
+        self._update_check_requeue = False
         self._agent_installed = False
         self._open_url_fn: Callable[[str], None] = open_url
         self._append_history_fn: Callable[[str], None] = append_history_line
@@ -534,23 +536,43 @@ class SpottyBunnyWin32Controller:
         ``announce=False`` mirrors macOS's quiet startup/stale-cache
         recheck: the icon badge still updates, but no status text is
         touched (there's nothing user-initiated to report on).
+
+        Only one refresh runs at a time (mirrors macOS's
+        ``_update_check_pending``/``_update_check_requeue``,
+        app/spotty_bunny_app.py:1086) -- otherwise a quiet background
+        refresh started while stale and a user-initiated "Check for
+        Updates" can race, and whichever's fetch resolves last silently
+        overwrites the other's more recent result.
         """
+        if self._update_check_pending:
+            if force:
+                self._update_check_requeue = True
+            return
+        self._update_check_pending = True
 
         def work() -> object:
             return refresh_update_status(force=force)
 
         def on_done(result: object) -> None:
+            self._update_check_pending = False
+            requeue = self._update_check_requeue
+            self._update_check_requeue = False
             if isinstance(result, BaseException):
                 if announce:
                     self.set_status_text("Could not check for updates.")
-                return
-            self._update_status = result
-            outdated = bool(badge_should_show(result, self_stale=False))
-            if outdated != self._outdated:
-                self._outdated = outdated
-                self.set_icon_outdated(outdated)
-            if announce:
-                self.set_status_text(summarize_update_check(result, self_stale=False))
+            else:
+                self._update_status = result
+                outdated = bool(badge_should_show(result, self_stale=False))
+                if outdated != self._outdated:
+                    self._outdated = outdated
+                    self.set_icon_outdated(outdated)
+                if announce:
+                    self.set_status_text(
+                        summarize_update_check(result, self_stale=False)
+                    )
+            if requeue:
+                self.set_status_text(CHECK_FOR_UPDATES_STATUS)
+                self._refresh_update_status(force=True, announce=True)
 
         self._io.submit(work, on_done)
 
