@@ -61,7 +61,7 @@ def summarize_update_check(
             "Choose Upgrade to restart it."
         )
     if server_skewed:
-        return "Server build differs from this Mac's — see About for details."
+        return "Server build differs from this install's — see About for details."
     if status.outdated and status.latest:
         return f"Update available: {status.latest}"
     if status.latest is None:

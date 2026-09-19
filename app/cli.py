@@ -907,7 +907,7 @@ def _report_post_upgrade_coherence(
             print_fn(
                 theme.warn(
                     f"Remote server is {format_build_label(health)}; "
-                    f"this Mac is {local_label}."
+                    f"this install is {local_label}."
                 )
             )
             print_fn(

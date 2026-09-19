@@ -4558,7 +4558,7 @@ class ConfigUnitTests(TestCase):
         assess.assert_not_called()
         joined = "\n".join(messages)
         self.assertIn("Remote server is 0.9.0 (oldoldoldold)", joined)
-        self.assertIn("this Mac is 0.10.0 (newnewnewnew)", joined)
+        self.assertIn("this install is 0.10.0 (newnewnewnew)", joined)
 
     def test_report_post_upgrade_coherence_skips_malformed_build_label(self) -> None:
         from unittest.mock import patch

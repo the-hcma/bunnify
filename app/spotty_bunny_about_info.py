@@ -316,9 +316,9 @@ def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
     takes priority: it explains a skew this process itself would otherwise
     misattribute to the server, and it never requires touching the server.
 
-    A remote server is deployed independently of this Mac, so skew there is
-    advisory. A local server is expected to track this install, so name the
-    command that realigns it.
+    A remote server is deployed independently of this machine, so skew there
+    is advisory. A local server is expected to track this install, so name
+    the command that realigns it.
     """
     if runtime.self_stale:
         return (
@@ -329,7 +329,7 @@ def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
     if not runtime.server_skewed:
         return None
     server_build = f"Server build {runtime.server_build_label or 'unknown build'}"
-    local_build = f"this Mac's {runtime.local_build_label}"
+    local_build = f"this install's {runtime.local_build_label}"
     if runtime.server_mode == "remote":
         return (
             f"{server_build} (remote) differs from {local_build}. Upgrading here "
