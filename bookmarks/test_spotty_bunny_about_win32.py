@@ -44,6 +44,10 @@ def _about_runtime(**overrides: object) -> AboutRuntimeInfo:
     return AboutRuntimeInfo(**defaults)  # type: ignore[arg-type]
 
 
+class _FakeGuiError(Exception):
+    """Stand-in for ``win32gui.error`` (``pywintypes.error``)."""
+
+
 def _fake_pywintypes() -> ModuleType:
     """A stand-in for the real ``pywintypes`` module (not installed off
     Windows): ``_create_syslink`` does a deferred ``import pywintypes``
@@ -646,6 +650,38 @@ class BuildAboutWindowTests(SimpleTestCase):
             return build_about_window(
                 MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
             )
+
+    def test_a_refused_foreground_call_does_not_abort_the_about_window(self) -> None:
+        # Same foreground-lock refusal as showing the overlay (#477). The
+        # popup is already visible by then, so raising here would leave it
+        # untracked and the next tray click would build a second one.
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        win32gui.error = _FakeGuiError
+        win32gui.SetForegroundWindow.side_effect = _FakeGuiError(
+            0, "SetForegroundWindow", ""
+        )
+        hwnd = self._build(win32gui, win32con, win32api)
+        self.assertEqual(hwnd, 1)
+        win32gui.SetFocus.assert_called_once_with(hwnd)
+
+    def test_a_failing_setfocus_does_not_abort_the_about_window(self) -> None:
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        win32gui.error = _FakeGuiError
+        win32gui.SetFocus.side_effect = _FakeGuiError(5, "SetFocus", "")
+        hwnd = self._build(win32gui, win32con, win32api)
+        self.assertEqual(hwnd, 1)
+        win32gui.SetForegroundWindow.assert_called_once_with(hwnd)
+
+    def test_the_window_is_shown_before_it_asks_for_focus(self) -> None:
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        order: list[str] = []
+        win32gui.ShowWindow.side_effect = lambda *_a: order.append("show")
+        win32gui.SetForegroundWindow.side_effect = lambda *_a: order.append(
+            "foreground"
+        )
+        win32gui.SetFocus.side_effect = lambda *_a: order.append("focus")
+        self._build(win32gui, win32con, win32api)
+        self.assertEqual(order, ["show", "foreground", "focus"])
 
     def test_creates_the_top_level_window_and_every_child_row(self) -> None:
         win32gui, win32con, win32api, created = self._fake_win32()
