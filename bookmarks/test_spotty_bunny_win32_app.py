@@ -303,6 +303,10 @@ class StartupUpdateStatusTests(SimpleTestCase):
         ):
             controller._refresh_update_status(force=False, announce=False)
         self.assertEqual(status_calls, [])
+        # A failed refresh must still clear the in-flight guard -- otherwise
+        # one transient PyPI failure would permanently block every later
+        # update check (both the manual menu item and the 24h timer tick).
+        self.assertFalse(controller._update_check_pending)
 
     def test_manual_check_during_quiet_refresh_is_requeued_not_racy(self) -> None:
         # Regression: without a pending/requeue guard, a quiet show()-time
@@ -335,7 +339,14 @@ class StartupUpdateStatusTests(SimpleTestCase):
         # (now itself in flight as job 2), instead of the click being
         # silently dropped.
         self.assertEqual(len(controller._io.jobs), 2)
-        self.assertEqual(status_calls[-1], CHECK_FOR_UPDATES_STATUS)
+        # The full sequence, not just the last entry -- the requeue branch
+        # must make its own set_status_text(CHECK_FOR_UPDATES_STATUS) call
+        # (app/spotty_bunny_win32_app.py's _refresh_update_status), not just
+        # rely on check_for_updates()'s earlier one still being the last
+        # item by coincidence.
+        self.assertEqual(
+            status_calls, [CHECK_FOR_UPDATES_STATUS, CHECK_FOR_UPDATES_STATUS]
+        )
         self.assertTrue(controller._update_check_pending)
         self.assertFalse(controller._update_check_requeue)
 
