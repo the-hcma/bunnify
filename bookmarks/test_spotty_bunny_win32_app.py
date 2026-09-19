@@ -1435,14 +1435,22 @@ class SetWindowTimerTests(SimpleTestCase):
         try:
             _set_window_timer(hwnd, 7, 30)
             deadline = time.monotonic() + 3.0
-            seen = False
-            while time.monotonic() < deadline and not seen:
-                message = win32gui.PeekMessage(
+            delivered = None
+            while time.monotonic() < deadline and delivered is None:
+                # pywin32 returns [found, (hwnd, message, wparam, lparam, ...)];
+                # with an empty queue that is [0, (0, 0, 0, 0, 0, (0, 0))].
+                found, message = win32gui.PeekMessage(
                     hwnd, win32con.WM_TIMER, win32con.WM_TIMER, win32con.PM_REMOVE
                 )
-                seen = bool(message[0])
-                time.sleep(0.01)
-            self.assertTrue(seen, "no WM_TIMER within 3s")
+                if found:
+                    delivered = message
+                else:
+                    time.sleep(0.01)
+            assert delivered is not None, "no WM_TIMER within 3s"
+            # The dispatch in the wndproc keys on wparam, so pin the timer id
+            # too, not just that some message arrived.
+            self.assertEqual(delivered[1], win32con.WM_TIMER)
+            self.assertEqual(delivered[2], 7)
         finally:
             # Destroying the window also kills its timers (win32gui has no
             # KillTimer in pywin32 312 either).
