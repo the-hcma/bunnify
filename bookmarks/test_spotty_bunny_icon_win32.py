@@ -2,14 +2,25 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType
+from unittest import skipUnless
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
 from app.spotty_bunny_icon_win32 import (
     _outdated_badge_geometry,
+    _rgb,
     make_spotty_bunny_icon_win32,
 )
+
+
+class RgbTests(SimpleTestCase):
+    def test_packs_a_colorref_in_bgr_order(self) -> None:
+        self.assertEqual(_rgb(0xEB, 0x73, 0x1F), 0x1F73EB)
+
+    def test_extremes(self) -> None:
+        self.assertEqual(_rgb(0, 0, 0), 0)
+        self.assertEqual(_rgb(0xFF, 0xFF, 0xFF), 0xFFFFFF)
 
 
 class OutdatedBadgeGeometryTests(SimpleTestCase):
@@ -40,7 +51,6 @@ def _make_fake_win32_modules() -> tuple[ModuleType, ModuleType, ModuleType]:
     win32gui.PatBlt = MagicMock()
     win32gui.DeleteDC = MagicMock()
     win32gui.CreateIconIndirect = MagicMock(return_value=42)
-    win32gui.RGB = lambda r, g, b: (r << 16) | (g << 8) | b
     win32gui.RoundRect = MagicMock()
     win32gui.Ellipse = MagicMock()
     win32gui.Polygon = MagicMock()
@@ -76,6 +86,21 @@ class MakeSpottyBunnyIconWin32Tests(SimpleTestCase):
         win32gui.CreateIconIndirect.assert_called_once()
         win32gui.RoundRect.assert_not_called()
 
+    def test_does_not_delete_the_borrowed_memory_dc_through_the_wrapper(self) -> None:
+        # win32ui.CreateDCFromHandle only wraps mem_dc; DeleteDC() on the
+        # wrapper destroys the caller's HDC, so the later CreateCompatibleDC /
+        # DeleteDC on it fail with "The handle is invalid".
+        win32gui, win32con, win32ui = _make_fake_win32_modules()
+        fake_dc = MagicMock()
+        win32ui.CreateFont = MagicMock(return_value=object())
+        win32ui.CreateDCFromHandle = MagicMock(return_value=fake_dc)
+        with patch.dict(
+            sys.modules,
+            {"win32gui": win32gui, "win32con": win32con, "win32ui": win32ui},
+        ):
+            make_spotty_bunny_icon_win32(16, outdated=False)
+        fake_dc.DeleteDC.assert_not_called()
+
     def test_outdated_draws_badge(self) -> None:
         win32gui, win32con, win32ui = _make_fake_win32_modules()
         fake_dc = MagicMock()
@@ -99,3 +124,37 @@ class MakeSpottyBunnyIconWin32Tests(SimpleTestCase):
             icon = make_spotty_bunny_icon_win32(16, outdated=False)
         self.assertEqual(icon, 42)
         win32gui.RoundRect.assert_called_once()
+
+
+@skipUnless(sys.platform == "win32", "needs the real Win32 GDI")
+class RealWin32IconTests(SimpleTestCase):
+    """Run the actual GDI calls -- the fakes above cannot see invalid handles."""
+
+    def test_builds_a_real_icon_with_the_emoji_glyph(self) -> None:
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+
+        icon = make_spotty_bunny_icon_win32(16)
+        try:
+            self.assertTrue(icon)
+        finally:
+            win32gui.DestroyIcon(icon)
+
+    def test_builds_a_real_outdated_icon(self) -> None:
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+
+        icon = make_spotty_bunny_icon_win32(32, outdated=True)
+        try:
+            self.assertTrue(icon)
+        finally:
+            win32gui.DestroyIcon(icon)
+
+    def test_builds_a_real_fallback_icon_when_the_font_is_missing(self) -> None:
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+        import win32ui  # pyright: ignore[reportMissingModuleSource]
+
+        with patch.object(win32ui, "CreateFont", side_effect=win32ui.error("no font")):
+            icon = make_spotty_bunny_icon_win32(16)
+        try:
+            self.assertTrue(icon)
+        finally:
+            win32gui.DestroyIcon(icon)

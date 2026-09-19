@@ -90,18 +90,18 @@ def _draw_glyph_or_fallback(mem_dc: int, side: int, *, win32con, win32ui) -> Non
         )
         _draw_fallback_shape(mem_dc, side, win32con=win32con)
         return
+    # The wrapper only borrows mem_dc; the caller owns and deletes it. Calling
+    # dc.DeleteDC() here would destroy that handle out from under the caller
+    # ("The handle is invalid" on the next GDI call).
     dc = win32ui.CreateDCFromHandle(mem_dc)
-    try:
-        dc.SelectObject(font)
-        dc.SetBkMode(win32con.TRANSPARENT)
-        rect = (0, 0, side, side)
-        dc.DrawText(
-            BUNNIFY_LOGO_EMOJI,
-            rect,
-            win32con.DT_CENTER | win32con.DT_VCENTER | win32con.DT_SINGLELINE,
-        )
-    finally:
-        dc.DeleteDC()
+    dc.SelectObject(font)
+    dc.SetBkMode(win32con.TRANSPARENT)
+    rect = (0, 0, side, side)
+    dc.DrawText(
+        BUNNIFY_LOGO_EMOJI,
+        rect,
+        win32con.DT_CENTER | win32con.DT_VCENTER | win32con.DT_SINGLELINE,
+    )
 
 
 def _draw_fallback_shape(mem_dc: int, side: int, *, win32con) -> None:
@@ -109,7 +109,7 @@ def _draw_fallback_shape(mem_dc: int, side: int, *, win32con) -> None:
     import win32gui  # pyright: ignore[reportMissingModuleSource]
 
     inset = max(1, int(side * 0.12))
-    brush = win32gui.CreateSolidBrush(win32gui.RGB(0x6B, 0x4C, 0x2A))
+    brush = win32gui.CreateSolidBrush(_rgb(0x6B, 0x4C, 0x2A))
     old_brush = win32gui.SelectObject(mem_dc, brush)
     try:
         win32gui.RoundRect(
@@ -132,7 +132,7 @@ def _draw_outdated_badge(mem_dc: int, side: int, *, win32gui, win32con) -> None:
     top = int(center_y - radius)
     right = int(center_x + radius)
     bottom = int(center_y + radius)
-    badge_brush = win32gui.CreateSolidBrush(win32gui.RGB(0xEB, 0x73, 0x1F))
+    badge_brush = win32gui.CreateSolidBrush(_rgb(0xEB, 0x73, 0x1F))
     old_brush = win32gui.SelectObject(mem_dc, badge_brush)
     try:
         win32gui.Ellipse(mem_dc, left, top, right, bottom)
@@ -145,10 +145,19 @@ def _draw_outdated_badge(mem_dc: int, side: int, *, win32gui, win32con) -> None:
         (int(center_x - arrow_half), int(center_y + radius * 0.22)),
         (int(center_x + arrow_half), int(center_y + radius * 0.22)),
     )
-    white_brush = win32gui.CreateSolidBrush(win32gui.RGB(0xFF, 0xFF, 0xFF))
+    white_brush = win32gui.CreateSolidBrush(_rgb(0xFF, 0xFF, 0xFF))
     old_brush = win32gui.SelectObject(mem_dc, white_brush)
     try:
         win32gui.Polygon(mem_dc, points)
     finally:
         win32gui.SelectObject(mem_dc, old_brush)
         win32gui.DeleteObject(white_brush)
+
+
+def _rgb(red: int, green: int, blue: int) -> int:
+    """A GDI ``COLORREF`` (``0x00BBGGRR``).
+
+    ``win32gui`` has no ``RGB`` (it lives in ``win32api``); computing it here
+    keeps this module free of an extra pywin32 import.
+    """
+    return red | (green << 8) | (blue << 16)
