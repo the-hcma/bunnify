@@ -100,6 +100,75 @@ class ToSyslinkMarkupTests(SimpleTestCase):
         )
 
 
+class CreateSyslinkFallbackTests(SimpleTestCase):
+    """Issue #441: SysLink is a comctl32-v6 control that may not be
+    available under a bare pipx install; _create_syslink() must degrade
+    to a plain label instead of letting CreateWindowEx's exception kill
+    the whole tray process on the first About-panel click."""
+
+    def test_creates_a_syslink_when_available(self) -> None:
+        from app.spotty_bunny_about_win32 import _create_syslink
+
+        win32gui = MagicMock()
+        win32gui.CreateWindowEx.return_value = 7
+        win32con = MagicMock()
+
+        result = _create_syslink(
+            1,
+            '<A HREF="https://example.com">click</A>',
+            "click",
+            x=0,
+            y=0,
+            width=100,
+            height=20,
+            win32gui=win32gui,
+            win32con=win32con,
+        )
+
+        self.assertEqual(result, 7)
+        win32gui.CreateWindowEx.assert_called_once()
+        self.assertEqual(win32gui.CreateWindowEx.call_args.args[1], "SysLink")
+
+    def test_falls_back_to_plain_static_when_syslink_creation_raises(self) -> None:
+        from app.spotty_bunny_about_win32 import _create_syslink
+
+        win32gui = MagicMock()
+        win32con = MagicMock()
+        win32con.WS_CHILD = 0x40000000
+        win32con.WS_VISIBLE = 0x10000000
+        win32con.WS_TABSTOP = 0x00010000
+        win32con.SS_LEFT = 0x00000000
+
+        def create_window_ex(_ex_style, class_name, *_rest):
+            if class_name == "SysLink":
+                raise OSError("Cannot find window class.")
+            return 42
+
+        win32gui.CreateWindowEx.side_effect = create_window_ex
+        win32gui.GetModuleHandle.return_value = 1
+
+        with self.assertLogs("app.spotty_bunny_about_win32", level="WARNING"):
+            result = _create_syslink(
+                1,
+                '<A HREF="https://example.com">click</A>',
+                "click",
+                x=0,
+                y=0,
+                width=100,
+                height=20,
+                win32gui=win32gui,
+                win32con=win32con,
+            )
+
+        self.assertEqual(result, 42)
+        self.assertEqual(win32gui.CreateWindowEx.call_count, 2)
+        fallback_call = win32gui.CreateWindowEx.call_args_list[1]
+        self.assertEqual(fallback_call.args[1], "STATIC")
+        # Plain text, not the <A HREF> markup -- SysLink's markup would
+        # render literally (tags and all) in a plain STATIC label.
+        self.assertEqual(fallback_call.args[2], "click")
+
+
 class WindowsApiConstantsTests(SimpleTestCase):
     """Pins the commctrl.h literal values directly -- the behavioral tests
     elsewhere in this file compare against these same module constants,
@@ -712,6 +781,42 @@ class BuildAboutWindowTests(SimpleTestCase):
                 MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
             )
         init.assert_called_once()
+
+    def test_still_builds_every_row_when_syslink_is_unavailable(self) -> None:
+        """Issue #441: on a machine where CreateWindowEx("SysLink", ...)
+        raises (no comctl32-v6 activation context), the whole About panel
+        must still appear -- degraded to plain labels -- rather than the
+        exception propagating out of build_about_window() and killing the
+        tray process on the first click."""
+        win32gui, win32con, win32api, created = self._fake_win32()
+
+        def create_window_ex(
+            ex_style, class_name, text, style, x, y, width, height, *_rest
+        ):
+            if class_name == "SysLink":
+                raise OSError("Cannot find window class.")
+            created.append(
+                {
+                    "class_name": class_name,
+                    "text": text,
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                    "style": style,
+                    "ex_style": ex_style,
+                }
+            )
+            return len(created)
+
+        win32gui.CreateWindowEx.side_effect = create_window_ex
+
+        with self.assertLogs("app.spotty_bunny_about_win32", level="WARNING"):
+            self._build(win32gui, win32con, win32api)
+
+        self.assertEqual(len(created), 6)
+        for row in created[3:6]:
+            self.assertEqual(row["class_name"], "STATIC")
 
 
 class InitSyslinkClassTests(SimpleTestCase):
