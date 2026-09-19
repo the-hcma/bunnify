@@ -821,7 +821,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         self.assertIsNotNone(message)
         assert message is not None
         self.assertIn("Server build 0.9.0 (oldoldoldold) (local)", message)
-        self.assertIn("this Mac's 0.10.0 (newnewnewnew)", message)
+        self.assertIn("this install's 0.10.0 (newnewnewnew)", message)
         self.assertIn("bunnify-server --stop", message)
 
     def test_server_skew_message_local_names_upgrade_with_agent(self) -> None:
@@ -836,7 +836,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         )
         self.assertEqual(
             message,
-            "Server build 0.9.0 (oldoldoldold) (local) differs from this Mac's "
+            "Server build 0.9.0 (oldoldoldold) (local) differs from this install's "
             "0.10.0 (newnewnewnew). Run: bunnify-server upgrade",
         )
 
@@ -855,7 +855,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         self.assertIsNotNone(message)
         assert message is not None
         self.assertIn("Server build 0.9.0 (oldoldoldold) (remote)", message)
-        self.assertIn("this Mac's 0.10.0 (newnewnewnew)", message)
+        self.assertIn("this install's 0.10.0 (newnewnewnew)", message)
         self.assertIn("redeploy", message)
         self.assertNotIn("bunnify-server", message)
 

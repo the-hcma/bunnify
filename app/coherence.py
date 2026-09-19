@@ -200,7 +200,7 @@ def offer_remote_build_mismatch(
         print_fn(
             theme.warn(
                 f"Remote server at {base_url} reports {remote_label}; "
-                f"this Mac is {local_label}."
+                f"this install is {local_label}."
             )
         )
         print_fn(
@@ -214,7 +214,7 @@ def offer_remote_build_mismatch(
         print_fn(
             theme.warn(
                 f"Remote server at {base_url} is {remote_label}; "
-                f"this Mac is {local_label}."
+                f"this install is {local_label}."
             )
         )
         if cli_is_newer_than(health):
@@ -227,7 +227,7 @@ def offer_remote_build_mismatch(
         else:
             print_fn(
                 theme.dim(
-                    "Upgrade this Mac with `bunnify upgrade` or align the remote "
+                    "Upgrade this install with `bunnify upgrade` or align the remote "
                     "host to the same release."
                 )
             )
