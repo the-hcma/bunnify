@@ -1077,10 +1077,16 @@ def _take_foreground(hwnd: int, *, win32api, win32gui, win32process) -> None:
     the overlay still appears.
     """
     this_thread = win32api.GetCurrentThreadId()
-    foreground = win32gui.GetForegroundWindow()
-    foreground_thread = (
-        win32process.GetWindowThreadProcessId(foreground)[0] if foreground else 0
-    )
+    try:
+        foreground = win32gui.GetForegroundWindow()
+        foreground_thread = (
+            win32process.GetWindowThreadProcessId(foreground)[0] if foreground else 0
+        )
+    except win32gui.error:
+        # The foreground window can close between the two calls; pywin32 then
+        # raises the same (0, ...) error shape as a refused SetForegroundWindow.
+        logger.warning("could not resolve the foreground window; continuing")
+        foreground_thread = 0
     attached = False
     if foreground_thread and foreground_thread != this_thread:
         try:

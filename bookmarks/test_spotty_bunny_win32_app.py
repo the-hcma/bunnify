@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import sys
 import time
+from contextlib import contextmanager
 from unittest import skipUnless
 from unittest.mock import MagicMock, patch
 
@@ -29,6 +30,7 @@ from app.spotty_bunny_win32_app import (
     WM_APP_TOGGLE,
     WM_APP_TRAY,
     SpottyBunnyWin32Controller,
+    _create_overlay_window,
     _handle_tray_message,
     _make_overlay_wndproc,
     _register_overlay_class,
@@ -1450,6 +1452,83 @@ class ShowOverlayWindowTests(SimpleTestCase):
         self._show(win32gui, win32api, win32process)
         win32gui.SetForegroundWindow.assert_called_once_with(10)
         win32gui.SetFocus.assert_called_once_with(20)
+
+    def test_a_foreground_window_that_vanishes_does_not_abort_showing(self) -> None:
+        # The foreground window can close between GetForegroundWindow and the
+        # thread lookup; pywin32 raises the same (0, ...) shape as a refusal.
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32process.GetWindowThreadProcessId = MagicMock(
+            side_effect=_FakeGuiError(0, "GetWindowThreadProcessId", "")
+        )
+        self._show(win32gui, win32api, win32process)
+        win32process.AttachThreadInput.assert_not_called()
+        win32gui.SetForegroundWindow.assert_called_once_with(10)
+        win32gui.SetFocus.assert_called_once_with(20)
+
+    def test_a_failing_foreground_window_query_does_not_abort_showing(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32gui.GetForegroundWindow = MagicMock(
+            side_effect=_FakeGuiError(0, "GetForegroundWindow", "")
+        )
+        self._show(win32gui, win32api, win32process)
+        win32process.AttachThreadInput.assert_not_called()
+        win32gui.SetFocus.assert_called_once_with(20)
+
+
+class OverlayWindowVisibilityTests(SimpleTestCase):
+    """Drive the ``set_window_visible`` closure ``_create_overlay_window`` builds.
+
+    ``_show_overlay_window`` is tested directly above; this pins the call site
+    that actually fixes the report -- the right window/edit pair, and the
+    guarded helper rather than the raw calls.
+    """
+
+    @contextmanager
+    def _create(self):
+        controller = _make_controller()
+        win32gui, win32api, win32process = _make_focus_modules()
+        handles = iter(range(100, 200))
+        win32gui.CreateWindowEx = MagicMock(side_effect=lambda *_a: next(handles))
+        win32gui.GetWindowRect = MagicMock(return_value=(0, 0, 640, 76))
+        win32api.MonitorFromPoint = MagicMock(return_value=77)
+        win32api.GetMonitorInfo = MagicMock(return_value={"Work": (0, 0, 1920, 1040)})
+        win32con = MagicMock()
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32",
+                return_value=1,
+            ),
+            patch.dict(
+                sys.modules,
+                {"win32api": win32api, "win32process": win32process},
+            ),
+        ):
+            _create_overlay_window(controller, win32gui=win32gui, win32con=win32con)
+            yield controller, win32gui, win32con
+
+    def test_showing_targets_the_overlay_and_its_text_box(self) -> None:
+        with self._create() as (controller, win32gui, win32con):
+            controller.set_window_visible(True)
+            # 100 is the overlay window, 101 the Edit control created after it.
+            win32gui.ShowWindow.assert_any_call(100, win32con.SW_SHOW)
+            win32gui.SetForegroundWindow.assert_called_once_with(100)
+            win32gui.SetFocus.assert_called_once_with(101)
+
+    def test_a_refused_foreground_call_does_not_propagate_out_of_the_closure(
+        self,
+    ) -> None:
+        with self._create() as (controller, win32gui, _con):
+            win32gui.SetForegroundWindow = MagicMock(
+                side_effect=_FakeGuiError(0, "SetForegroundWindow", "")
+            )
+            controller.set_window_visible(True)
+            win32gui.SetFocus.assert_called_once_with(101)
+
+    def test_hiding_hides_the_overlay(self) -> None:
+        with self._create() as (controller, win32gui, win32con):
+            controller.set_window_visible(False)
+            win32gui.ShowWindow.assert_any_call(100, win32con.SW_HIDE)
+            win32gui.SetForegroundWindow.assert_not_called()
 
 
 @skipUnless(sys.platform == "win32", "needs the real user32")
