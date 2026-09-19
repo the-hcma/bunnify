@@ -303,6 +303,106 @@ bits and the event keycode. Re-run `--verbose` after this fix.
 On macOS, starting the **`bunnify` interactive REPL** (no query args) also
 starts `spotty-bunny` in the background when it is not already running.
 
+## Spotty Bunny (Windows)
+
+Needs the optional `windows` extra (pywin32). Bare `spotty-bunny` still runs
+the overlay **in the foreground**. There is no macOS-style TCC permission
+step: the Scheduled Task is the only moving part, and only the dual-Control
+chord actually works (`auto`/`control` resolve to it; `option`/`command`
+fall back to Control with a logged warning).
+
+### Install
+
+Requires [pipx](https://pipx.pypa.io/) on `PATH`. Install the `windows`
+extra and start the local server before the overlay task:
+
+```powershell
+pipx install 'bunnify[windows]'
+bunnify setup                      # local server + /health (interactive)
+
+spotty-bunny                       # foreground overlay
+bunnify spotty-bunny               # same (reserved CLI token)
+bunnify spotty-bunny install       # Scheduled Task (LogonTrigger + RestartOnFailure)
+bunnify spotty-bunny status
+```
+
+`install` resolves the `spotty-bunny.exe` binary (preferring
+`%USERPROFILE%\.local\bin\spotty-bunny.exe`, then whatever `spotty-bunny` is
+on `PATH`), registers a Scheduled Task named "Bunnify Spotty Bunny" with a
+`LogonTrigger` (approximating launchd's `RunAtLoad`) and a bounded
+`RestartOnFailure` (999 restarts, 1 minute apart — an approximation of
+launchd's unconditional `KeepAlive`, not identical semantics), runs the task
+once, and waits for the overlay to report itself running. A failed install
+restores whatever Scheduled Task configuration existed before the attempt
+(or removes the non-functional registration on a fresh install) rather than
+leaving Spotty Bunny half-installed.
+
+`status` prints running/pid, whether the Scheduled Task is registered and
+running, the binary path, the application log — Bunnify doesn't special-case
+Windows for its data directory, so this is still `~\.local\share\bunnify\
+spotty-bunny.log` (i.e. under your user profile, XDG-style) unless
+`BUNNIFY_SPOTTY_BUNNY_LOG_FILE` / `$BUNNIFY_DATA_DIR` override it — suggested
+log-follow commands (PowerShell `Get-Content -Wait` and `type`), version, and
+the keyboard-hook health (`tap:`) with the last chord timestamp. Exit `0`
+only when the task is registered, the process is running, and the binary
+path still exists and is executable — there is no
+`interpreter:`/`accessibility:`/`input_monitoring:`
+line the way macOS's `status` has, since neither concept applies here.
+
+### Upgrade
+
+```powershell
+bunnify upgrade                    # pipx package; does not touch the Scheduled Task
+bunnify spotty-bunny upgrade       # re-register the task + bounce it
+```
+
+`bunnify upgrade` does not refresh the Windows Scheduled Task the way it
+refreshes macOS LaunchAgents — run `bunnify spotty-bunny upgrade` yourself
+afterward. `upgrade` rewrites the task for the current binary, runs it once,
+and waits for the new instance to come up, with the same rollback-on-failure
+behavior as `install`.
+
+### Uninstall
+
+```powershell
+bunnify spotty-bunny uninstall
+```
+
+`uninstall` deletes the Scheduled Task, stops a leftover overlay process,
+and clears the pid file. It does not delete the application log or your
+bookmarks. If the task was never registered, it still succeeds. A genuine
+deletion failure (for example, the task was registered from an elevated
+shell and this session lacks rights) is reported as a failure rather than
+claiming success while the task — and the overlay it will relaunch at the
+next logon — are actually still there.
+
+To stop the overlay **without** removing the Scheduled Task, right-click the
+bunny icon and choose **Quit**. The task stays registered and starts again
+at the next logon until you `uninstall`.
+
+The right-click menu (Check for Updates, Install/Uninstall/Upgrade, Quit)
+and left-click-for-About behavior are the same as macOS's — see
+[Using the overlay](#using-the-overlay) above for the shared parts (hotkey
+chord aside: Windows only supports dual-Control).
+
+### Antivirus and SmartScreen
+
+Spotty Bunny's chord detection uses a low-level keyboard hook
+(`WH_KEYBOARD_LL`), installed via `SetWindowsHookExW`. That API shape —
+a hook that sees every keystroke system-wide — is a well-known heuristic
+trigger for antivirus software and Windows SmartScreen, especially on an
+unsigned binary from a pipx install rather than a signed installer. The hook
+is listen-only: it always calls `CallNextHookEx` to pass every event
+through unmodified, so it can detect the configured chord but never
+intercepts, alters, or blocks a keystroke — nothing about it resembles a
+keylogger's actual behavior, even though the API surface looks similar to
+one. If Windows shows a SmartScreen prompt on first run, click **More
+info**, then **Run anyway**. If antivirus software flags or quarantines the
+binary, check its quarantine/history log for the exact file path and restore
+it; adding an antivirus exclusion for that path is a troubleshooting step
+for after you've confirmed the binary is the one pipx installed, not a
+default recommendation.
+
 ## macOS LaunchAgent
 
 The **server** agent (`com.thehcma.bunnify`) is separate from Spotty Bunny
