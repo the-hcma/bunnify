@@ -1461,9 +1461,66 @@ class PaintOverlayTests(SimpleTestCase):
             selected.index(theme.fill_brush), selected.index(theme.black_brush)
         )
 
-    def test_frame_pen_is_released_and_paint_ended_even_on_error(self) -> None:
+    def _recording_win32gui(self) -> tuple[MagicMock, list[tuple[str, object]]]:
         win32gui = _make_theme_win32gui()
+        order: list[tuple[str, object]] = []
+
+        def select(_dc, obj):
+            order.append(("select", obj))
+            return "old"
+
+        win32gui.SelectObject = MagicMock(side_effect=select)
+        win32gui.DeleteObject = MagicMock(
+            side_effect=lambda obj: order.append(("delete", obj))
+        )
+        return win32gui, order
+
+    def test_frame_pen_is_released_and_paint_ended_even_on_error(self) -> None:
+        # A painting error must not leak the 2px frame pen or leave the DC
+        # holding our objects: the cleanup lives in the finally block.
+        win32gui, order = self._recording_win32gui()
         win32gui.RoundRect = MagicMock(side_effect=RuntimeError("boom"))
+        theme = _OverlayTheme(win32gui=win32gui)
+        with self.assertRaises(RuntimeError):
+            _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.DeleteObject.assert_called_once_with("pen")
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+        # Deselect before deleting: GDI will not delete a selected object.
+        last_restore = max(
+            i for i, step in enumerate(order) if step == ("select", "old")
+        )
+        self.assertLess(last_restore, order.index(("delete", "pen")))
+
+    def test_the_original_pen_and_brush_are_restored_after_painting(self) -> None:
+        win32gui, order = self._recording_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        # Both original objects are selected back before the pen is deleted.
+        restores = [i for i, step in enumerate(order) if step == ("select", "old")]
+        self.assertEqual(len(restores), 2)
+        self.assertLess(max(restores), order.index(("delete", "pen")))
+
+    def test_a_failure_before_the_pen_exists_deletes_nothing(self) -> None:
+        win32gui, _order = self._recording_win32gui()
+        win32gui.GetClientRect = MagicMock(side_effect=RuntimeError("stale hdc"))
+        theme = _OverlayTheme(win32gui=win32gui)
+        with self.assertRaises(RuntimeError):
+            _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.DeleteObject.assert_not_called()
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+
+    def test_a_failed_pen_creation_deletes_nothing(self) -> None:
+        win32gui, _order = self._recording_win32gui()
+        win32gui.CreatePen = MagicMock(side_effect=RuntimeError("no pen"))
+        theme = _OverlayTheme(win32gui=win32gui)
+        with self.assertRaises(RuntimeError):
+            _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.DeleteObject.assert_not_called()
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+
+    def test_paint_is_ended_even_if_the_cleanup_itself_fails(self) -> None:
+        win32gui, _order = self._recording_win32gui()
+        win32gui.DeleteObject = MagicMock(side_effect=RuntimeError("cleanup boom"))
         theme = _OverlayTheme(win32gui=win32gui)
         with self.assertRaises(RuntimeError):
             _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
@@ -1567,8 +1624,11 @@ class CreateFontTests(SimpleTestCase):
 class CreateOverlayWindowTests(SimpleTestCase):
     """Drive the real ``_create_overlay_window`` against a recording fake."""
 
-    def _create(self, *, fonts: list[int] | None = None):
+    def _create(self, *, fonts: list[int] | None = None, outdated: bool = False):
         controller = _make_controller()
+        # _make_controller pins this to False; a test can seed the cache-derived
+        # state the way __init__ does on a machine whose update cache says so.
+        controller._outdated = outdated
         win32gui = _make_theme_win32gui()
         win32gui.error = _FakeGuiError
         handles = iter(range(100, 200))
@@ -1666,6 +1726,20 @@ class CreateOverlayWindowTests(SimpleTestCase):
             background_rgb=(0x5C, 0x8C, 0xD6),
             glyph_rgb=(0xFF, 0xFF, 0xFF),
             outdated=False,
+        )
+
+    def test_the_logo_starts_with_the_cache_derived_badge_state(self) -> None:
+        # Same regression the tray icon pins in
+        # test_tray_icon_created_with_initial_outdated_state: nothing else
+        # corrects the first paint, so it must already reflect _outdated. A
+        # literal outdated=False at the call site would still pass the
+        # assertion above, because _make_controller pins the flag to False.
+        _controller, _gui, _con, _hwnd, make_icon = self._create(outdated=True)
+        make_icon.assert_called_once_with(
+            40,
+            background_rgb=(0x5C, 0x8C, 0xD6),
+            glyph_rgb=(0xFF, 0xFF, 0xFF),
+            outdated=True,
         )
 
     def test_a_status_line_grows_the_panel_and_keeps_its_top_left(self) -> None:
@@ -1801,6 +1875,11 @@ class RealCreateOverlayWindowTests(SimpleTestCase):
         finally:
             win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
             win32gui.DestroyWindow(hwnd)
+            # Destroying the overlay runs its wndproc's WM_DESTROY handler,
+            # which calls PostQuitMessage. Consume that WM_QUIT here, or it
+            # stays in this thread's queue and a later test that peeks for its
+            # own message (the real WM_TIMER test) receives it instead.
+            win32gui.PumpWaitingMessages()
 
 
 class TrayMessageTests(SimpleTestCase):

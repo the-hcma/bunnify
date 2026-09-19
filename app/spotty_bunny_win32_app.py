@@ -1176,6 +1176,9 @@ def _draw_placeholder(edit_hwnd: int, font: int, *, win32con, win32gui) -> None:
 def _paint_overlay(hwnd: int, theme: _OverlayTheme, *, win32con, win32gui) -> None:
     """Paint the rounded panel frame and the black rounded field behind the Edit."""
     hdc, paint = win32gui.BeginPaint(hwnd)
+    frame_pen = None
+    old_pen = None
+    old_brush = None
     try:
         _left, _top, right, bottom = win32gui.GetClientRect(hwnd)
         frame_pen = win32gui.CreatePen(win32con.PS_SOLID, 2, _rgb(*PANEL_FRAME_RGB))
@@ -1194,11 +1197,19 @@ def _paint_overlay(hwnd: int, theme: _OverlayTheme, *, win32con, win32gui) -> No
             FIELD_RADIUS,
             FIELD_RADIUS,
         )
-        win32gui.SelectObject(hdc, old_pen)
-        win32gui.SelectObject(hdc, old_brush)
-        win32gui.DeleteObject(frame_pen)
     finally:
-        win32gui.EndPaint(hwnd, paint)
+        # Runs on failure too, so a painting error cannot leak the frame pen
+        # or leave the DC with our objects selected. Deselect before deleting:
+        # GDI will not delete an object that is still selected into a DC.
+        try:
+            if old_pen is not None:
+                win32gui.SelectObject(hdc, old_pen)
+            if old_brush is not None:
+                win32gui.SelectObject(hdc, old_brush)
+            if frame_pen is not None:
+                win32gui.DeleteObject(frame_pen)
+        finally:
+            win32gui.EndPaint(hwnd, paint)
 
 
 def _subclass_edit_control(
