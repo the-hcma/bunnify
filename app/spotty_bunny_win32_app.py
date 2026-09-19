@@ -896,9 +896,17 @@ def _create_overlay_window(
 
     def _set_window_visible(visible: bool) -> None:
         if visible:
-            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-            win32gui.SetForegroundWindow(hwnd)
-            win32gui.SetFocus(edit_hwnd)
+            import win32api  # pyright: ignore[reportMissingModuleSource]
+            import win32process  # pyright: ignore[reportMissingModuleSource]
+
+            _show_overlay_window(
+                hwnd,
+                edit_hwnd,
+                win32api=win32api,
+                win32con=win32con,
+                win32gui=win32gui,
+                win32process=win32process,
+            )
         else:
             win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
 
@@ -1024,7 +1032,12 @@ def _show_context_menu(
         ids_to_actions[item_id] = action
         win32gui.AppendMenu(menu, win32con.MF_STRING, item_id, title)
     pos = win32gui.GetCursorPos()
-    win32gui.SetForegroundWindow(controller.hwnd)
+    try:
+        win32gui.SetForegroundWindow(controller.hwnd)
+    except win32gui.error:
+        # The foreground lock may refuse a background process; the menu still
+        # works without it (it just may not dismiss on an outside click).
+        logger.warning("SetForegroundWindow refused for the tray menu; continuing")
     selected = win32gui.TrackPopupMenu(
         menu,
         win32con.TPM_LEFTALIGN | win32con.TPM_RETURNCMD,
@@ -1038,3 +1051,50 @@ def _show_context_menu(
     action = ids_to_actions.get(selected)
     if action is not None:
         controller.dispatch_menu_action(action)
+
+
+def _show_overlay_window(
+    hwnd: int, edit_hwnd: int, *, win32api, win32con, win32gui, win32process
+) -> None:
+    """Show the overlay and give its text box keyboard focus, best effort."""
+    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+    _take_foreground(
+        hwnd, win32api=win32api, win32gui=win32gui, win32process=win32process
+    )
+    try:
+        win32gui.SetFocus(edit_hwnd)
+    except win32gui.error:
+        logger.warning("SetFocus on the overlay text box failed; continuing")
+
+
+def _take_foreground(hwnd: int, *, win32api, win32gui, win32process) -> None:
+    """Ask Windows to make *hwnd* the foreground window without ever raising.
+
+    A background process is normally refused (``SetForegroundWindow`` raises
+    ``pywintypes.error (0, ...)``). Attaching to the current foreground
+    window's input queue for the duration of the call is the standard way
+    around that foreground lock. Any refusal is logged, not propagated, so
+    the overlay still appears.
+    """
+    this_thread = win32api.GetCurrentThreadId()
+    foreground = win32gui.GetForegroundWindow()
+    foreground_thread = (
+        win32process.GetWindowThreadProcessId(foreground)[0] if foreground else 0
+    )
+    attached = False
+    if foreground_thread and foreground_thread != this_thread:
+        try:
+            win32process.AttachThreadInput(this_thread, foreground_thread, True)
+            attached = True
+        except win32gui.error:
+            logger.warning("could not attach to the foreground thread; continuing")
+    try:
+        win32gui.SetForegroundWindow(hwnd)
+    except win32gui.error:
+        logger.warning("SetForegroundWindow refused; continuing without focus grab")
+    finally:
+        if attached:
+            try:
+                win32process.AttachThreadInput(this_thread, foreground_thread, False)
+            except win32gui.error:
+                logger.warning("could not detach from the foreground thread")

@@ -35,6 +35,7 @@ from app.spotty_bunny_win32_app import (
     _selector_for_vk,
     _set_window_timer,
     _show_context_menu,
+    _show_overlay_window,
     run_spotty_bunny_win32_app,
 )
 
@@ -1334,6 +1335,161 @@ class ShowContextMenuTests(SimpleTestCase):
         ):
             _show_context_menu(controller, win32gui=win32gui, win32con=_FakeWin32Con)
         controller.dispatch_menu_action.assert_not_called()
+
+    def test_a_refused_foreground_call_does_not_stop_the_menu(self) -> None:
+        # Same foreground-lock refusal as showing the overlay: it must not
+        # abort the right-click menu.
+        controller = _make_controller()
+        controller.hwnd = 42
+        controller.dispatch_menu_action = MagicMock()
+        win32gui = _make_fake_win32gui()
+        win32gui.error = _FakeGuiError
+        win32gui.SetForegroundWindow = MagicMock(
+            side_effect=_FakeGuiError(0, "SetForegroundWindow", "")
+        )
+        win32gui.CreatePopupMenu = MagicMock(return_value=7)
+        win32gui.GetCursorPos = MagicMock(return_value=(10, 20))
+        win32gui.TrackPopupMenu = MagicMock(return_value=1000)
+        with patch(
+            "app.spotty_bunny_win32_app.logo_menu_specs",
+            return_value=(("Quit", "quitSpottyBunny:"),),
+        ):
+            _show_context_menu(controller, win32gui=win32gui, win32con=_FakeWin32Con)
+        controller.dispatch_menu_action.assert_called_once_with("quitSpottyBunny:")
+
+
+class _FakeGuiError(Exception):
+    """Stand-in for ``win32gui.error`` (``pywintypes.error``)."""
+
+
+def _make_focus_modules(
+    *, foreground: int = 100, foreground_tid: int = 555, this_tid: int = 1
+) -> tuple[MagicMock, MagicMock, MagicMock]:
+    win32gui = _make_fake_win32gui()
+    win32gui.error = _FakeGuiError
+    win32gui.GetForegroundWindow = MagicMock(return_value=foreground)
+    win32api = MagicMock()
+    win32api.GetCurrentThreadId = MagicMock(return_value=this_tid)
+    win32process = MagicMock()
+    win32process.GetWindowThreadProcessId = MagicMock(
+        return_value=(foreground_tid, 4242)
+    )
+    return win32gui, win32api, win32process
+
+
+class ShowOverlayWindowTests(SimpleTestCase):
+    def _show(self, win32gui, win32api, win32process) -> None:
+        _show_overlay_window(
+            10,
+            20,
+            win32api=win32api,
+            win32con=MagicMock(),
+            win32gui=win32gui,
+            win32process=win32process,
+        )
+
+    def test_refused_foreground_does_not_abort_showing(self) -> None:
+        # Regression: SetForegroundWindow raises pywintypes.error (0, ...) when
+        # Windows' foreground lock refuses a background process. That used to
+        # propagate out of the wndproc, so the box never got keyboard focus.
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32gui.SetForegroundWindow = MagicMock(
+            side_effect=_FakeGuiError(0, "SetForegroundWindow", "")
+        )
+        self._show(win32gui, win32api, win32process)
+        win32gui.ShowWindow.assert_called_once()
+        win32gui.SetFocus.assert_called_once_with(20)
+
+    def test_focus_failure_is_not_fatal(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32gui.SetFocus = MagicMock(side_effect=_FakeGuiError(5, "SetFocus", ""))
+        self._show(win32gui, win32api, win32process)
+        win32gui.SetForegroundWindow.assert_called_once_with(10)
+
+    def test_attaches_to_the_foreground_thread_around_the_call(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules()
+        order: list[str] = []
+        win32process.AttachThreadInput = MagicMock(
+            side_effect=lambda _a, _b, attach: order.append(f"attach={attach}")
+        )
+        win32gui.SetForegroundWindow = MagicMock(
+            side_effect=lambda _h: order.append("foreground")
+        )
+        self._show(win32gui, win32api, win32process)
+        self.assertEqual(order, ["attach=True", "foreground", "attach=False"])
+        win32process.AttachThreadInput.assert_any_call(1, 555, True)
+        win32process.AttachThreadInput.assert_any_call(1, 555, False)
+
+    def test_detaches_even_when_the_foreground_call_is_refused(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32gui.SetForegroundWindow = MagicMock(
+            side_effect=_FakeGuiError(0, "SetForegroundWindow", "")
+        )
+        self._show(win32gui, win32api, win32process)
+        win32process.AttachThreadInput.assert_called_with(1, 555, False)
+
+    def test_no_attach_when_nothing_has_the_foreground(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules(foreground=0)
+        self._show(win32gui, win32api, win32process)
+        win32process.AttachThreadInput.assert_not_called()
+        win32gui.SetForegroundWindow.assert_called_once_with(10)
+
+    def test_no_attach_when_the_foreground_is_this_thread(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules(
+            foreground_tid=1, this_tid=1
+        )
+        self._show(win32gui, win32api, win32process)
+        win32process.AttachThreadInput.assert_not_called()
+
+    def test_failed_attach_still_tries_the_foreground_call(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32process.AttachThreadInput = MagicMock(
+            side_effect=_FakeGuiError(5, "AttachThreadInput", "")
+        )
+        win32gui.error = _FakeGuiError
+        self._show(win32gui, win32api, win32process)
+        win32gui.SetForegroundWindow.assert_called_once_with(10)
+        win32gui.SetFocus.assert_called_once_with(20)
+
+
+@skipUnless(sys.platform == "win32", "needs the real user32")
+class RealShowOverlayWindowTests(SimpleTestCase):
+    def test_showing_a_real_window_never_raises(self) -> None:
+        # The foreground lock decides whether focus is granted, which depends
+        # on the desktop; the contract is only that it never raises.
+        import win32api  # pyright: ignore[reportMissingModuleSource]
+        import win32con  # pyright: ignore[reportMissingModuleSource]
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+        import win32process  # pyright: ignore[reportMissingModuleSource]
+
+        hwnd = win32gui.CreateWindowEx(
+            0, "STATIC", "t", win32con.WS_POPUP, 0, 0, 10, 10, 0, 0, 0, None
+        )
+        edit = win32gui.CreateWindowEx(
+            0,
+            "EDIT",
+            "",
+            win32con.WS_CHILD | win32con.WS_VISIBLE,
+            0,
+            0,
+            5,
+            5,
+            hwnd,
+            0,
+            0,
+            None,
+        )
+        try:
+            _show_overlay_window(
+                hwnd,
+                edit,
+                win32api=win32api,
+                win32con=win32con,
+                win32gui=win32gui,
+                win32process=win32process,
+            )
+        finally:
+            win32gui.DestroyWindow(hwnd)
 
 
 class RunSpottyBunnyWin32AppTests(SimpleTestCase):
