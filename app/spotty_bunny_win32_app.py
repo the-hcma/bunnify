@@ -72,7 +72,7 @@ from app.spotty_bunny_menu import (
     logo_menu_specs,
 )
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
-from app.spotty_bunny_status import format_spotty_bunny_status
+from app.spotty_bunny_status import SHORTCUTS_LOAD_FAILED, format_spotty_bunny_status
 from app.spotty_bunny_tap_health import TAP_HEALTH_CHECK_INTERVAL_S
 from app.spotty_bunny_update import (
     badge_should_show,
@@ -164,6 +164,7 @@ class SpottyBunnyWin32Controller:
         self._chord = ChordTracker()
         self._history = HistoryNavigator(load_history_lines())
         self._completer: object | None = None
+        self._shortcuts_load_failed = False
         self._base_url = ""
         self._entries: list[object] = []
         self._completion_rows: list[CompletionRow] = []
@@ -211,6 +212,7 @@ class SpottyBunnyWin32Controller:
         # stale field would silently resubmit or get concatenated onto the
         # next typed query.
         self._history = HistoryNavigator(load_history_lines())
+        self._shortcuts_load_failed = False
         self._load_completer_async()
         self.visible = True
         self.set_window_visible(True)
@@ -316,6 +318,8 @@ class SpottyBunnyWin32Controller:
         self._completion_prefix = prefix
         completer = self._completer
         if completer is None:
+            if self._shortcuts_load_failed:
+                self.set_status_text(SHORTCUTS_LOAD_FAILED)
             return
         self._completion_seq += 1
         seq = self._completion_seq
@@ -494,6 +498,7 @@ class SpottyBunnyWin32Controller:
         def on_done(result: object) -> None:
             if isinstance(result, BaseException):
                 logger.warning("could not load completer: %s", result)
+                self._shortcuts_load_failed = True
                 return
             if not isinstance(result, tuple):
                 return
@@ -501,6 +506,7 @@ class SpottyBunnyWin32Controller:
             self._completer = completer
             self._base_url = base_url
             self._entries = entries
+            self._shortcuts_load_failed = False
 
         self._io.submit(work, on_done)
 
@@ -928,6 +934,10 @@ def _register_overlay_class(
     wnd_class.lpfnWndProc = wndproc
     wnd_class.lpszClassName = OVERLAY_WINDOW_CLASS
     wnd_class.hInstance = win32gui.GetModuleHandle(None)
+    # Without a background brush, the margins around the EDIT/STATIC/LISTBOX
+    # children (never covered by a child control) are never painted and show
+    # whatever was on screen behind the popup.
+    wnd_class.hbrBackground = win32con.COLOR_WINDOW + 1
     return win32gui.RegisterClass(wnd_class)
 
 

@@ -9,6 +9,7 @@ from django.test import SimpleTestCase
 from app.spotty_bunny_complete import CompletionRow
 from app.spotty_bunny_io import ImmediateIo
 from app.spotty_bunny_menu import CHECK_FOR_UPDATES_STATUS, logo_menu_specs
+from app.spotty_bunny_status import SHORTCUTS_LOAD_FAILED
 from app.spotty_bunny_update import UpdateStatus
 from app.spotty_bunny_win32_app import (
     TIMER_ID_HEALTH,
@@ -26,6 +27,7 @@ from app.spotty_bunny_win32_app import (
     SpottyBunnyWin32Controller,
     _handle_tray_message,
     _make_overlay_wndproc,
+    _register_overlay_class,
     _selector_for_vk,
     _show_context_menu,
     run_spotty_bunny_win32_app,
@@ -376,6 +378,16 @@ class ShowHideToggleTests(SimpleTestCase):
         controller.show()
         self.assertEqual(controller.get_field_text(), "")
 
+    def test_show_resets_a_previously_failed_shortcuts_load(self) -> None:
+        # Regression: a stale failure from a previous open must not report
+        # "could not load shortcuts" on the very next Tab press, before the
+        # freshly (re-)kicked-off _load_completer_async() has even had a
+        # chance to fail again for real.
+        controller = _make_controller()
+        controller._shortcuts_load_failed = True
+        controller.show()
+        self.assertFalse(controller._shortcuts_load_failed)
+
     def test_show_rebuilds_history_with_newly_appended_lines(self) -> None:
         # Regression: a session-long tray process must see queries appended
         # by earlier resolves, not just the snapshot taken at __init__.
@@ -562,11 +574,41 @@ class HandleEditKeydownTests(SimpleTestCase):
         controller._completer = None
         rows_calls: list[list[CompletionRow]] = []
         controller.set_completion_rows = rows_calls.append
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
         handled = controller.handle_edit_keydown(VK_TAB)
         self.assertTrue(handled)
         self.assertEqual(controller._completion_rows, [])
         self.assertFalse(controller._completion_visible)
         self.assertEqual(rows_calls, [])
+        # Load hasn't failed yet (still in flight) -- no status to report.
+        self.assertEqual(status_calls, [])
+
+    def test_tab_with_failed_completer_load_reports_status(self) -> None:
+        controller = _make_controller()
+        controller._completer = None
+        controller._shortcuts_load_failed = True
+        status_calls: list[str] = []
+        controller.set_status_text = status_calls.append
+        handled = controller.handle_edit_keydown(VK_TAB)
+        self.assertTrue(handled)
+        self.assertEqual(status_calls, [SHORTCUTS_LOAD_FAILED])
+
+    def test_up_arrow_after_single_auto_inserted_match_is_consumed(self) -> None:
+        # Regression (deferred from #426's review): after Tab auto-inserts a
+        # single match, the completion table is hidden but the rows are
+        # still tracked -- completion_navigation_disposition() returns
+        # "consume" in that state, and arrow keys must not fall through to
+        # history navigation.
+        controller = _make_controller()
+        controller._completion_rows = [CompletionRow("gh", "GitHub", 0)]
+        controller._completion_visible = False
+        controller._completion_index = 0
+        controller.set_field_text("github")
+        handled = controller.handle_edit_keydown(VK_UP)
+        self.assertTrue(handled)
+        self.assertEqual(controller._completion_index, 0)
+        self.assertEqual(controller.get_field_text(), "github")
 
     def test_up_arrow_without_completion_rows_walks_history(self) -> None:
         controller = _make_controller()
@@ -735,6 +777,24 @@ class LoadCompleterAsyncTests(SimpleTestCase):
             with self.assertLogs("app.spotty_bunny_win32_app", level="WARNING"):
                 controller._load_completer_async()
         self.assertIsNone(controller._completer)
+        self.assertTrue(controller._shortcuts_load_failed)
+
+    def test_success_clears_a_previously_failed_load(self) -> None:
+        controller = SpottyBunnyWin32Controller(io=ImmediateIo())
+        controller._shortcuts_load_failed = True
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.resolve_base_url",
+                return_value="http://127.0.0.1:8000",
+            ),
+            patch("app.spotty_bunny_win32_app.fetch_key_entries", return_value=[]),
+            patch(
+                "app.spotty_bunny_win32_app.make_spotty_completer",
+                return_value="a-completer",
+            ),
+        ):
+            controller._load_completer_async()
+        self.assertFalse(controller._shortcuts_load_failed)
 
 
 class CompletionsReadyTests(SimpleTestCase):
@@ -1065,12 +1125,26 @@ class _FakeWin32Con:
     MF_STRING = 0x0000
     TPM_LEFTALIGN = 0x0000
     TPM_RETURNCMD = 0x0100
+    COLOR_WINDOW = 5
 
 
 def _make_fake_win32gui() -> MagicMock:
     win32gui = MagicMock()
     win32gui.DefWindowProc = MagicMock(return_value=0)
     return win32gui
+
+
+class RegisterOverlayClassTests(SimpleTestCase):
+    def test_sets_a_background_brush(self) -> None:
+        # Regression: an unset hbrBackground leaves the margins around the
+        # EDIT/STATIC/LISTBOX children unpainted, showing whatever was on
+        # screen behind the popup.
+        controller = _make_controller()
+        win32gui = _make_fake_win32gui()
+        _register_overlay_class(controller, win32gui=win32gui, win32con=_FakeWin32Con)
+        wnd_class = win32gui.WNDCLASS.return_value
+        self.assertEqual(wnd_class.hbrBackground, _FakeWin32Con.COLOR_WINDOW + 1)
+        win32gui.RegisterClass.assert_called_once_with(wnd_class)
 
 
 class OverlayWndProcTests(SimpleTestCase):
