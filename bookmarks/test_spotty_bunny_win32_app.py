@@ -1440,6 +1440,25 @@ class CenterOverlayTests(SimpleTestCase):
         _center_overlay(10, win32api=win32api, win32con=MagicMock(), win32gui=win32gui)
         win32gui.SetWindowPos.assert_not_called()
 
+    def test_a_window_geometry_failure_leaves_the_window_alone(self) -> None:
+        # The other half of the fail-soft contract: GetWindowRect raises for a
+        # stale/invalid hwnd. It must stay inside the guard, not escape into
+        # the wndproc and keep the overlay from ever appearing.
+        win32gui, win32api, _ = _make_focus_modules()
+        win32gui.GetWindowRect = MagicMock(
+            side_effect=_FakeGuiError(6, "GetWindowRect", "")
+        )
+        _center_overlay(10, win32api=win32api, win32con=MagicMock(), win32gui=win32gui)
+        win32gui.SetWindowPos.assert_not_called()
+
+    def test_a_failed_move_is_not_fatal(self) -> None:
+        win32gui, win32api, _ = _make_focus_modules()
+        win32gui.SetWindowPos = MagicMock(
+            side_effect=_FakeGuiError(5, "SetWindowPos", "")
+        )
+        _center_overlay(10, win32api=win32api, win32con=MagicMock(), win32gui=win32gui)
+        win32gui.SetWindowPos.assert_called_once()
+
 
 class ShowOverlayWindowTests(SimpleTestCase):
     def test_centers_before_showing(self) -> None:
