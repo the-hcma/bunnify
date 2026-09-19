@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.15.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.14.0...bunnify-v0.15.0) (2026-09-19)
+
+
+### Features
+
+* add windows extra and CLI foundation for Spotty Bunny ([#425](https://github.com/the-hcma/bunnify/issues/425)) ([#430](https://github.com/the-hcma/bunnify/issues/430)) ([217446c](https://github.com/the-hcma/bunnify/commit/217446c6ba46d3564a795878aa8dfc665d4b6e7b))
+* bunnify upgrade refreshes the Windows Scheduled Task too ([#467](https://github.com/the-hcma/bunnify/issues/467)) ([#470](https://github.com/the-hcma/bunnify/issues/470)) ([97740f7](https://github.com/the-hcma/bunnify/commit/97740f767fc0f5173cbc978b69f1272b0791b022))
+* offer to install Spotty Bunny during setup, on both platforms ([#467](https://github.com/the-hcma/bunnify/issues/467)) ([#469](https://github.com/the-hcma/bunnify/issues/469)) ([667a87c](https://github.com/the-hcma/bunnify/commit/667a87cb8426219cf1babf632e5af02c782b65f9))
+* Windows global hotkey capture via WH_KEYBOARD_LL ([#424](https://github.com/the-hcma/bunnify/issues/424)) ([#432](https://github.com/the-hcma/bunnify/issues/432)) ([983e32f](https://github.com/the-hcma/bunnify/commit/983e32fa6f216454fcdc845c101ac069448bf7ef))
+* Windows Spotty Bunny About panel ([#428](https://github.com/the-hcma/bunnify/issues/428)) ([#440](https://github.com/the-hcma/bunnify/issues/440)) ([4dbcff0](https://github.com/the-hcma/bunnify/commit/4dbcff0a3a4923d86588061cf499030196c7d080))
+* Windows Spotty Bunny overlay polish ([#437](https://github.com/the-hcma/bunnify/issues/437)) ([#463](https://github.com/the-hcma/bunnify/issues/463)) ([6404eac](https://github.com/the-hcma/bunnify/commit/6404eace59580e49bb02a9744f5609c0dc5e637e))
+* Windows Spotty Bunny startup update-status ([#436](https://github.com/the-hcma/bunnify/issues/436)) ([#462](https://github.com/the-hcma/bunnify/issues/462)) ([ce85ed8](https://github.com/the-hcma/bunnify/commit/ce85ed8da5f9d567a83f9df6a952af20a8e53834))
+* Windows tray icon + overlay search window ([#426](https://github.com/the-hcma/bunnify/issues/426)) ([#435](https://github.com/the-hcma/bunnify/issues/435)) ([980d9b2](https://github.com/the-hcma/bunnify/commit/980d9b298144b7c227047ef508d6ce974c1e0311))
+
+
+### Bug Fixes
+
+* fall back to a plain label if SysLink is unavailable ([#441](https://github.com/the-hcma/bunnify/issues/441)) ([#466](https://github.com/the-hcma/bunnify/issues/466)) ([705338a](https://github.com/the-hcma/bunnify/commit/705338a80a0cdcb634fc9e2ad296e3928610457e))
+* platform-neutral skew/version wording ([#467](https://github.com/the-hcma/bunnify/issues/467)) ([#468](https://github.com/the-hcma/bunnify/issues/468)) ([2cf3bb4](https://github.com/the-hcma/bunnify/commit/2cf3bb4eb763c5990c2819d11f4e32e541d5e449))
+* preserve last-known-good LaunchAgent plist on failed restore ([#422](https://github.com/the-hcma/bunnify/issues/422)) ([63136e2](https://github.com/the-hcma/bunnify/commit/63136e2c8aadd7c8703fd67a70881e7b9eee9df3))
+* stop stale local server when switching setup mode to remote ([#421](https://github.com/the-hcma/bunnify/issues/421)) ([2cb543c](https://github.com/the-hcma/bunnify/commit/2cb543c4ee573d153ab2e6c400f186c05a332461))
+* Windows test-suite compatibility across 5 modules ([#431](https://github.com/the-hcma/bunnify/issues/431)) ([#434](https://github.com/the-hcma/bunnify/issues/434)) ([a31a05a](https://github.com/the-hcma/bunnify/commit/a31a05aa7132dda35b1334bdbe2689bef8515906))
+
+
+### Documentation
+
+* Windows Spotty Bunny install docs + permissions note ([#429](https://github.com/the-hcma/bunnify/issues/429)) ([#442](https://github.com/the-hcma/bunnify/issues/442)) ([ac12f9f](https://github.com/the-hcma/bunnify/commit/ac12f9f6813b3bf86caefd9bb2993430b97f55f7))
+
 ## [0.14.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.13.1...bunnify-v0.14.0) (2026-09-15)
 
 
