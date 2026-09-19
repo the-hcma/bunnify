@@ -810,12 +810,16 @@ class EnsureSpottyAfterSetupTests(SimpleTestCase):
             ),
             patch("app.spotty_bunny_agent.install_agent", return_value=0) as install,
         ):
+            prompt_fn = lambda _message: "y"  # noqa: E731
             _ensure_spotty_after_setup(
                 print_fn=messages.append,
-                prompt_fn=lambda _message: "y",
+                prompt_fn=prompt_fn,
                 theme=Theme(enabled=False),
             )
-        install.assert_called_once()
+        # Pins the macOS branch's contractual prompt_fn forwarding (TCC
+        # re-verification) -- a plain assert_called_once() would stay green
+        # even if this were silently dropped.
+        install.assert_called_once_with(print_err=messages.append, prompt_fn=prompt_fn)
         self.assertIn("✓ Spotty Bunny installed", "\n".join(messages))
 
     def test_ensure_spotty_after_setup_offers_install_when_missing_declined(
@@ -893,7 +897,13 @@ class EnsureSpottyAfterSetupTests(SimpleTestCase):
                 prompt_fn=lambda _message: "y",
                 theme=Theme(enabled=False),
             )
-        install.assert_called_once()
+        # Pins the win32 branch's call shape -- app.spotty_bunny_agent_win32.
+        # install_agent() has no prompt_fn parameter (no TCC equivalent), so
+        # a plain assert_called_once() would stay green even if the macOS
+        # kwargs were ever unified into this branch, which would crash
+        # `bunnify setup` on Windows with an unexpected-keyword-argument
+        # TypeError right after the config was saved.
+        install.assert_called_once_with(print_err=messages.append)
         self.assertIn("✓ Spotty Bunny installed", "\n".join(messages))
 
     def test_ensure_spotty_after_setup_windows_installed_skips_macos_realign(
