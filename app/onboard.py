@@ -110,8 +110,13 @@ def format_onboarding_text(
     state: InstallState | None = None,
     *,
     read_executable_build: Callable[[Path], str | None] | None = None,
+    include_summary: bool = True,
 ) -> str:
-    """Return post-install / post-upgrade next steps for the terminal."""
+    """Return post-install / post-upgrade next steps for the terminal.
+
+    *include_summary* is False when the caller has already printed the install
+    summary for this same state (``run_onboard`` does, before its prompts).
+    """
     if state is None:
         reader = read_executable_build
         if reader is None:
@@ -121,8 +126,9 @@ def format_onboarding_text(
     bookmarks = default_bookmarks_path()
     config = env_file_path()
     lines = ["Bunnify — next steps after install or upgrade", ""]
-    lines.extend(_format_install_summary(state))
-    lines.append("")
+    if include_summary:
+        lines.extend(_format_install_summary(state))
+        lines.append("")
     step = 1
     # A remote server holds its own bookmarks; no local server starts here.
     if not state.bookmarks_ready and not state.remote_mode:
@@ -206,7 +212,8 @@ def run_onboard(
 
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     log(colors.header(_command_banner("onboard")))
-    for line in _format_install_summary(state):
+    summary = _format_install_summary(state)
+    for line in summary:
         log(line)
     preferences = load_preferences()
     if preferences is not None and preferences.base_url:
@@ -341,7 +348,14 @@ def run_onboard(
                     )
 
     log("")
-    log(format_onboarding_text(state))
+    # The summary above is repeated only if the flow changed the install
+    # (an upgrade, PyObjC, a new agent), so it is never printed twice for
+    # the same state.
+    log(
+        format_onboarding_text(
+            state, include_summary=_format_install_summary(state) != summary
+        )
+    )
 
 
 def _confirm_server_reachable_for_install(
