@@ -26,6 +26,7 @@ from app.spotty_bunny_about_info import (
     load_about_runtime_info,
     server_skew_message,
 )
+from app.spotty_bunny_focus_win32 import take_foreground
 from app.spotty_bunny_update import read_cached_update_status
 from app.version import get_build_info
 
@@ -103,8 +104,12 @@ def build_about_window(
     win32gui,
     win32con,
     win32api,
+    win32process=None,
 ) -> int:
     """Create, position, and show the About popup. Returns its hwnd.
+
+    *win32process* is imported lazily when not given; it is only needed for the
+    foreground-lock workaround, and tests pass a fake.
 
     Rows are ``(height, factory)`` pairs, laid out top-to-bottom by one
     loop that both sizes the window and places each child -- a single
@@ -255,23 +260,27 @@ def build_about_window(
         y += row_height + ABOUT_ROW_GAP
 
     win32gui.ShowWindow(hwnd, win32con.SW_SHOWNORMAL)
-    _focus_about_window(hwnd, win32gui=win32gui)
+    if win32process is None:
+        import win32process  # pyright: ignore[reportMissingModuleSource]
+    _focus_about_window(
+        hwnd, win32api=win32api, win32gui=win32gui, win32process=win32process
+    )
     return hwnd
 
 
-def _focus_about_window(hwnd: int, *, win32gui) -> None:
+def _focus_about_window(hwnd: int, *, win32api, win32gui, win32process) -> None:
     """Give the About popup the foreground and focus, best effort.
 
-    Windows' foreground lock refuses a background process, and pywin32 then
-    raises ``pywintypes.error (0, ...)`` (the #477 failure). By this point the
-    popup is already visible, so letting that escape ``build_about_window``
-    would keep ``show_about`` from ever recording the window: it would stay
-    up, untracked, and the next tray click would build a second one.
+    Goes through the same ``take_foreground`` the search overlay uses, so it
+    gets the same foreground-lock workaround (attaching to the foreground
+    window's input queue) rather than only surviving the refusal. Nothing here
+    raises: by this point the popup is already visible, so an exception would
+    keep ``show_about`` from ever recording the window, and the next tray click
+    would build a second one.
     """
-    try:
-        win32gui.SetForegroundWindow(hwnd)
-    except win32gui.error:
-        logger.warning("SetForegroundWindow refused for the About window; continuing")
+    take_foreground(
+        hwnd, win32api=win32api, win32gui=win32gui, win32process=win32process
+    )
     try:
         win32gui.SetFocus(hwnd)
     except win32gui.error:

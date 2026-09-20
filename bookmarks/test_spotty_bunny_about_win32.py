@@ -563,8 +563,18 @@ class BuildAboutWindowTests(SimpleTestCase):
         about_win32._about_class_registered = False
         about_win32._about_wndproc_controller = None
         # _create_syslink does a deferred `import pywintypes`, which isn't
-        # installed off Windows.
-        self.enterContext(patch.dict(sys.modules, {"pywintypes": _fake_pywintypes()}))
+        # installed off Windows; build_about_window likewise lazily imports
+        # win32process for the foreground-lock workaround when not given one.
+        self._lazy_win32process = MagicMock()
+        self.enterContext(
+            patch.dict(
+                sys.modules,
+                {
+                    "pywintypes": _fake_pywintypes(),
+                    "win32process": self._lazy_win32process,
+                },
+            )
+        )
 
     def tearDown(self) -> None:
         self._about_win32._about_class_registered = self._previous_registered
@@ -625,7 +635,11 @@ class BuildAboutWindowTests(SimpleTestCase):
         return win32gui, win32con, win32api, created
 
     def _build(
-        self, win32gui: MagicMock, win32con: MagicMock, win32api: MagicMock
+        self,
+        win32gui: MagicMock,
+        win32con: MagicMock,
+        win32api: MagicMock,
+        win32process: MagicMock | None = None,
     ) -> int:
         from app.spotty_bunny_about_win32 import build_about_window
         from app.spotty_bunny_update import UpdateStatus
@@ -648,8 +662,52 @@ class BuildAboutWindowTests(SimpleTestCase):
             ),
         ):
             return build_about_window(
-                MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
+                MagicMock(),
+                win32gui=win32gui,
+                win32con=win32con,
+                win32api=win32api,
+                win32process=win32process,
             )
+
+    def test_the_about_window_uses_the_shared_foreground_helper(self) -> None:
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        win32process = MagicMock()
+        with patch("app.spotty_bunny_about_win32.take_foreground") as take:
+            hwnd = self._build(win32gui, win32con, win32api, win32process)
+        take.assert_called_once_with(
+            hwnd, win32api=win32api, win32gui=win32gui, win32process=win32process
+        )
+
+    def test_it_gets_the_overlay_s_foreground_lock_workaround(self) -> None:
+        # Not just surviving a refusal: attach to the foreground window's
+        # input queue around SetForegroundWindow, as the overlay does (#496).
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        win32api.GetCurrentThreadId.return_value = 1
+        win32gui.GetForegroundWindow.return_value = 100
+        win32process = MagicMock()
+        win32process.GetWindowThreadProcessId.return_value = (555, 4242)
+        order: list[str] = []
+        win32gui.ShowWindow.side_effect = lambda *_a: order.append("show")
+        win32process.AttachThreadInput.side_effect = lambda _a, _b, attach: (
+            order.append(f"attach={attach}")
+        )
+        win32gui.SetForegroundWindow.side_effect = lambda *_a: order.append(
+            "foreground"
+        )
+        win32gui.SetFocus.side_effect = lambda *_a: order.append("focus")
+        self._build(win32gui, win32con, win32api, win32process)
+        self.assertEqual(
+            order, ["show", "attach=True", "foreground", "attach=False", "focus"]
+        )
+
+    def test_win32process_is_imported_lazily_when_not_given(self) -> None:
+        win32gui, win32con, win32api, _created = self._fake_win32()
+        win32api.GetCurrentThreadId.return_value = 1
+        win32gui.GetForegroundWindow.return_value = 100
+        self._lazy_win32process.GetWindowThreadProcessId.return_value = (555, 1)
+        self._build(win32gui, win32con, win32api)
+        self._lazy_win32process.AttachThreadInput.assert_any_call(1, 555, True)
+        self._lazy_win32process.AttachThreadInput.assert_any_call(1, 555, False)
 
     def test_a_refused_foreground_call_does_not_abort_the_about_window(self) -> None:
         # Same foreground-lock refusal as showing the overlay (#477). The
