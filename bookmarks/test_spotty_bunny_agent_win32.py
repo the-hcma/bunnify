@@ -352,6 +352,38 @@ class UninstallAgentTests(SimpleTestCase):
         clear_health.assert_called_once_with()
         self.assertIn("uninstalled Scheduled Task", stderr.getvalue())
 
+    def test_clears_the_health_file_before_stopping_the_overlay(self) -> None:
+        # From the overlay's own menu, stopping it ends this very process, so
+        # anything after the stop never runs (#534).
+        from app.spotty_bunny_agent_win32 import uninstall_agent
+
+        fake = _FakeSchtasks()
+        fake.registered = True
+        order: list[str] = []
+        with (
+            TemporaryDirectory() as tmp,
+            patch(
+                "app.spotty_bunny_agent_win32.clear_spotty_bunny_health",
+                side_effect=lambda: order.append("health"),
+            ),
+            patch(
+                "app.spotty_bunny_agent_win32.stop_spotty_bunny",
+                side_effect=lambda **_k: order.append("stop"),
+            ),
+            patch(
+                "app.spotty_bunny_agent_win32.clear_spotty_bunny_pid",
+                side_effect=lambda **_k: order.append("pid"),
+            ),
+        ):
+            code = uninstall_agent(
+                pid_dir=Path(tmp) / "run",
+                platform="win32",
+                print_err=lambda _m: None,
+                schtasks=fake,
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(order, ["health", "stop", "pid"])
+
     def test_idempotent_when_already_uninstalled(self) -> None:
         from app.spotty_bunny_agent_win32 import uninstall_agent
 

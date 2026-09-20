@@ -258,10 +258,12 @@ def uninstall_agent(
         # just relaunch it at the next logon anyway.
         err(f"{COMMAND_NAME}: schtasks /Delete failed for '{TASK_NAME}'.")
         return 1
+    # A killed overlay never runs its atexit cleanup, so remove its health file
+    # first: when this runs inside the overlay (its own menu), stopping it
+    # ends the process before anything after the stop could run.
+    clear_spotty_bunny_health()
     stop_spotty_bunny(pid_dir=pid_dir)
     clear_spotty_bunny_pid(pid_dir=pid_dir)
-    # A killed overlay never runs its atexit cleanup, so remove its health file.
-    clear_spotty_bunny_health()
     err(f"{COMMAND_NAME}: uninstalled Scheduled Task '{TASK_NAME}'")
     return 0
 
