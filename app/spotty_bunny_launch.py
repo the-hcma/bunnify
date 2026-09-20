@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import shutil
@@ -229,6 +230,16 @@ def write_spotty_bunny_pid(
     path.write_text(f"{pid}\n{recorded}\n", encoding="utf-8")
 
 
+class _UnicodeString(ctypes.Structure):
+    """winternl.h ``UNICODE_STRING`` (``Length`` is in bytes, not characters)."""
+
+    _fields_ = (
+        ("Length", ctypes.c_ushort),
+        ("MaximumLength", ctypes.c_ushort),
+        ("Buffer", ctypes.c_void_p),
+    )
+
+
 def _is_spotty_bunny_command(command: str) -> bool:
     """Match the overlay by name, then let a build marker rule out a sibling."""
     if "spotty-bunny" not in command and "spotty_bunny_cli" not in command:
@@ -270,14 +281,21 @@ def _spotty_bunny_process_alive(pid: int) -> bool:
     if sys.platform == "win32":
         # #427 wires a live Windows stop path (uninstall/rollback), so a
         # stale/reused PID being treated as "our overlay" is no longer
-        # inert -- verify the executable's image name before trusting it.
-        # This is weaker than the `ps -o command=` cross-check below: a
-        # full command line needs WMI/PowerShell, not just a process
-        # handle, so the "-m app.spotty_bunny_cli" dev-invocation launch
-        # form (image name is just python.exe/pythonw.exe) can't be
-        # verified this way and is treated as a mismatch. The packaged
-        # `spotty-bunny.exe` console script (the documented Windows
-        # install path) is unaffected.
+        # inert -- verify the process before trusting it.
+        #
+        # Match on the full command line, like the `ps -o command=` check
+        # below. The image name alone is not enough: the pipx/pip
+        # `spotty-bunny.exe` is a launcher that starts a child python.exe,
+        # and the overlay records *its own* pid (os.getpid()), whose image is
+        # `...\Scripts\python.exe` -- so an image-name check rejected the real
+        # overlay, `status` reported "running: no", and the stale-pid cleanup
+        # deleted the pid file (#494). The command line of that python
+        # process still names `spotty-bunny.exe` (or `app.spotty_bunny_cli`
+        # for a `-m` launch). Fall back to the image name when the command
+        # line cannot be read.
+        command = _win32_process_command_line(pid)
+        if command is not None:
+            return _is_spotty_bunny_command(command)
         image = _win32_process_image_name(pid)
         return image is not None and _is_spotty_bunny_command(image)
     command = _process_command(pid)
@@ -285,9 +303,57 @@ def _spotty_bunny_process_alive(pid: int) -> bool:
 
 
 _WIN32_ERROR_ACCESS_DENIED = 5
+_WIN32_PROCESS_COMMAND_LINE_INFORMATION = 60  # ProcessCommandLineInformation
 _WIN32_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _WIN32_PROCESS_TERMINATE = 0x0001
 _WIN32_STILL_ACTIVE = 259
+
+
+def _win32_process_command_line(pid: int) -> str | None:
+    """Return the full command line of *pid*, or None if it cannot be read.
+
+    ``NtQueryInformationProcess(ProcessCommandLineInformation)`` returns a
+    ``UNICODE_STRING`` and works with ``PROCESS_QUERY_LIMITED_INFORMATION``
+    for a same-user process (Windows 8.1+), so no WMI or PowerShell is needed.
+    None covers "gone", "denied" and "unsupported": callers fall back to the
+    image name.
+    """
+    import ctypes
+
+    kernel32 = _win32_kernel32()
+    ntdll = ctypes.WinDLL("ntdll")
+    handle = kernel32.OpenProcess(_WIN32_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        needed = ctypes.c_ulong(0)
+        # The first call only reports the required size (it "fails" with
+        # STATUS_INFO_LENGTH_MISMATCH by design).
+        ntdll.NtQueryInformationProcess(
+            handle,
+            _WIN32_PROCESS_COMMAND_LINE_INFORMATION,
+            None,
+            0,
+            ctypes.byref(needed),
+        )
+        if needed.value == 0:
+            return None
+        buffer = ctypes.create_string_buffer(needed.value)
+        status = ntdll.NtQueryInformationProcess(
+            handle,
+            _WIN32_PROCESS_COMMAND_LINE_INFORMATION,
+            buffer,
+            needed.value,
+            ctypes.byref(needed),
+        )
+        if status != 0:
+            return None
+        header = ctypes.cast(buffer, ctypes.POINTER(_UnicodeString))[0]
+        if not header.Buffer or not header.Length:
+            return None
+        return ctypes.wstring_at(header.Buffer, header.Length // 2)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _win32_process_image_name(pid: int) -> str | None:

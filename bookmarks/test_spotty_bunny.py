@@ -4279,6 +4279,182 @@ class SpottyBunnyWin32ProcessTests(SimpleTestCase):
         ):
             self.assertFalse(_spotty_bunny_process_alive(4242))
 
+    def _alive_on_windows(self, *, command: str | None, image: str | None) -> bool:
+        """_spotty_bunny_process_alive for a live pid with the given identity."""
+        from app.spotty_bunny_launch import _spotty_bunny_process_alive
+
+        with (
+            patch("app.spotty_bunny_launch.sys.platform", "win32"),
+            patch("app.spotty_bunny_launch._process_exists", return_value=True),
+            patch(
+                "app.spotty_bunny_launch._win32_process_command_line",
+                return_value=command,
+            ),
+            patch(
+                "app.spotty_bunny_launch._win32_process_image_name",
+                return_value=image,
+            ),
+        ):
+            return _spotty_bunny_process_alive(4242)
+
+    def test_process_alive_true_for_python_child_of_the_launcher(self) -> None:
+        """#494: the overlay records its own pid, whose image is python.exe;
+        only the command line still names spotty-bunny.exe."""
+        self.assertTrue(
+            self._alive_on_windows(
+                command=(
+                    '"C:\\pipx\\venvs\\bunnify\\Scripts\\python.exe"  '
+                    '"C:\\Users\\a\\.local\\bin\\spotty-bunny.exe" '
+                ),
+                image="C:\\pipx\\venvs\\bunnify\\Scripts\\python.exe",
+            )
+        )
+
+    def test_process_alive_true_for_a_module_launch(self) -> None:
+        self.assertTrue(
+            self._alive_on_windows(
+                command='"C:\\Python\\python.exe" -m app.spotty_bunny_cli',
+                image="C:\\Python\\python.exe",
+            )
+        )
+
+    def test_process_alive_false_for_python_running_something_else(self) -> None:
+        self.assertFalse(
+            self._alive_on_windows(
+                command='"C:\\Python\\python.exe" C:\\scripts\\other.py',
+                image="C:\\Python\\python.exe",
+            )
+        )
+
+    def test_process_alive_trusts_the_command_line_over_the_image(self) -> None:
+        """A command line that rules the process out is not overridden by an
+        image path that happens to contain the name."""
+        self.assertFalse(
+            self._alive_on_windows(
+                command="C:\\Windows\\notepad.exe notes.txt",
+                image="C:\\spotty-bunny\\notepad.exe",
+            )
+        )
+
+    def test_process_alive_falls_back_to_image_without_a_command_line(self) -> None:
+        self.assertTrue(
+            self._alive_on_windows(
+                command=None,
+                image="C:\\Users\\a\\.local\\bin\\spotty-bunny.exe",
+            )
+        )
+        self.assertFalse(
+            self._alive_on_windows(command=None, image="C:\\Windows\\notepad.exe")
+        )
+
+    def _fake_ntdll(self, text: str | None) -> MagicMock:
+        """An ntdll whose NtQueryInformationProcess reports *text* as the
+        command line (None: a zero-length result)."""
+        import ctypes
+
+        from app.spotty_bunny_launch import _UnicodeString
+
+        wide = ctypes.create_unicode_buffer(text or "")
+        header_size = ctypes.sizeof(_UnicodeString)
+        total = header_size + ctypes.sizeof(wide)
+
+        def _query(
+            _handle: int,
+            _info_class: int,
+            buffer: object,
+            length: int,
+            needed: object,
+        ) -> int:
+            needed._obj.value = total if text is not None else 0
+            if buffer is None:
+                return -1073741820  # STATUS_INFO_LENGTH_MISMATCH
+            header = _UnicodeString.from_buffer(buffer)
+            header.Length = len(text or "") * 2
+            header.MaximumLength = header.Length + 2
+            header.Buffer = ctypes.addressof(wide)
+            return 0
+
+        ntdll = MagicMock()
+        ntdll.NtQueryInformationProcess = MagicMock(side_effect=_query)
+        return ntdll
+
+    def _command_line_with(self, kernel32: MagicMock, ntdll: MagicMock) -> str | None:
+        from app.spotty_bunny_launch import _win32_process_command_line
+
+        def _windll(name: str, **_kwargs: object) -> MagicMock:
+            return ntdll if name == "ntdll" else kernel32
+
+        with patch("ctypes.WinDLL", side_effect=_windll, create=True):
+            return _win32_process_command_line(4242)
+
+    def test_command_line_none_when_open_process_fails(self) -> None:
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        ntdll = self._fake_ntdll("x")
+        self.assertIsNone(self._command_line_with(kernel32, ntdll))
+        ntdll.NtQueryInformationProcess.assert_not_called()
+
+    def test_command_line_none_when_no_size_reported(self) -> None:
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+        self.assertIsNone(self._command_line_with(kernel32, self._fake_ntdll(None)))
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_command_line_none_when_the_read_fails(self) -> None:
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+        ntdll = self._fake_ntdll("x")
+        real = ntdll.NtQueryInformationProcess.side_effect
+
+        def _fail_second(handle, info_class, buffer, length, needed):
+            status = real(handle, info_class, buffer, length, needed)
+            return status if buffer is None else -1073741823
+
+        ntdll.NtQueryInformationProcess.side_effect = _fail_second
+        self.assertIsNone(self._command_line_with(kernel32, ntdll))
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_command_line_returns_the_text_and_closes_the_handle(self) -> None:
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+        command = '"C:\\py\\python.exe" "C:\\bin\\spotty-bunny.exe" '
+        ntdll = self._fake_ntdll(command)
+        self.assertEqual(self._command_line_with(kernel32, ntdll), command)
+        kernel32.CloseHandle.assert_called_once_with(99)
+        info_classes = {
+            call.args[1] for call in ntdll.NtQueryInformationProcess.call_args_list
+        }
+        self.assertEqual(info_classes, {60})
+
+    def test_real_command_line_of_a_live_process(self) -> None:
+        """The real ntdll call, against a real child (Windows only)."""
+        if sys.platform != "win32":
+            self.skipTest("Windows only")
+        from app.spotty_bunny_launch import (
+            _spotty_bunny_process_alive,
+            _win32_process_command_line,
+        )
+
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)  # spotty-bunny"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            command = _win32_process_command_line(child.pid)
+            self.assertIsNotNone(command)
+            assert command is not None
+            self.assertIn("time.sleep(30)", command)
+            self.assertIn("spotty-bunny", command)
+            # python.exe by image, spotty-bunny by command line (#494)
+            self.assertTrue(_spotty_bunny_process_alive(child.pid))
+        finally:
+            child.kill()
+            child.wait()
+        self.assertIsNone(_win32_process_command_line(child.pid))
+        self.assertFalse(_spotty_bunny_process_alive(child.pid))
+
 
 class SpottyBunnyResolveTests(SimpleTestCase):
     def test_failure_does_not_append_history(self) -> None:
