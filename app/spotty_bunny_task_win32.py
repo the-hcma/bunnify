@@ -28,6 +28,11 @@ TASK_STATUS_RUNNING = "Running"
 
 SchtasksFn = Callable[..., subprocess.CompletedProcess[str]]
 
+# MultipleInstancesPolicy is StopExisting, not IgnoreNew: a /Run then replaces the
+# running instance instead of being ignored. That is what lets Upgrade/Install
+# from the overlay's own menu hand off to a new instance even though the
+# overlay cannot stop itself (#523); with IgnoreNew the run is dropped and the
+# install times out.
 _TASK_XML_TEMPLATE = """\
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -44,7 +49,7 @@ _TASK_XML_TEMPLATE = """\
     </Principal>
   </Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>

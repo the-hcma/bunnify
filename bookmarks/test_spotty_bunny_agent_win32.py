@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -542,10 +543,12 @@ class StatusAgentTests(SimpleTestCase):
 
 
 class InstallOverRunningOverlayTests(SimpleTestCase):
-    """Installing/upgrading while an overlay is already running (#510).
+    """Installing/upgrading while an overlay is already running (#510, #523).
 
-    The task uses MultipleInstancesPolicy=IgnoreNew, so ``schtasks /Run`` is a
-    no-op until the previous instance has gone away.
+    Under MultipleInstancesPolicy=IgnoreNew ``schtasks /Run`` is a no-op until
+    the previous instance has gone away; the task is now registered with
+    StopExisting, which retires the running instance instead. The fake models
+    both, so each case says which policy it runs under.
     """
 
     PREVIOUS_PID = 4242
@@ -555,13 +558,13 @@ class InstallOverRunningOverlayTests(SimpleTestCase):
         self,
         *,
         previous: tuple[int, str] | None,
-        fake: "_IgnoreNewSchtasks | None" = None,
+        fake: "_TaskSchedulerFake | None" = None,
         create_fails: bool = False,
         idle_timeout_s: float = 0.05,
-    ) -> tuple[int, "_IgnoreNewSchtasks", list[str], str]:
+    ) -> tuple[int, "_TaskSchedulerFake", list[str], str]:
         from app.spotty_bunny_agent_win32 import install_agent
 
-        fake = fake or _IgnoreNewSchtasks()
+        fake = fake or _TaskSchedulerFake()
         fake.create_should_fail = create_fails
         events: list[str] = []
         fake.events = events
@@ -609,7 +612,9 @@ class InstallOverRunningOverlayTests(SimpleTestCase):
         return code, fake, events, stderr.getvalue()
 
     def test_stops_the_previous_overlay_so_the_task_can_start_a_new_one(self) -> None:
-        fake = _IgnoreNewSchtasks()
+        # Even a task that ignores new instances (an older definition) starts.
+        fake = _TaskSchedulerFake()
+        fake.policy = "IgnoreNew"
         fake.running = True  # the previous overlay's task instance
         code, fake, events, stderr = self._install(
             previous=(self.PREVIOUS_PID, "old"), fake=fake
@@ -620,7 +625,8 @@ class InstallOverRunningOverlayTests(SimpleTestCase):
 
     def test_the_run_is_ignored_when_the_previous_overlay_is_left_running(self) -> None:
         # The control: this is what happened before, and why the fix exists.
-        fake = _IgnoreNewSchtasks()
+        fake = _TaskSchedulerFake()
+        fake.policy = "IgnoreNew"
         fake.running = True
         with patch(
             "app.spotty_bunny_agent_win32._stop_previous_overlay", lambda *a, **k: None
@@ -635,18 +641,32 @@ class InstallOverRunningOverlayTests(SimpleTestCase):
     def test_does_not_stop_the_overlay_when_it_is_this_process(self) -> None:
         # Menu-triggered install/upgrade runs inside the overlay itself, and
         # stopping it would end the caller.
-        fake = _IgnoreNewSchtasks()
+        fake = _TaskSchedulerFake()
         fake.running = True  # this process is the task's running instance
         _code, _fake, events, _stderr = self._install(
             previous=(os.getpid(), "me"), fake=fake
         )
         self.assertNotIn("stop", events)
 
-    def test_the_menu_triggered_path_still_times_out_and_rolls_back(self) -> None:
-        # Known limitation (#523): the overlay cannot stop itself, so under
-        # IgnoreNew the task's /Run is ignored and the wait times out. This
-        # pins today's behavior so a fix is a deliberate change, not a surprise.
-        fake = _IgnoreNewSchtasks()
+    def test_the_menu_triggered_path_hands_off_to_a_new_instance(self) -> None:
+        # Upgrade/Install run inside the overlay, which cannot stop itself
+        # (#523): the registered task's StopExisting policy retires it when
+        # /Run starts the new instance, so the install completes.
+        fake = _TaskSchedulerFake()
+        fake.running = True  # this process is the task's running instance
+        code, fake, events, stderr = self._install(
+            previous=(os.getpid(), "me"), fake=fake
+        )
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(fake.spawned, 1)
+        self.assertEqual(fake.old_instance_retired, 1)
+        self.assertNotIn("stop", events)
+
+    def test_the_menu_triggered_path_needs_the_stop_existing_policy(self) -> None:
+        # The control for the case above: under IgnoreNew the run is dropped,
+        # the wait times out and the install rolls back (the #523 symptom).
+        fake = _TaskSchedulerFake()
+        fake.policy = "IgnoreNew"
         fake.running = True
         code, fake, _events, stderr = self._install(
             previous=(os.getpid(), "me"), fake=fake
@@ -654,8 +674,6 @@ class InstallOverRunningOverlayTests(SimpleTestCase):
         self.assertEqual(fake.spawned, 0)
         self.assertEqual(code, 1)
         self.assertIn("did not start", stderr)
-        # With no earlier task definition the rollback removes the new one.
-        self.assertIn("removed the non-functional Scheduled Task", stderr)
 
     def test_does_not_stop_anything_when_nothing_was_running(self) -> None:
         code, fake, events, stderr = self._install(previous=None)
@@ -673,7 +691,8 @@ class InstallOverRunningOverlayTests(SimpleTestCase):
         stop.assert_not_called()
 
     def test_waits_until_task_scheduler_reports_the_task_idle(self) -> None:
-        fake = _IgnoreNewSchtasks()
+        fake = _TaskSchedulerFake()
+        fake.policy = "IgnoreNew"
         fake.running = True
         fake.lingers_after_exit = 2  # /Query still says Running twice more
         code, fake, events, stderr = self._install(
@@ -683,7 +702,8 @@ class InstallOverRunningOverlayTests(SimpleTestCase):
         self.assertEqual(fake.spawned, 1)
 
     def test_waits_for_the_task_to_go_idle_but_only_for_a_bounded_time(self) -> None:
-        fake = _IgnoreNewSchtasks()
+        fake = _TaskSchedulerFake()
+        fake.policy = "IgnoreNew"
         fake.running = True
         fake.stays_running_after_exit = True  # Task Scheduler never catches up
         code, fake, events, _stderr = self._install(
@@ -921,20 +941,33 @@ class _FakeSchtasks:
         return subprocess.CompletedProcess(argv, 1, "", f"unhandled: {action}")
 
 
-class _IgnoreNewSchtasks(_FakeSchtasks):
-    """A fake whose task has ``MultipleInstancesPolicy=IgnoreNew``.
+class _TaskSchedulerFake(_FakeSchtasks):
+    """A fake that models the task's ``MultipleInstancesPolicy``.
 
-    ``/Run`` while the task is running does nothing, exactly like Task
+    The policy is read from the registered task XML unless ``policy`` forces
+    one. ``/Run`` while the task is running is ignored under ``IgnoreNew``
+    and retires the running instance under ``StopExisting``, like Task
     Scheduler; ``overlay_exit`` models the running instance going away.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.events: list[str] = []
+        self.policy: str | None = None
         self.spawned = 0
+        self.old_instance_retired = 0
         self.stays_running_after_exit = False
         self.lingers_after_exit = 0
         self._exited = False
+
+    def _effective_policy(self) -> str:
+        if self.policy is not None:
+            return self.policy
+        match = re.search(
+            r"<MultipleInstancesPolicy>(\w+)</MultipleInstancesPolicy>",
+            self.registered_xml or "",
+        )
+        return match.group(1) if match else "IgnoreNew"
 
     def __call__(
         self, argv: list[str], **kwargs: object
@@ -954,8 +987,11 @@ class _IgnoreNewSchtasks(_FakeSchtasks):
         if action == "/Run":
             self.events.append("run")
             if self.running:
-                self.calls.append(list(argv))
-                return subprocess.CompletedProcess(argv, 0, "", "")
+                if self._effective_policy() != "StopExisting":
+                    self.calls.append(list(argv))
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+                self.running = False  # the scheduler retires the old instance
+                self.old_instance_retired += 1
             result = super().__call__(argv, **kwargs)
             self.spawned += 1
             return result
