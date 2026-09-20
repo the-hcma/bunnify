@@ -20,6 +20,7 @@ from app.config import (
 from app.pipx_install import (
     install_macos_extra,
     macos_extra_installed,
+    pipx_bunnify_display,
     pipx_bunnify_path,
 )
 from app.pypi import pypi_latest_version
@@ -149,7 +150,7 @@ def format_onboarding_text(
             "   Bookmarks and config.toml are kept across upgrades.",
             "   If --version still shows a checkout SHA, PATH is using",
             "   ./scripts/bunnify or a repo .venv — the pipx app lives in",
-            "   ~/.local/bin/bunnify.",
+            f"   {pipx_bunnify_display()}.",
             "",
             "Docs: https://github.com/the-hcma/bunnify",
             "Re-print this message anytime:  bunnify onboard",
@@ -354,7 +355,7 @@ def _format_install_summary(state: InstallState) -> list[str]:
             lines.append(f"  {state.pipx_version_label}")
         lines.append(f"  {state.pipx_app_path}")
     elif not state.source_checkout:
-        lines.append("pipx app: not found (~/.local/bin/bunnify)")
+        lines.append(f"pipx app: not found ({pipx_bunnify_display()})")
     if state.source_checkout:
         lines.append(
             "Note: this process is a git checkout; `bunnify upgrade` updates the "

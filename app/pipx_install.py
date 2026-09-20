@@ -54,13 +54,18 @@ def macos_extra_installed(*, interpreter: Path | None = None) -> bool:
     return completed.returncode == 0
 
 
+def pipx_bunnify_display() -> str:
+    """The pipx ``bunnify`` app as a user-facing path, for messages."""
+    return f"~/.local/bin/{_app_name()}"
+
+
 def pipx_bunnify_path() -> Path | None:
     """Return the pipx ``bunnify`` app path when it exists."""
     override = os.environ.get("PIPX_BIN_DIR", "").strip()
     candidates: list[Path] = []
     if override:
-        candidates.append(Path(override) / "bunnify")
-    candidates.append(Path.home() / ".local" / "bin" / "bunnify")
+        candidates.append(Path(override) / _app_name())
+    candidates.append(Path.home() / ".local" / "bin" / _app_name())
     for candidate in candidates:
         if candidate.is_file():
             try:
@@ -74,10 +79,15 @@ def pipx_bunnify_venv_python(*, pipx_home: Path | None = None) -> Path | None:
     """Return the pipx venv python for ``bunnify``, if present."""
     roots = [pipx_home] if pipx_home is not None else _pipx_home_candidates()
     for root in roots:
-        python = root / "venvs" / "bunnify" / "bin" / "python"
+        python = root / "venvs" / "bunnify" / _venv_python()
         if python.is_file():
             return python
     return None
+
+
+def _app_name() -> str:
+    """File name of the pipx-exposed ``bunnify`` app on this platform."""
+    return "bunnify.exe" if sys.platform == "win32" else "bunnify"
 
 
 def _pipx_home_candidates() -> list[Path]:
@@ -87,8 +97,23 @@ def _pipx_home_candidates() -> list[Path]:
     if env_home:
         candidates.append(Path(env_home))
     home = Path.home()
-    for relative in (Path(".local") / "share" / "pipx", Path(".local") / "pipx"):
+    relatives = [Path(".local") / "share" / "pipx", Path(".local") / "pipx"]
+    if sys.platform == "win32":
+        # pipx's Windows defaults: %LOCALAPPDATA%\pipx\pipx (current) and
+        # ~\pipx (older releases).
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            candidates.append(Path(local_app_data) / "pipx" / "pipx")
+        relatives.append(Path("pipx"))
+    for relative in relatives:
         candidate = home / relative
         if candidate not in candidates:
             candidates.append(candidate)
     return candidates
+
+
+def _venv_python() -> Path:
+    """Interpreter path inside a pipx venv on this platform."""
+    if sys.platform == "win32":
+        return Path("Scripts") / "python.exe"
+    return Path("bin") / "python"

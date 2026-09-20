@@ -77,6 +77,7 @@ from app.onboard import run_onboard
 from app.pipx_install import (
     install_macos_extra,
     macos_extra_installed,
+    pipx_bunnify_display,
     pipx_bunnify_path,
 )
 from app.pypi import pypi_latest_version as _pypi_latest_version
@@ -733,7 +734,7 @@ def run_upgrade(
     if is_source_checkout():
         log(
             "This process is a git checkout, not the pipx app. "
-            "`bunnify upgrade` updates ~/.local/bin/bunnify and will not "
+            f"`bunnify upgrade` updates {pipx_bunnify_display()} and will not "
             "change this checkout's pyproject version or commit."
         )
 
@@ -788,7 +789,7 @@ def run_upgrade(
         log(f"      {pipx_app}")
     else:
         log(
-            "pipx upgrade finished, but could not read ~/.local/bin/bunnify "
+            f"pipx upgrade finished, but could not read {pipx_bunnify_display()} "
             "--version. Run that binary directly to confirm."
         )
     if from_label != after_pipx and is_source_checkout():
@@ -939,7 +940,7 @@ def _report_post_upgrade_coherence(
         print_fn(
             theme.dim(
                 "Could not read the upgraded pipx build; skipping version "
-                "coherence checks. Run ~/.local/bin/bunnify --version to "
+                f"coherence checks. Run {pipx_bunnify_display()} --version to "
                 "confirm."
             )
         )
