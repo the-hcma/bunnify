@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from types import ModuleType
+from unittest import skipUnless
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -23,6 +24,7 @@ from app.spotty_bunny_about_win32 import (
     _url_from_notify,
     to_syslink_markup,
 )
+from bookmarks.win32_test_support import real_win32_available
 
 
 def _about_runtime(**overrides: object) -> AboutRuntimeInfo:
@@ -496,6 +498,55 @@ class AboutWndProcTests(SimpleTestCase):
             wndproc(123, win32con.WM_DESTROY, 0, 0)
         self.assertFalse(controller.about_open)
         self.assertIsNone(controller.about_hwnd)
+
+
+class AboutBackgroundTests(SimpleTestCase):
+    """One background color for the window and every label (#514)."""
+
+    _COLOR_WINDOW = 5
+    _COLOR_WINDOWTEXT = 8
+    _WM_CTLCOLORSTATIC = 0x0138
+
+    def _con(self) -> MagicMock:
+        con = MagicMock()
+        con.COLOR_WINDOW = self._COLOR_WINDOW
+        con.COLOR_WINDOWTEXT = self._COLOR_WINDOWTEXT
+        con.WM_CTLCOLORSTATIC = self._WM_CTLCOLORSTATIC
+        return con
+
+    def test_labels_get_the_window_brush_and_system_colors(self) -> None:
+        win32con = self._con()
+        win32gui = MagicMock()
+        # A high-contrast style theme: dark window, light text.
+        colors = {self._COLOR_WINDOW: 0x00202020, self._COLOR_WINDOWTEXT: 0x00F0F0F0}
+        win32gui.GetSysColor.side_effect = colors.__getitem__
+        win32gui.GetSysColorBrush.return_value = 4321
+        wndproc = _make_about_wndproc(win32gui=win32gui, win32con=win32con)
+        result = wndproc(123, self._WM_CTLCOLORSTATIC, 999, 555)
+        self.assertEqual(result, 4321)
+        win32gui.GetSysColorBrush.assert_called_once_with(self._COLOR_WINDOW)
+        win32gui.SetBkColor.assert_called_once_with(999, 0x00202020)
+        # The text color follows the theme too: this handler answers the
+        # message itself, so DefWindowProc no longer selects it.
+        win32gui.SetTextColor.assert_called_once_with(999, 0x00F0F0F0)
+        win32gui.DefWindowProc.assert_not_called()
+
+    def test_registration_gives_the_class_the_window_color_brush(self) -> None:
+        import app.spotty_bunny_about_win32 as about_win32
+
+        previous = about_win32._about_class_registered
+        about_win32._about_class_registered = False
+        try:
+            win32gui = MagicMock()
+            about_win32._register_about_class(
+                MagicMock(), win32gui=win32gui, win32con=self._con()
+            )
+        finally:
+            about_win32._about_class_registered = previous
+        # A system color index plus one stands in for a brush handle.
+        self.assertEqual(
+            win32gui.WNDCLASS.return_value.hbrBackground, self._COLOR_WINDOW + 1
+        )
 
 
 class RegisterAboutClassTests(SimpleTestCase):
@@ -975,3 +1026,81 @@ class InitSyslinkClassTests(SimpleTestCase):
         # Also pinned against the commctrl.h literal (0x00008000, i.e.
         # ICC_LINK_CLASS) -- see WindowsApiConstantsTests.
         self.assertEqual(icc.dwICC, 0x00008000)
+
+
+@skipUnless(real_win32_available(), "needs Windows with pywin32")
+class RealAboutWindowTests(SimpleTestCase):
+    """The About window with the real Win32 API: one uniform background (#514)."""
+
+    def test_every_block_of_the_window_paints_the_same_color(self) -> None:
+        import win32api  # pyright: ignore[reportMissingModuleSource]
+        import win32con  # pyright: ignore[reportMissingModuleSource]
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+
+        import app.spotty_bunny_about_win32 as about_win32
+        from app.spotty_bunny_update import UpdateStatus
+
+        with (
+            patch(
+                "app.spotty_bunny_about_win32.load_about_runtime_info",
+                return_value=_about_runtime(),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.read_cached_update_status",
+                return_value=UpdateStatus(
+                    checked_at=0.0, current="1.0.0", latest="9.9.9", outdated=True
+                ),
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.server_skew_message",
+                return_value="Client 1.0.0 and server 0.9.0 are out of step.",
+            ),
+            patch(
+                "app.spotty_bunny_about_win32.get_build_info",
+                return_value=("1.2.3", "abc1234"),
+            ),
+        ):
+            hwnd = about_win32.build_about_window(
+                MagicMock(), win32gui=win32gui, win32con=win32con, win32api=win32api
+            )
+        try:
+            win32gui.RedrawWindow(
+                hwnd,
+                None,
+                None,
+                win32con.RDW_INVALIDATE
+                | win32con.RDW_ERASE
+                | win32con.RDW_ALLCHILDREN
+                | win32con.RDW_UPDATENOW,
+            )
+            expected = win32gui.GetSysColor(win32con.COLOR_WINDOW)
+            children: list[int] = []
+            win32gui.EnumChildWindows(
+                hwnd, lambda child, _extra: children.append(child), None
+            )
+            self.assertGreaterEqual(len(children), 6, children)
+
+            dc = win32gui.GetDC(hwnd)
+            try:
+                samples: dict[str, int] = {}
+                _left, _top, client_right, client_bottom = win32gui.GetClientRect(hwnd)
+                samples["window margin"] = win32gui.GetPixel(dc, 2, client_bottom // 2)
+                samples["window bottom"] = win32gui.GetPixel(
+                    dc, client_right // 2, client_bottom - 2
+                )
+                for child in children:
+                    _l, top, right, _b = win32gui.GetWindowRect(child)
+                    # Blank end of the first line: labels are left-aligned, so
+                    # the far right of a control holds no text.
+                    x, y = win32gui.ScreenToClient(hwnd, (right - 3, top + 3))
+                    text = win32gui.GetWindowText(child)[:16]
+                    name = f"{win32gui.GetClassName(child)} {text!r}"
+                    samples[name] = win32gui.GetPixel(dc, x, y)
+            finally:
+                win32gui.ReleaseDC(hwnd, dc)
+            wrong = {
+                name: hex(color) for name, color in samples.items() if color != expected
+            }
+            self.assertEqual(wrong, {}, f"expected {expected:#x}")
+        finally:
+            win32gui.DestroyWindow(hwnd)

@@ -489,6 +489,10 @@ def _register_about_class(
     wnd_class.lpfnWndProc = wndproc
     wnd_class.lpszClassName = ABOUT_WINDOW_CLASS
     wnd_class.hInstance = win32gui.GetModuleHandle(None)
+    # Without a class brush the window background is never erased, so it and
+    # each label draw whatever colors they default to (#514). Standard
+    # convention: the system color index plus one stands in for a brush.
+    wnd_class.hbrBackground = win32con.COLOR_WINDOW + 1
     win32gui.RegisterClass(wnd_class)
     _about_class_registered = True
     return ABOUT_WINDOW_CLASS
@@ -496,6 +500,16 @@ def _register_about_class(
 
 def _make_about_wndproc(*, win32gui, win32con):
     def _wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+        if msg == win32con.WM_CTLCOLORSTATIC:
+            # Labels (and the SysLink controls, which ask the same way) paint
+            # their background with this brush and text background color, so
+            # every block matches the window instead of the default button
+            # face grey.
+            win32gui.SetBkColor(wparam, win32gui.GetSysColor(win32con.COLOR_WINDOW))
+            win32gui.SetTextColor(
+                wparam, win32gui.GetSysColor(win32con.COLOR_WINDOWTEXT)
+            )
+            return win32gui.GetSysColorBrush(win32con.COLOR_WINDOW)
         if msg == win32con.WM_NOTIFY:
             url = _url_from_notify(lparam, win32gui=win32gui)
             if url is not None:
