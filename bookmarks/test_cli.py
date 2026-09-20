@@ -4683,6 +4683,18 @@ class ConfigUnitTests(TestCase):
         self.assertNotIn("9.9.9", result.output)
         self.assertIn("To:   0.15.0 (bbbbbbbbbbbb)", result.output)
 
+    def test_help_describes_spotty_bunny_for_every_platform(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["--help"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Windows Scheduled Task", result.output)
+        self.assertIn("macOS LaunchAgent", result.output)
+        self.assertNotIn("macOS Spotty Bunny", result.output)
+        # The installed entry point, not a checkout-relative script.
+        self.assertNotIn("./scripts/spotty-bunny", result.output)
+        self.assertIn("spotty-bunny --verbose", result.output)
+
     def test_upgrade_restores_macos_extra_after_pipx_upgrade(self) -> None:
         import subprocess
         from pathlib import Path

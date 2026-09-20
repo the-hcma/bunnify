@@ -2397,14 +2397,15 @@ def main(
       bunnify --onboard
 
     \b
-    macOS Spotty Bunny (`spotty-bunny` is a reserved shortcut name):
+    Spotty Bunny -- macOS LaunchAgent, Windows Scheduled Task (`spotty-bunny` is
+    a reserved shortcut name):
       bunnify spotty-bunny
       bunnify spotty-bunny install
       bunnify spotty-bunny status
       bunnify spotty-bunny upgrade
       bunnify spotty-bunny uninstall
-      ./scripts/spotty-bunny
-      ./scripts/spotty-bunny --verbose
+      spotty-bunny
+      spotty-bunny --verbose
 
     \b
     Server setup (`setup` is a reserved shortcut name):
