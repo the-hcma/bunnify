@@ -312,6 +312,58 @@ class OnboardTests(SimpleTestCase):
         self.assertIn("Already installed:", output)
         self.assertIn("Spotty Bunny LaunchAgent: installed", output)
 
+    def test_run_onboard_prints_the_install_summary_once(self) -> None:
+        stdout = StringIO()
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+        ):
+            stdin.isatty.return_value = False
+            run_onboard(print_fn=stdout.write, prompt_fn=lambda _m: "n")
+        output = stdout.getvalue()
+        self.assertEqual(output.count("Already installed:"), 1, output)
+        # ... and the rest of the guidance still follows it.
+        self.assertIn("next steps after install or upgrade", output)
+        self.assertIn("Upgrade later (preferred):", output)
+
+    def test_run_onboard_repeats_the_summary_only_when_the_install_changed(
+        self,
+    ) -> None:
+        stdout = StringIO()
+        before = self._state(
+            bookmarks_ready=True,
+            pypi_latest="0.16.0",
+            upgrade_available=True,
+            version_label="0.15.0 (old)",
+        )
+        after = self._state(bookmarks_ready=True, version_label="0.16.0 (new)")
+        with (
+            patch("app.onboard.detect_install_state", side_effect=[before, after]),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(
+                print_fn=stdout.write,
+                prompt_fn=lambda _m: "y",
+                confirm_yes=lambda _ask, _msg: True,
+                run_upgrade=lambda **_kwargs: None,
+            )
+        output = stdout.getvalue()
+        self.assertEqual(output.count("Already installed: 0.15.0 (old)"), 1, output)
+        self.assertEqual(output.count("Already installed: 0.16.0 (new)"), 1, output)
+
+    def test_format_onboarding_text_can_leave_the_summary_out(self) -> None:
+        state = self._state(bookmarks_ready=True)
+        self.assertIn("Already installed:", format_onboarding_text(state))
+        self.assertNotIn(
+            "Already installed:", format_onboarding_text(state, include_summary=False)
+        )
+
     def test_run_onboard_installs_server_agent_for_local_prefs(self) -> None:
         from app.config import ServerPreferences
 
