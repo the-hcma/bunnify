@@ -15,6 +15,7 @@ from app.pipx_install import (
     pipx_bunnify_display,
     pipx_bunnify_path,
     pipx_bunnify_venv_python,
+    pipx_vcs_install_spec,
 )
 
 
@@ -201,3 +202,94 @@ class PipxInstallWindowsLayoutTests(SimpleTestCase):
         with patch("app.pipx_install.sys.platform", "win32"):
             summary = "\n".join(_format_install_summary(state))
         self.assertIn("pipx app: not found (~/.local/bin/bunnify.exe)", summary)
+
+
+_GIT_RECORD = (
+    '{"url": "https://github.com/the-hcma/bunnify", "vcs_info": '
+    '{"vcs": "git", "requested_revision": "main", "commit_id": "abc123"}}'
+)
+_GIT_SPEC = "git+https://github.com/the-hcma/bunnify@main"
+
+
+class PipxVcsInstallSpecTests(SimpleTestCase):
+    """The spec is read from the pipx app's own venv, not the running process."""
+
+    @staticmethod
+    def _venv(root: Path, *, platform: str, record: str | None) -> Path:
+        """A pipx home holding a bunnify venv, in *platform*'s layout."""
+        if platform == "win32":
+            python = root / "venvs" / "bunnify" / "Scripts" / "python.exe"
+            site = root / "venvs" / "bunnify" / "Lib" / "site-packages"
+        else:
+            python = root / "venvs" / "bunnify" / "bin" / "python"
+            site = root / "venvs" / "bunnify" / "lib" / "python3.14" / "site-packages"
+        python.parent.mkdir(parents=True)
+        python.write_bytes(b"")
+        dist_info = site / "bunnify-0.15.0.dist-info"
+        dist_info.mkdir(parents=True)
+        if record is not None:
+            (dist_info / "direct_url.json").write_text(record, encoding="utf-8")
+        return root
+
+    def test_reads_the_record_from_a_windows_venv(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = self._venv(Path(tmp), platform="win32", record=_GIT_RECORD)
+            with patch("app.pipx_install.sys.platform", "win32"):
+                self.assertEqual(pipx_vcs_install_spec(pipx_home=home), _GIT_SPEC)
+
+    def test_reads_the_record_from_a_posix_venv(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = self._venv(Path(tmp), platform="linux", record=_GIT_RECORD)
+            with patch("app.pipx_install.sys.platform", "linux"):
+                self.assertEqual(pipx_vcs_install_spec(pipx_home=home), _GIT_SPEC)
+
+    def test_the_pipx_apps_record_wins_over_the_running_distribution(self) -> None:
+        # Running ./scripts/bunnify from a checkout while the pipx app came
+        # from PyPI: the checkout's own (editable) record must not decide.
+        with TemporaryDirectory() as tmp:
+            home = self._venv(Path(tmp), platform="linux", record=None)
+            with (
+                patch("app.pipx_install.sys.platform", "linux"),
+                patch("app.pipx_install.vcs_install_spec", return_value=_GIT_SPEC),
+            ):
+                self.assertIsNone(pipx_vcs_install_spec(pipx_home=home))
+
+    def test_a_git_pipx_app_is_found_even_when_the_running_one_is_editable(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            home = self._venv(Path(tmp), platform="linux", record=_GIT_RECORD)
+            with (
+                patch("app.pipx_install.sys.platform", "linux"),
+                patch("app.pipx_install.vcs_install_spec", return_value=None),
+            ):
+                self.assertEqual(pipx_vcs_install_spec(pipx_home=home), _GIT_SPEC)
+
+    def test_an_index_or_editable_record_is_not_a_vcs_install(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = self._venv(
+                Path(tmp),
+                platform="linux",
+                record='{"url": "file:///src", "dir_info": {"editable": true}}',
+            )
+            with patch("app.pipx_install.sys.platform", "linux"):
+                self.assertIsNone(pipx_vcs_install_spec(pipx_home=home))
+
+    def test_an_unreadable_record_is_skipped(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = self._venv(Path(tmp), platform="linux", record=None)
+            # A directory where the file should be: read_text raises OSError.
+            unreadable = next(
+                home.glob("venvs/bunnify/lib/*/site-packages/*.dist-info")
+            )
+            (unreadable / "direct_url.json").mkdir()
+            with patch("app.pipx_install.sys.platform", "linux"):
+                self.assertIsNone(pipx_vcs_install_spec(pipx_home=home))
+
+    def test_without_a_pipx_venv_the_running_distribution_is_consulted(self) -> None:
+        with TemporaryDirectory() as tmp:
+            with patch(
+                "app.pipx_install.vcs_install_spec", return_value=_GIT_SPEC
+            ) as running:
+                self.assertEqual(pipx_vcs_install_spec(pipx_home=Path(tmp)), _GIT_SPEC)
+            running.assert_called_once_with()

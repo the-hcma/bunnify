@@ -22,10 +22,15 @@ from app.pipx_install import (
     macos_extra_installed,
     pipx_bunnify_display,
     pipx_bunnify_path,
+    pipx_vcs_install_spec,
 )
 from app.pypi import pypi_latest_version
 from app.theme import Theme
-from app.version import get_build_info, is_source_checkout, running_command_path
+from app.version import (
+    get_build_info,
+    is_source_checkout,
+    running_command_path,
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,7 @@ class InstallState:
     spotty_agent_installed: bool
     upgrade_available: bool
     version_label: str
+    vcs_install: str | None = None
 
 
 def detect_install_state(
@@ -57,7 +63,10 @@ def detect_install_state(
     command_path = running_command_path()
     pipx_app = pipx_bunnify_path()
     pipx_label = read_executable_build(pipx_app) if pipx_app is not None else None
-    pypi_latest = pypi_latest_version()
+    # A git install is judged by its commit, not by a version number PyPI
+    # may share with it.
+    vcs_install = pipx_vcs_install_spec()
+    pypi_latest = None if vcs_install is not None else pypi_latest_version()
     upgrade_available = _upgrade_available(package, pypi_latest)
     bookmarks = default_bookmarks_path()
     preferences = load_preferences()
@@ -83,6 +92,7 @@ def detect_install_state(
         spotty_agent_installed=spotty_installed,
         upgrade_available=upgrade_available,
         version_label=version_label,
+        vcs_install=vcs_install,
     )
 
 
@@ -361,7 +371,10 @@ def _format_install_summary(state: InstallState) -> list[str]:
             "Note: this process is a git checkout; `bunnify upgrade` updates the "
             "pipx app, not this tree."
         )
-    if state.pypi_latest is not None:
+    if state.vcs_install is not None:
+        lines.append(f"Installed from git: {state.vcs_install}")
+        lines.append("  (PyPI is not consulted; `bunnify upgrade` re-installs from it)")
+    elif state.pypi_latest is not None:
         if state.upgrade_available:
             lines.append(f"PyPI latest: {state.pypi_latest} (upgrade available)")
         else:

@@ -79,6 +79,7 @@ from app.pipx_install import (
     macos_extra_installed,
     pipx_bunnify_display,
     pipx_bunnify_path,
+    pipx_vcs_install_spec,
 )
 from app.pypi import pypi_latest_version as _pypi_latest_version
 from app.theme import Theme, stdout_color_enabled
@@ -743,14 +744,20 @@ def run_upgrade(
         raise ClientError(
             "pipx not found on PATH. Install pipx, then run: bunnify upgrade"
         )
-    pypi_version = _pypi_latest_version()
+    vcs_install = _pipx_vcs_install_spec()
+    pypi_version = None if vcs_install is not None else _pypi_latest_version()
     pipx_app = _pipx_bunnify_path()
     before_pipx = _read_executable_build(pipx_app) if pipx_app is not None else None
     had_macos_extra = macos_extra_installed()
     if before_pipx is not None and pipx_app is not None:
         log(f"pipx app now: {before_pipx}")
         log(f"              {pipx_app}")
-    if pypi_version is not None:
+    if vcs_install is not None:
+        log(
+            f"To:   re-install from {vcs_install} "
+            "(git install: PyPI is not consulted; commit shown after upgrade)"
+        )
+    elif pypi_version is not None:
         log(f"To:   {pypi_version} (PyPI latest; commit confirmed after upgrade)")
     else:
         log("To:   (querying PyPI failed; will show the pipx app after upgrade)")
@@ -1406,6 +1413,11 @@ def _parse_version_line(output: str) -> str | None:
 def _pipx_bunnify_path() -> Path | None:
     """Return the pipx ``bunnify`` app path when it exists."""
     return pipx_bunnify_path()
+
+
+def _pipx_vcs_install_spec() -> str | None:
+    """Return the pip VCS spec the pipx app was installed from, if any."""
+    return pipx_vcs_install_spec()
 
 
 def _prompt_local_port(

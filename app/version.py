@@ -183,6 +183,41 @@ def running_command_path() -> Path:
         return argv0
 
 
+def vcs_install_spec() -> str | None:
+    """Return the pip spec this package was installed from, if it is a VCS install.
+
+    For ``pipx install git+https://github.com/the-hcma/bunnify@main`` that is
+    ``git+https://github.com/the-hcma/bunnify@main`` (the requested revision
+    when pip recorded one, otherwise the resolved commit). None for index,
+    editable and local-directory installs, and when nothing was recorded.
+
+    This describes the *running* distribution; for the pipx app that
+    ``bunnify upgrade`` acts on, see ``pipx_install.pipx_vcs_install_spec``.
+    """
+    try:
+        raw = distribution(PACKAGE_NAME).read_text("direct_url.json")
+    except PackageNotFoundError, OSError:
+        return None
+    return vcs_install_spec_from(raw)
+
+
+def vcs_install_spec_from(raw: str | None) -> str | None:
+    """Parse the text of a ``direct_url.json`` into a pip VCS spec, or None."""
+    try:
+        record = json.loads(raw or "")
+        url = record["url"]
+        info = record["vcs_info"]
+        vcs = info.get("vcs", "git")
+        revision = info.get("requested_revision") or info.get("commit_id")
+    except ValueError, KeyError, TypeError, AttributeError:
+        return None
+    if not (isinstance(url, str) and url and isinstance(vcs, str) and vcs):
+        return None
+    if isinstance(revision, str) and revision:
+        return f"{vcs}+{url}@{revision}"
+    return f"{vcs}+{url}"
+
+
 def _direct_url_commit() -> str:
     """Return the commit pip recorded for a VCS install, or "" if there is none.
 
