@@ -1478,6 +1478,31 @@ class ShowOverlayWindowTests(SimpleTestCase):
         )
         self.assertEqual(order, ["position", "show"])
 
+    def test_moves_the_overlay_not_its_text_box_to_the_centered_origin(self) -> None:
+        # _show_overlay_window is handed the overlay and its Edit control; the
+        # move must target the overlay (10), not the Edit (20), and use the
+        # origin overlay_origin computes: (1920-420)//2 = 750 across, and
+        # int((1040-204)*0.45) = 376 down the 1920x1040 work area.
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32con = MagicMock()
+        _show_overlay_window(
+            10,
+            20,
+            win32api=win32api,
+            win32con=win32con,
+            win32gui=win32gui,
+            win32process=win32process,
+        )
+        win32gui.SetWindowPos.assert_called_once_with(
+            10,
+            win32con.HWND_TOPMOST,
+            750,
+            376,
+            0,
+            0,
+            win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+        )
+
     def _show(self, win32gui, win32api, win32process) -> None:
         _show_overlay_window(
             10,
@@ -1628,6 +1653,23 @@ class OverlayWindowVisibilityTests(SimpleTestCase):
             win32gui.ShowWindow.assert_any_call(100, win32con.SW_SHOW)
             win32gui.SetForegroundWindow.assert_called_once_with(100)
             win32gui.SetFocus.assert_called_once_with(101)
+
+    def test_showing_moves_the_overlay_window_to_the_centered_origin(self) -> None:
+        with self._create() as (controller, win32gui, win32con):
+            # Creation may position the window too; only the show is under test.
+            win32gui.SetWindowPos.reset_mock()
+            controller.set_window_visible(True)
+            # 100 is the overlay (not its Edit, 101). Its (0,0,640,76) rect in
+            # the 1920x1040 work area centers at x=640, y=int(964*0.45)=433.
+            win32gui.SetWindowPos.assert_called_once_with(
+                100,
+                win32con.HWND_TOPMOST,
+                640,
+                433,
+                0,
+                0,
+                win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+            )
 
     def test_a_refused_foreground_call_does_not_propagate_out_of_the_closure(
         self,
