@@ -101,6 +101,11 @@ class BuildInfoTests(SimpleTestCase):
             self.assertTrue(is_source_checkout(repository=root))
 
     def test_running_command_path_keeps_console_script_symlink(self) -> None:
+        if not _can_create_symlinks():
+            self.skipTest(
+                "needs permission to create symlinks "
+                "(on Windows: Developer Mode or an elevated shell)"
+            )
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             venv_binary = root / "pipx" / "venvs" / "bunnify" / "bin" / "bunnify"
@@ -662,3 +667,59 @@ class SettingsDataDirTests(SimpleTestCase):
             settings.DATABASE_PATH,
             data_dir() / "db.sqlite3",
         )
+
+
+class SymlinkSupportTests(SimpleTestCase):
+    def test_true_when_a_symlink_can_be_created(self) -> None:
+        # Simulate success rather than asserting this machine's real ability:
+        # a standard Windows account cannot symlink, which is the point.
+        with mock.patch.object(Path, "symlink_to", return_value=None) as symlink:
+            self.assertTrue(_can_create_symlinks())
+        symlink.assert_called_once()
+
+    def test_false_without_the_windows_symlink_privilege(self) -> None:
+        # WinError 1314 is what os.symlink raises for a standard account.
+        privilege_error = OSError(
+            "[WinError 1314] A required privilege is not held by the client"
+        )
+        with mock.patch.object(Path, "symlink_to", side_effect=privilege_error):
+            self.assertFalse(_can_create_symlinks())
+
+    def test_false_where_symlinks_are_not_implemented(self) -> None:
+        with mock.patch.object(Path, "symlink_to", side_effect=NotImplementedError):
+            self.assertFalse(_can_create_symlinks())
+
+    def test_leaves_nothing_behind(self) -> None:
+        # Point tempfile at a private directory so other processes' files in
+        # the shared temp folder cannot make this flaky.
+        with tempfile.TemporaryDirectory() as private_temp:
+            with mock.patch.object(tempfile, "tempdir", private_temp):
+                _can_create_symlinks()
+            self.assertEqual(list(Path(private_temp).iterdir()), [])
+
+    def test_cleans_up_even_when_the_symlink_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as private_temp:
+            with (
+                mock.patch.object(tempfile, "tempdir", private_temp),
+                mock.patch.object(Path, "symlink_to", side_effect=OSError("no")),
+            ):
+                self.assertFalse(_can_create_symlinks())
+            self.assertEqual(list(Path(private_temp).iterdir()), [])
+
+
+def _can_create_symlinks() -> bool:
+    """Whether this process may create a symlink.
+
+    A standard Windows account lacks the privilege (WinError 1314) unless
+    Developer Mode is on or the shell is elevated, so tests that need a real
+    symlink skip there instead of erroring; GitHub's Windows runner is an
+    administrator, so CI still runs them.
+    """
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        target = Path(temporary_directory) / "target"
+        target.write_text("")
+        try:
+            (Path(temporary_directory) / "link").symlink_to(target)
+        except NotImplementedError, OSError:
+            return False
+    return True
