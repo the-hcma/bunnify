@@ -202,8 +202,8 @@ jobs:
     - name: Set up Python 3.14
       run: uv python install 3.14
 
-    - name: Install dependencies (including windows extra)
-      run: uv sync --all-groups --extra windows
+    - name: Install dependencies (pywin32 is a platform dependency on Windows)
+      run: uv sync --all-groups
 
     - name: Run Django checks
       run: uv run python manage.py check

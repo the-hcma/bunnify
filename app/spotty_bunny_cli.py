@@ -36,22 +36,22 @@ LOG_LEVELS = ("CRITICAL", "DEBUG", "ERROR", "INFO", "WARNING")
 LOG_MAX_BYTES = 10 * 1024 * 1024
 
 MACOS_EXTRA_HINT = f"""\
-{COMMAND_NAME}: PyObjC is required (optional extra 'macos').
+{COMMAND_NAME}: PyObjC is required (installed automatically on macOS).
 
   pipx install --force 'bunnify[macos]'
   # or: bunnify onboard   (offers to install macOS dependencies)
   # development checkout:
-  uv sync --extra macos
+  uv sync
 """
 
 NOT_MACOS_MESSAGE = f"{COMMAND_NAME}: this command is only available on macOS."
 
 WINDOWS_EXTRA_HINT = f"""\
-{COMMAND_NAME}: pywin32 is required (optional extra 'windows').
+{COMMAND_NAME}: pywin32 is required (installed automatically on Windows).
 
   pipx install --force 'bunnify[windows]'
   # development checkout:
-  uv sync --extra windows
+  uv sync
 """
 
 

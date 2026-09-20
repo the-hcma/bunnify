@@ -32,7 +32,7 @@ bunnify pr the-hcma/bunnify 272 # parameterized shortcut (repo + PR number)
 bunnify --fzf                   # fuzzy-pick a shortcut (requires fzf on PATH)
 bunnify --print-url gh          # print resolved URL instead of opening browser
 bunnify --list-keys             # list keys from the running server
-bunnify spotty-bunny            # macOS search box (requires extra macos)
+bunnify spotty-bunny            # macOS/Windows search box (foreground)
 bunnify spotty-bunny --verbose  # DEBUG logs on stderr and log file
 bunnify spotty-bunny install    # login LaunchAgent (TCC + KeepAlive)
 bunnify spotty-bunny status     # process, launchd, logs, TCC
@@ -42,7 +42,7 @@ bunnify spotty-bunny uninstall
 
 ## Spotty Bunny (macOS)
 
-Requires `pipx install 'bunnify[macos]'`. Hold one Control, tap the other.
+Included in `pipx install bunnify`. Hold one Control, tap the other.
 
 ```bash
 bunnify spotty-bunny install     # login LaunchAgent (TCC + KeepAlive)

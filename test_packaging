@@ -96,6 +96,56 @@ if packaged != canonical:
     )
 PY
 
+echo "📦 Verifying wheel metadata keeps the platform dependencies and extras (#473)..."
+uv run python - "$wheel_path" <<'PY'
+import sys
+import zipfile
+
+from packaging.requirements import Requirement
+
+with zipfile.ZipFile(sys.argv[1]) as wheel:
+    (name,) = [n for n in wheel.namelist() if n.endswith(".dist-info/METADATA")]
+    metadata = wheel.read(name).decode("utf-8")
+
+requires = [
+    Requirement(line.removeprefix("Requires-Dist:").strip())
+    for line in metadata.splitlines()
+    if line.startswith("Requires-Dist:")
+]
+extras = {
+    line.removeprefix("Provides-Extra:").strip()
+    for line in metadata.splitlines()
+    if line.startswith("Provides-Extra:")
+}
+# Parsed rather than string-matched: the build backend re-serializes markers
+# (quote style, spacing), so only their meaning is stable.
+platforms = ("darwin", "linux", "win32")
+for prefix, only_on in (("pyobjc", "darwin"), ("pywin32", "win32")):
+    platform_requires = [r for r in requires if r.name.lower().startswith(prefix)]
+    if not platform_requires:
+        raise SystemExit(f"Wheel metadata has no {prefix} requirement")
+    for requirement in platform_requires:
+        marker = requirement.marker
+        applies_on = (
+            {
+                platform
+                for platform in platforms
+                if marker.evaluate({"sys_platform": platform, "extra": ""})
+            }
+            if marker is not None and "extra" not in str(marker)
+            else None
+        )
+        if applies_on != {only_on}:
+            raise SystemExit(
+                f"Wheel requirement must apply only on {only_on} and not "
+                f"through an extra, got {str(requirement)!r} (applies on "
+                f"{applies_on!r})"
+            )
+missing = {"macos", "windows"} - extras
+if missing:
+    raise SystemExit(f"Wheel metadata does not advertise extras {sorted(missing)}")
+PY
+
 echo "📦 Verifying sdist keeps config.example.toml at repo-root path..."
 uv run python - "$repo_root/config.example.toml" "$sdist_path" <<'PY'
 import sys

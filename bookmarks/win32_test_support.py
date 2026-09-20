@@ -1,10 +1,9 @@
 """Shared guard for tests that call the real Win32 API.
 
-Those tests need Windows *and* pywin32, which only the ``windows`` extra
-installs (CI's Windows job uses ``uv sync --extra windows``). A plain
-``uv sync`` on a Windows machine has neither ``win32gui`` nor ``win32api``,
-so checking ``sys.platform`` alone would turn "not installed" into errors
-instead of skips.
+Those tests need Windows *and* pywin32. A synced checkout installs pywin32 on
+Windows, but an environment created another way (or a stripped-down one) may
+lack ``win32gui``/``win32api``, so checking ``sys.platform`` alone would turn
+"not installed" into errors instead of skips.
 """
 
 from __future__ import annotations

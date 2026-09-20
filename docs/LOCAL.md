@@ -142,18 +142,18 @@ files together.
 
 ## Spotty Bunny (macOS)
 
-Needs the optional `macos` extra (PyObjC). Bare `spotty-bunny` still runs the
+PyObjC is installed automatically on macOS. Bare `spotty-bunny` still runs the
 overlay **in the foreground**. The login LaunchAgent is a distinct label from
 the server agent (`com.thehcma.bunnify`).
 
 ### Install
 
 Requires [pipx](https://pipx.pypa.io/) on ``PATH`` (for example ``brew install pipx``).
-Then install the macOS extra and start the local server before the overlay agent:
+Then install bunnify and start the local server before the overlay agent:
 
 ```bash
 # pipx
-pipx install 'bunnify[macos]'
+pipx install bunnify
 bunnify setup                      # local server LaunchAgent + /health (interactive)
 # or manual server (see Manual local workflow below)
 
@@ -162,7 +162,7 @@ bunnify spotty-bunny             # same (reserved CLI token)
 bunnify spotty-bunny install     # LaunchAgent (KeepAlive + RunAtLoad)
 bunnify spotty-bunny status
 
-# development checkout (wrapper syncs extra macos)
+# development checkout (the wrapper runs `uv run`)
 ./scripts/spotty-bunny
 ./scripts/spotty-bunny --verbose          # DEBUG: every tap event, chord, show/hide
 ./scripts/spotty-bunny --log-level INFO   # default; chord complete, show/hide, SIGINT
@@ -305,7 +305,7 @@ starts `spotty-bunny` in the background when it is not already running.
 
 ## Spotty Bunny (Windows)
 
-Needs the optional `windows` extra (pywin32). Bare `spotty-bunny` still runs
+pywin32 is installed automatically on Windows. Bare `spotty-bunny` still runs
 the overlay **in the foreground**. There is no macOS-style TCC permission
 step: the Scheduled Task is the only moving part, and only the dual-Control
 chord actually works (`auto`/`control` resolve to it; `option`/`command`
@@ -313,11 +313,11 @@ fall back to Control with a logged warning).
 
 ### Install
 
-Requires [pipx](https://pipx.pypa.io/) on `PATH`. Install the `windows`
-extra and start the local server before the overlay task:
+Requires [pipx](https://pipx.pypa.io/) on `PATH`. Install bunnify and start
+the local server before the overlay task:
 
 ```powershell
-pipx install 'bunnify[windows]'
+pipx install bunnify
 bunnify setup                      # local server + /health (interactive)
 
 spotty-bunny                       # foreground overlay
