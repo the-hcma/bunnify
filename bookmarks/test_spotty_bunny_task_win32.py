@@ -24,6 +24,18 @@ from app.spotty_bunny_task_win32 import (
 
 
 class FormatTaskXmlTests(SimpleTestCase):
+    def test_a_run_replaces_the_running_instance(self) -> None:
+        # StopExisting, not IgnoreNew: lets Upgrade/Install from the overlay's
+        # own menu hand off to a new instance (#523).
+        xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
+        root = ElementTree.fromstring(xml.encode("utf-16"))
+        policy = root.find(
+            ".//{*}Settings/{*}MultipleInstancesPolicy",
+        )
+        self.assertIsNotNone(policy)
+        assert policy is not None
+        self.assertEqual(policy.text, "StopExisting")
+
     def test_includes_logon_trigger_and_restart_on_failure(self) -> None:
         xml = format_task_xml(program_arguments=["C:\\bin\\spotty-bunny.exe"])
         self.assertIn("<LogonTrigger>", xml)

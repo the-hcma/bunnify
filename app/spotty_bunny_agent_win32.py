@@ -127,9 +127,10 @@ def install_agent(
         for detail in create_errors:
             err(f"{COMMAND_NAME}: schtasks said: {detail}")
         return 1
-    # The task runs with MultipleInstancesPolicy=IgnoreNew, so /Run does
-    # nothing while the previous overlay's task instance is still alive and
-    # the wait below would just time out (#510). Stop it first.
+    # A task that ignores new instances (the previous definition did) drops
+    # /Run while the old overlay's instance is alive, and the wait below would
+    # time out (#510), so stop it first. When the old overlay is this very
+    # process it cannot, and the task's StopExisting policy replaces it (#523).
     _stop_previous_overlay(previous_pid, pid_dir=pid_dir, schtasks=schtasks)
     run_task_once(schtasks=schtasks)
     if not _wait_for_managed_overlay(
@@ -399,9 +400,11 @@ def _stop_previous_overlay(
 
     Never when it is this very process (install/upgrade is often
     menu-triggered from the running overlay, and stopping it would end the
-    caller; see ``_rollback_failed_install``). After stopping it, wait a
-    bounded time for Task Scheduler to notice its instance is gone, since
-    ``/Run`` is ignored while the task still reports ``Running``.
+    caller; see ``_rollback_failed_install``): there the task's
+    ``StopExisting`` policy retires it when ``/Run`` starts the new instance.
+    After stopping another overlay, wait a bounded time for Task Scheduler to
+    notice its instance is gone, since an ``IgnoreNew`` task drops ``/Run``
+    while it still reports ``Running``.
     """
     if previous_pid is None or previous_pid == os.getpid():
         return
