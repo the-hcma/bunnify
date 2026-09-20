@@ -64,6 +64,7 @@ __all__ = [
 INSTALL_WAIT_TIMEOUT_S = 15.0
 NOT_WINDOWS_MESSAGE = f"{COMMAND_NAME}: this command is only available on Windows."
 ROLLBACK_WAIT_TIMEOUT_S = 15.0
+TASK_IDLE_WAIT_TIMEOUT_S = 5.0
 
 
 def install_agent(
@@ -125,6 +126,10 @@ def install_agent(
         for detail in create_errors:
             err(f"{COMMAND_NAME}: schtasks said: {detail}")
         return 1
+    # The task runs with MultipleInstancesPolicy=IgnoreNew, so /Run does
+    # nothing while the previous overlay's task instance is still alive and
+    # the wait below would just time out (#510). Stop it first.
+    _stop_previous_overlay(previous_pid, pid_dir=pid_dir, schtasks=schtasks)
     run_task_once(schtasks=schtasks)
     if not _wait_for_managed_overlay(
         pid_dir=pid_dir, timeout_s=timeout_s, exclude_pid=previous_pid
@@ -377,6 +382,28 @@ def _is_bare_interpreter_fallback(program_argv: list[str]) -> bool:
         and program_argv[0] == sys.executable
         and program_argv[1] == "-m"
     )
+
+
+def _stop_previous_overlay(
+    previous_pid: int | None,
+    *,
+    pid_dir: Path | None,
+    schtasks: SchtasksFn | None,
+) -> None:
+    """Stop the overlay that was running before this install/upgrade.
+
+    Never when it is this very process (install/upgrade is often
+    menu-triggered from the running overlay, and stopping it would end the
+    caller; see ``_rollback_failed_install``). After stopping it, wait a
+    bounded time for Task Scheduler to notice its instance is gone, since
+    ``/Run`` is ignored while the task still reports ``Running``.
+    """
+    if previous_pid is None or previous_pid == os.getpid():
+        return
+    stop_spotty_bunny(pid_dir=pid_dir)
+    deadline = time.monotonic() + TASK_IDLE_WAIT_TIMEOUT_S
+    while is_task_running(schtasks=schtasks) and time.monotonic() < deadline:
+        time.sleep(0.1)
 
 
 def _wait_for_managed_overlay(

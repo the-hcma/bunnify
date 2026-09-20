@@ -469,6 +469,159 @@ class StatusAgentTests(SimpleTestCase):
         self.assertEqual(code, 1)
 
 
+class InstallOverRunningOverlayTests(SimpleTestCase):
+    """Installing/upgrading while an overlay is already running (#510).
+
+    The task uses MultipleInstancesPolicy=IgnoreNew, so ``schtasks /Run`` is a
+    no-op until the previous instance has gone away.
+    """
+
+    PREVIOUS_PID = 4242
+    NEW_PID = 5151
+
+    def _install(
+        self,
+        *,
+        previous: tuple[int, str] | None,
+        fake: "_IgnoreNewSchtasks | None" = None,
+        create_fails: bool = False,
+        idle_timeout_s: float = 0.05,
+    ) -> tuple[int, "_IgnoreNewSchtasks", list[str], str]:
+        from app.spotty_bunny_agent_win32 import install_agent
+
+        fake = fake or _IgnoreNewSchtasks()
+        fake.create_should_fail = create_fails
+        events: list[str] = []
+        fake.events = events
+
+        def _runtime(*, pid_dir: Path | None = None) -> tuple[int, str] | None:
+            return (self.NEW_PID, "test") if fake.spawned else previous
+
+        def _stop(*, pid_dir: Path | None = None) -> bool:
+            events.append("stop")
+            fake.overlay_exit()
+            return True
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = _write_executable(home / "spotty-bunny.exe")
+            stderr = StringIO()
+            with (
+                patch(
+                    "app.spotty_bunny_agent_win32.read_spotty_bunny_runtime",
+                    side_effect=_runtime,
+                ),
+                patch(
+                    "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_agent_win32.stop_spotty_bunny",
+                    side_effect=_stop,
+                ),
+                patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid"),
+                patch("app.spotty_bunny_agent_win32.time.sleep"),
+                patch(
+                    "app.spotty_bunny_agent_win32.TASK_IDLE_WAIT_TIMEOUT_S",
+                    idle_timeout_s,
+                ),
+            ):
+                code = install_agent(
+                    pid_dir=home / "run",
+                    platform="win32",
+                    print_err=stderr.write,
+                    program=program,
+                    schtasks=fake,
+                    timeout_s=0.05,
+                )
+        return code, fake, events, stderr.getvalue()
+
+    def test_stops_the_previous_overlay_so_the_task_can_start_a_new_one(self) -> None:
+        fake = _IgnoreNewSchtasks()
+        fake.running = True  # the previous overlay's task instance
+        code, fake, events, stderr = self._install(
+            previous=(self.PREVIOUS_PID, "old"), fake=fake
+        )
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(fake.spawned, 1)
+        self.assertEqual(events, ["create", "stop", "run"])
+
+    def test_the_run_is_ignored_when_the_previous_overlay_is_left_running(self) -> None:
+        # The control: this is what happened before, and why the fix exists.
+        fake = _IgnoreNewSchtasks()
+        fake.running = True
+        with patch(
+            "app.spotty_bunny_agent_win32._stop_previous_overlay", lambda *a, **k: None
+        ):
+            code, fake, _events, stderr = self._install(
+                previous=(self.PREVIOUS_PID, "old"), fake=fake
+            )
+        self.assertEqual(fake.spawned, 0)
+        self.assertEqual(code, 1)
+        self.assertIn("did not start", stderr)
+
+    def test_does_not_stop_the_overlay_when_it_is_this_process(self) -> None:
+        # Menu-triggered install/upgrade runs inside the overlay itself, and
+        # stopping it would end the caller.
+        fake = _IgnoreNewSchtasks()
+        fake.running = True  # this process is the task's running instance
+        _code, _fake, events, _stderr = self._install(
+            previous=(os.getpid(), "me"), fake=fake
+        )
+        self.assertNotIn("stop", events)
+
+    def test_the_menu_triggered_path_still_times_out_and_rolls_back(self) -> None:
+        # Known limitation (#523): the overlay cannot stop itself, so under
+        # IgnoreNew the task's /Run is ignored and the wait times out. This
+        # pins today's behavior so a fix is a deliberate change, not a surprise.
+        fake = _IgnoreNewSchtasks()
+        fake.running = True
+        code, fake, _events, stderr = self._install(
+            previous=(os.getpid(), "me"), fake=fake
+        )
+        self.assertEqual(fake.spawned, 0)
+        self.assertEqual(code, 1)
+        self.assertIn("did not start", stderr)
+        # With no earlier task definition the rollback removes the new one.
+        self.assertIn("removed the non-functional Scheduled Task", stderr)
+
+    def test_does_not_stop_anything_when_nothing_was_running(self) -> None:
+        code, fake, events, stderr = self._install(previous=None)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(events, ["create", "run"])
+
+    def test_does_not_stop_it_before_the_task_is_registered(self) -> None:
+        # Registration failing must not take the working overlay down first;
+        # any stop on this path is the rollback's own, not the install's.
+        with patch("app.spotty_bunny_agent_win32._stop_previous_overlay") as stop:
+            code, _fake, _events, _stderr = self._install(
+                previous=(self.PREVIOUS_PID, "old"), create_fails=True
+            )
+        self.assertEqual(code, 1)
+        stop.assert_not_called()
+
+    def test_waits_until_task_scheduler_reports_the_task_idle(self) -> None:
+        fake = _IgnoreNewSchtasks()
+        fake.running = True
+        fake.lingers_after_exit = 2  # /Query still says Running twice more
+        code, fake, events, stderr = self._install(
+            previous=(self.PREVIOUS_PID, "old"), fake=fake, idle_timeout_s=30.0
+        )
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(fake.spawned, 1)
+
+    def test_waits_for_the_task_to_go_idle_but_only_for_a_bounded_time(self) -> None:
+        fake = _IgnoreNewSchtasks()
+        fake.running = True
+        fake.stays_running_after_exit = True  # Task Scheduler never catches up
+        code, fake, events, _stderr = self._install(
+            previous=(self.PREVIOUS_PID, "old"), fake=fake, idle_timeout_s=0.0
+        )
+        # Bounded: it proceeded to /Run rather than hanging.
+        self.assertIn("run", events)
+        self.assertEqual(code, 1)
+
+
 class RollbackFailedInstallTests(SimpleTestCase):
     def test_does_not_terminate_the_calling_process(self) -> None:
         """Regression: install/upgrade is often menu-triggered from within
@@ -694,3 +847,52 @@ class _FakeSchtasks:
                 return subprocess.CompletedProcess(argv, 0, stdout, "")
             return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, 1, "", f"unhandled: {action}")
+
+
+class _IgnoreNewSchtasks(_FakeSchtasks):
+    """A fake whose task has ``MultipleInstancesPolicy=IgnoreNew``.
+
+    ``/Run`` while the task is running does nothing, exactly like Task
+    Scheduler; ``overlay_exit`` models the running instance going away.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[str] = []
+        self.spawned = 0
+        self.stays_running_after_exit = False
+        self.lingers_after_exit = 0
+        self._exited = False
+
+    def __call__(
+        self, argv: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        action = argv[1] if len(argv) > 1 else None
+        if action == "/Create":
+            result = super().__call__(argv, **kwargs)
+            if result.returncode == 0:
+                self.events.append("create")
+            return result
+        if action == "/Query" and "/V" in argv and self._exited:
+            if self.lingers_after_exit > 0:
+                self.lingers_after_exit -= 1
+            else:
+                self.running = False
+                self._exited = False
+        if action == "/Run":
+            self.events.append("run")
+            if self.running:
+                self.calls.append(list(argv))
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            result = super().__call__(argv, **kwargs)
+            self.spawned += 1
+            return result
+        return super().__call__(argv, **kwargs)
+
+    def overlay_exit(self) -> None:
+        if self.stays_running_after_exit:
+            return
+        if self.lingers_after_exit:
+            self._exited = True  # /Query reports Running until it has lingered
+        else:
+            self.running = False
