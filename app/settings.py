@@ -124,6 +124,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+# Tests run against a throwaway data directory, never the real pid/port/health
+# files of a Spotty Bunny or server running on this machine.
+TEST_RUNNER = "app.isolated_test_runner.IsolatedStateRunner"
+
 # Get log level from environment variable, default to WARNING
 LOG_LEVEL = os.environ.get("BUNNIFY_LOG_LEVEL", "WARNING").upper()
 
