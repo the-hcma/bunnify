@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import socket
 import subprocess
 import sys
@@ -61,6 +62,78 @@ class BuildInfoTests(SimpleTestCase):
             "fedcba9876543210",
         ):
             self.assertEqual(git_commit(environ={}), "fedcba987654")
+
+    def test_git_commit_reads_the_commit_pip_recorded_for_a_vcs_install(self) -> None:
+        # pipx install git+https://... has no .git dir and no embedded commit.
+        recorded = mock.Mock()
+        recorded.read_text.return_value = json.dumps(
+            {
+                "url": "https://github.com/the-hcma/bunnify",
+                "vcs_info": {
+                    "commit_id": "0142e9ee214863482758b268e67c8e1e930a45bc",
+                    "requested_revision": "main",
+                    "vcs": "git",
+                },
+            }
+        )
+        with (
+            tempfile.TemporaryDirectory() as temporary_directory,
+            mock.patch("app.version._build_metadata.EMBEDDED_COMMIT", ""),
+            mock.patch("app.version.distribution", return_value=recorded) as lookup,
+        ):
+            self.assertEqual(
+                git_commit(environ={}, repository=Path(temporary_directory)),
+                "0142e9ee2148",
+            )
+        lookup.assert_called_once_with("bunnify")
+        recorded.read_text.assert_called_once_with("direct_url.json")
+
+    def test_git_commit_is_unknown_without_a_vcs_record(self) -> None:
+        for label, raw in (
+            ("no file", None),
+            ("empty", ""),
+            ("not json", "{"),
+            ("editable install", json.dumps({"dir_info": {"editable": True}})),
+            ("commit not a string", json.dumps({"vcs_info": {"commit_id": 5}})),
+        ):
+            recorded = mock.Mock()
+            recorded.read_text.return_value = raw
+            with (
+                self.subTest(label),
+                tempfile.TemporaryDirectory() as temporary_directory,
+                mock.patch("app.version._build_metadata.EMBEDDED_COMMIT", ""),
+                mock.patch("app.version.distribution", return_value=recorded),
+            ):
+                self.assertEqual(
+                    git_commit(environ={}, repository=Path(temporary_directory)),
+                    "unknown",
+                )
+
+    def test_git_commit_is_unknown_when_the_package_is_not_installed(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary_directory,
+            mock.patch("app.version._build_metadata.EMBEDDED_COMMIT", ""),
+            mock.patch("app.version.distribution", side_effect=PackageNotFoundError),
+        ):
+            self.assertEqual(
+                git_commit(environ={}, repository=Path(temporary_directory)),
+                "unknown",
+            )
+
+    def test_git_commit_prefers_a_checkout_over_the_vcs_record(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary_directory,
+            mock.patch("app.version._build_metadata.EMBEDDED_COMMIT", ""),
+            mock.patch("app.version.distribution") as lookup,
+            mock.patch("app.version.subprocess.run") as run,
+        ):
+            (Path(temporary_directory) / ".git").mkdir()
+            run.return_value = mock.Mock(stdout="abc123def456\n")
+            self.assertEqual(
+                git_commit(environ={}, repository=Path(temporary_directory)),
+                "abc123def456",
+            )
+        lookup.assert_not_called()
 
     def test_package_version_prefers_embedded(self) -> None:
         with mock.patch(
