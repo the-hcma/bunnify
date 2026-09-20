@@ -51,6 +51,8 @@ class InstallState:
     upgrade_available: bool
     version_label: str
     vcs_install: str | None = None
+    remote_mode: bool = False
+    windows_platform: bool = False
 
 
 def detect_install_state(
@@ -72,6 +74,12 @@ def detect_install_state(
     preferences = load_preferences()
     spotty_installed = False
     server_installed = False
+    if sys.platform == "win32":
+        from app.spotty_bunny_agent_win32 import (
+            is_agent_installed as windows_spotty_agent_installed,
+        )
+
+        spotty_installed = windows_spotty_agent_installed()
     if sys.platform == "darwin":
         from app.server_agent import is_agent_installed as server_agent_installed
         from app.spotty_bunny_agent import is_agent_installed as spotty_agent_installed
@@ -93,6 +101,8 @@ def detect_install_state(
         upgrade_available=upgrade_available,
         version_label=version_label,
         vcs_install=vcs_install,
+        remote_mode=preferences is not None and preferences.mode == "remote",
+        windows_platform=sys.platform == "win32",
     )
 
 
@@ -114,7 +124,8 @@ def format_onboarding_text(
     lines.extend(_format_install_summary(state))
     lines.append("")
     step = 1
-    if not state.bookmarks_ready:
+    # A remote server holds its own bookmarks; no local server starts here.
+    if not state.bookmarks_ready and not state.remote_mode:
         lines.extend(
             [
                 f"{step}. Bookmarks (required before the server starts):",
@@ -153,6 +164,9 @@ def format_onboarding_text(
     if state.macos_platform:
         step += 1
         lines.extend(_format_spotty_bunny_section(state, step))
+    elif state.windows_platform:
+        step += 1
+        lines.extend(_format_windows_spotty_bunny_section(state, step))
     lines.extend(
         [
             "Upgrade later (preferred):",
@@ -390,6 +404,9 @@ def _format_install_summary(state: InstallState) -> list[str]:
             lines.append("Spotty Bunny LaunchAgent: installed")
         else:
             lines.append("Spotty Bunny LaunchAgent: not installed")
+    if state.windows_platform:
+        task = "installed" if state.spotty_agent_installed else "not installed"
+        lines.append(f"Spotty Bunny Scheduled Task: {task}")
     return lines
 
 
@@ -417,6 +434,25 @@ def _format_spotty_bunny_section(state: InstallState, step: int) -> list[str]:
         "     bunnify onboard                 # offers macOS deps + install",
         "     pipx install --force 'bunnify[macos]'",
         "     bunnify spotty-bunny install",
+        "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
+        "",
+    ]
+
+
+def _format_windows_spotty_bunny_section(state: InstallState, step: int) -> list[str]:
+    if state.spotty_agent_installed:
+        return [
+            f"{step}. Windows Spotty Bunny (optional search box): installed",
+            "     bunnify spotty-bunny status",
+            "     bunnify upgrade   # also refreshes the Scheduled Task",
+            "     bunnify spotty-bunny uninstall",
+            "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
+            "",
+        ]
+    return [
+        f"{step}. Windows Spotty Bunny (optional search box):",
+        "     bunnify spotty-bunny install    # Scheduled Task, starts at logon",
+        "     bunnify spotty-bunny status",
         "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
         "",
     ]

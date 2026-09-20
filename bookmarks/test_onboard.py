@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -108,6 +109,108 @@ class OnboardTests(SimpleTestCase):
             "Installed from git: git+https://github.com/the-hcma/bunnify@main", text
         )
         self.assertNotIn("PyPI latest", text)
+
+    @staticmethod
+    def _state(**overrides: object) -> InstallState:
+        fields: dict[str, object] = {
+            "bookmarks_ready": False,
+            "command_path": "C:\\bin\\bunnify.exe",
+            "macos_extra": False,
+            "macos_platform": False,
+            "pipx_app_path": None,
+            "pipx_version_label": None,
+            "preferences_ready": True,
+            "pypi_latest": None,
+            "server_agent_installed": False,
+            "source_checkout": False,
+            "spotty_agent_installed": False,
+            "upgrade_available": False,
+            "version_label": "0.15.0 (abc)",
+        }
+        fields.update(overrides)
+        return InstallState(**fields)  # pyright: ignore[reportArgumentType]
+
+    def test_windows_gets_its_own_spotty_bunny_step(self) -> None:
+        text = format_onboarding_text(self._state(windows_platform=True))
+        self.assertIn("Windows Spotty Bunny (optional search box):", text)
+        self.assertIn("bunnify spotty-bunny install", text)
+        self.assertIn("Scheduled Task", text)
+        self.assertNotIn("macOS", text)
+        self.assertIn("Spotty Bunny Scheduled Task: not installed", text)
+
+    def test_windows_step_reflects_an_installed_task(self) -> None:
+        text = format_onboarding_text(
+            self._state(windows_platform=True, spotty_agent_installed=True)
+        )
+        self.assertIn("Windows Spotty Bunny (optional search box): installed", text)
+        self.assertIn("bunnify spotty-bunny uninstall", text)
+        self.assertNotIn("spotty-bunny install ", text)
+        self.assertIn("Spotty Bunny Scheduled Task: installed", text)
+
+    def test_other_platforms_get_no_windows_step(self) -> None:
+        for state in (
+            self._state(),
+            self._state(macos_platform=True),
+        ):
+            with self.subTest(macos=state.macos_platform):
+                text = format_onboarding_text(state)
+                self.assertNotIn("Windows Spotty Bunny", text)
+                self.assertNotIn("Scheduled Task", text)
+
+    def test_macos_step_is_unchanged(self) -> None:
+        text = format_onboarding_text(self._state(macos_platform=True))
+        self.assertIn("macOS Spotty Bunny (optional search box):", text)
+
+    def test_remote_mode_does_not_ask_for_local_bookmarks(self) -> None:
+        text = format_onboarding_text(self._state(remote_mode=True))
+        self.assertNotIn("Bookmarks (required", text)
+        self.assertNotIn("bookmarks.json", text)
+        self.assertIn("Configure Chrome or Edge", text)
+
+    def test_local_mode_still_asks_for_bookmarks(self) -> None:
+        text = format_onboarding_text(self._state(remote_mode=False))
+        self.assertIn("1. Bookmarks (required before the server starts):", text)
+
+    def test_detect_install_state_reads_mode_and_the_windows_task(self) -> None:
+        preferences = MagicMock(mode="remote")
+        with (
+            patch("app.onboard.sys.platform", "win32"),
+            # sys.platform is process-global: without these, stdlib and pathlib
+            # calls would take their Windows branches on a non-Windows host.
+            patch("app.onboard.running_command_path", return_value=Path("bunnify")),
+            patch("app.onboard.pipx_bunnify_path", return_value=None),
+            patch("app.onboard.default_bookmarks_path", return_value=Path("b.json")),
+            patch("app.onboard.load_preferences", return_value=preferences),
+            patch("app.onboard.pypi_latest_version", return_value=None),
+            patch("app.onboard.pipx_vcs_install_spec", return_value=None),
+            patch("app.onboard.macos_extra_installed", return_value=False),
+            patch(
+                "app.spotty_bunny_agent_win32.is_agent_installed", return_value=True
+            ) as installed,
+        ):
+            state = detect_install_state(read_executable_build=lambda _path: None)
+        installed.assert_called_once_with()
+        self.assertTrue(state.windows_platform)
+        self.assertTrue(state.spotty_agent_installed)
+        self.assertTrue(state.remote_mode)
+        self.assertFalse(state.macos_platform)
+
+    def test_detect_install_state_does_not_touch_the_task_elsewhere(self) -> None:
+        with (
+            patch("app.onboard.sys.platform", "linux"),
+            patch("app.onboard.running_command_path", return_value=Path("bunnify")),
+            patch("app.onboard.pipx_bunnify_path", return_value=None),
+            patch("app.onboard.default_bookmarks_path", return_value=Path("b.json")),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.pypi_latest_version", return_value=None),
+            patch("app.onboard.pipx_vcs_install_spec", return_value=None),
+            patch("app.onboard.macos_extra_installed", return_value=False),
+            patch("app.spotty_bunny_agent_win32.is_agent_installed") as installed,
+        ):
+            state = detect_install_state(read_executable_build=lambda _path: None)
+        installed.assert_not_called()
+        self.assertFalse(state.windows_platform)
+        self.assertFalse(state.remote_mode)
 
     def test_format_onboarding_text_includes_install_summary(self) -> None:
         state = InstallState(
