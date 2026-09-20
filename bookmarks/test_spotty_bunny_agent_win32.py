@@ -349,10 +349,24 @@ class UninstallAgentTests(SimpleTestCase):
     def test_idempotent_when_already_uninstalled(self) -> None:
         from app.spotty_bunny_agent_win32 import uninstall_agent
 
-        code = uninstall_agent(
-            platform="win32", print_err=lambda _m: None, schtasks=_FakeSchtasks()
-        )
+        # Uninstall stops the recorded overlay and clears its pid file, so it
+        # must be pointed at a temporary directory and a fake stop: with the
+        # defaults this test terminated the developer's real overlay (#527).
+        with (
+            TemporaryDirectory() as tmp,
+            patch("app.spotty_bunny_agent_win32.stop_spotty_bunny") as stop,
+            patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid") as clear,
+        ):
+            pid_dir = Path(tmp) / "run"
+            code = uninstall_agent(
+                pid_dir=pid_dir,
+                platform="win32",
+                print_err=lambda _m: None,
+                schtasks=_FakeSchtasks(),
+            )
         self.assertEqual(code, 0)
+        stop.assert_called_once_with(pid_dir=pid_dir)
+        clear.assert_called_once_with(pid_dir=pid_dir)
 
     def test_reports_failure_and_leaves_overlay_running_when_delete_fails(
         self,
@@ -388,9 +402,21 @@ class StatusAgentTests(SimpleTestCase):
         from app.spotty_bunny_agent_win32 import status_agent
 
         lines: list[str] = []
-        code = status_agent(
-            platform="win32", print_fn=lines.append, schtasks=_FakeSchtasks()
-        )
+        # Not the host's real overlay: with the defaults this reported
+        # "running: yes" whenever Spotty Bunny was actually running (#527).
+        with (
+            TemporaryDirectory() as tmp,
+            patch(
+                "app.spotty_bunny_agent_win32.read_spotty_bunny_health",
+                return_value=None,
+            ),
+        ):
+            code = status_agent(
+                pid_dir=Path(tmp) / "run",
+                platform="win32",
+                print_fn=lines.append,
+                schtasks=_FakeSchtasks(),
+            )
         self.assertEqual(code, 1)
         self.assertIn("running: no", lines)
         self.assertIn("pid: none", lines)

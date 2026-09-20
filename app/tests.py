@@ -797,9 +797,11 @@ class ServerProcessTests(SimpleTestCase):
 
 class SettingsDataDirTests(SimpleTestCase):
     def test_sqlite_database_is_under_data_dir(self) -> None:
+        # settings.DATA_DIR is resolved at import, before the test runner
+        # redirects the data dir (#527), so compare with it, not data_dir().
         self.assertEqual(
             settings.DATABASE_PATH,
-            data_dir() / "db.sqlite3",
+            settings.DATA_DIR / "db.sqlite3",
         )
 
 
@@ -857,3 +859,62 @@ def _can_create_symlinks() -> bool:
         except NotImplementedError, OSError:
             return False
     return True
+
+
+class IsolatedStateRunnerTests(SimpleTestCase):
+    """The suite runs against a throwaway data dir, not the real one (#527)."""
+
+    def test_the_running_suite_uses_a_throwaway_data_dir(self) -> None:
+        from app.spotty_bunny_launch import spotty_bunny_pid_path
+
+        self.assertIn("bunnify-test-data-", str(data_dir()))
+        self.assertIn("bunnify-test-data-", str(spotty_bunny_pid_path()))
+
+    def _run_setup_teardown(self, before: dict[str, str]) -> tuple[dict, Path]:
+        """Set up and tear down the runner under *before*; report what was seen."""
+        import os
+
+        from app.isolated_test_runner import IsolatedStateRunner
+
+        runner = IsolatedStateRunner()
+        with mock.patch.dict(os.environ, before, clear=False):
+            for name in ("XDG_DATA_HOME", "BUNNIFY_DATA_DIR"):
+                if name not in before:
+                    os.environ.pop(name, None)
+            with mock.patch("django.test.runner.DiscoverRunner.setup_test_environment"):
+                runner.setup_test_environment()
+            inside = {
+                "xdg": os.environ.get("XDG_DATA_HOME"),
+                "bunnify": os.environ.get("BUNNIFY_DATA_DIR"),
+            }
+            with mock.patch(
+                "django.test.runner.DiscoverRunner.teardown_test_environment"
+            ):
+                runner.teardown_test_environment()
+            after = {
+                "xdg": os.environ.get("XDG_DATA_HOME"),
+                "bunnify": os.environ.get("BUNNIFY_DATA_DIR"),
+            }
+        return {"inside": inside, "after": after}, Path(inside["xdg"] or "")
+
+    def test_setup_redirects_the_data_home_and_clears_the_explicit_override(
+        self,
+    ) -> None:
+        seen, temp = self._run_setup_teardown(
+            {"XDG_DATA_HOME": "/real/xdg", "BUNNIFY_DATA_DIR": "/real/bunnify"}
+        )
+        self.assertIn("bunnify-test-data-", seen["inside"]["xdg"])
+        self.assertIsNone(seen["inside"]["bunnify"])
+        self.assertFalse(temp.exists())  # cleaned up by teardown
+
+    def test_teardown_restores_both_variables(self) -> None:
+        seen, _temp = self._run_setup_teardown(
+            {"XDG_DATA_HOME": "/real/xdg", "BUNNIFY_DATA_DIR": "/real/bunnify"}
+        )
+        self.assertEqual(
+            seen["after"], {"xdg": "/real/xdg", "bunnify": "/real/bunnify"}
+        )
+
+    def test_teardown_removes_variables_that_were_not_set_before(self) -> None:
+        seen, _temp = self._run_setup_teardown({})
+        self.assertEqual(seen["after"], {"xdg": None, "bunnify": None})
