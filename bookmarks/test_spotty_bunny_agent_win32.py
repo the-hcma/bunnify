@@ -333,6 +333,9 @@ class UninstallAgentTests(SimpleTestCase):
             with (
                 patch("app.spotty_bunny_agent_win32.stop_spotty_bunny") as stop,
                 patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid") as clear,
+                patch(
+                    "app.spotty_bunny_agent_win32.clear_spotty_bunny_health"
+                ) as clear_health,
             ):
                 code = uninstall_agent(
                     pid_dir=pid_dir,
@@ -344,6 +347,8 @@ class UninstallAgentTests(SimpleTestCase):
         self.assertFalse(fake.registered)
         stop.assert_called_once_with(pid_dir=pid_dir)
         clear.assert_called_once_with(pid_dir=pid_dir)
+        # The killed overlay never cleans up after itself (#525).
+        clear_health.assert_called_once_with()
         self.assertIn("uninstalled Scheduled Task", stderr.getvalue())
 
     def test_idempotent_when_already_uninstalled(self) -> None:
@@ -356,6 +361,7 @@ class UninstallAgentTests(SimpleTestCase):
             TemporaryDirectory() as tmp,
             patch("app.spotty_bunny_agent_win32.stop_spotty_bunny") as stop,
             patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid") as clear,
+            patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_health"),
         ):
             pid_dir = Path(tmp) / "run"
             code = uninstall_agent(
@@ -382,6 +388,9 @@ class UninstallAgentTests(SimpleTestCase):
             with (
                 patch("app.spotty_bunny_agent_win32.stop_spotty_bunny") as stop,
                 patch("app.spotty_bunny_agent_win32.clear_spotty_bunny_pid") as clear,
+                patch(
+                    "app.spotty_bunny_agent_win32.clear_spotty_bunny_health"
+                ) as clear_health,
             ):
                 code = uninstall_agent(
                     pid_dir=pid_dir,
@@ -393,6 +402,7 @@ class UninstallAgentTests(SimpleTestCase):
         self.assertTrue(fake.registered)
         stop.assert_not_called()
         clear.assert_not_called()
+        clear_health.assert_not_called()
         self.assertIn("schtasks /Delete failed", stderr.getvalue())
         self.assertNotIn("uninstalled Scheduled Task", stderr.getvalue())
 
@@ -465,6 +475,42 @@ class StatusAgentTests(SimpleTestCase):
         self.assertIn("task: running", lines)
         self.assertIn("binary: C:\\bin\\spotty-bunny.exe", lines)
         self.assertIn(f"tap: {TAP_STATE_OK}", lines)
+
+    def test_a_stopped_overlay_does_not_report_its_last_runs_health(self) -> None:
+        from app.spotty_bunny_agent_win32 import status_agent
+        from app.spotty_bunny_tap_health import TAP_STATE_OK, SpottyBunnyHealth
+
+        left_behind = SpottyBunnyHealth(
+            last_chord_at=1_700_000_000.0,
+            last_event_at=None,
+            reinstall_failures=0,
+            tap=TAP_STATE_OK,
+            updated_at=0.0,
+        )
+        lines: list[str] = []
+        with (
+            TemporaryDirectory() as tmp,
+            patch(
+                "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                return_value=False,
+            ),
+            patch(
+                "app.spotty_bunny_agent_win32.read_spotty_bunny_health",
+                return_value=left_behind,
+            ) as read,
+        ):
+            code = status_agent(
+                pid_dir=Path(tmp) / "run",
+                platform="win32",
+                print_fn=lines.append,
+                schtasks=_FakeSchtasks(),
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("running: no", lines)
+        self.assertIn("tap: unknown", lines)
+        self.assertIn("last_chord: unknown", lines)
+        self.assertNotIn(f"tap: {TAP_STATE_OK}", lines)
+        read.assert_not_called()
 
     def test_unhealthy_when_tap_not_ok_while_running(self) -> None:
         from app.spotty_bunny_agent_win32 import status_agent

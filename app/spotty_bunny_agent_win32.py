@@ -33,6 +33,7 @@ from app.spotty_bunny_launch import (
 )
 from app.spotty_bunny_tap_health import (
     TAP_STATE_OK,
+    clear_spotty_bunny_health,
     format_activity_timestamp,
     read_spotty_bunny_health,
 )
@@ -220,7 +221,9 @@ def status_agent(
     out(f'follow_logs: Get-Content -Path "{app_log}" -Wait -Tail 20')
     out(f'follow_logs_alt: type "{app_log}"')
     out(f"version: {build_version()}")
-    health = read_spotty_bunny_health()
+    # The health file is the last overlay process's: without a live overlay
+    # its "ok" and last chord would make a stopped one look healthy (#525).
+    health = read_spotty_bunny_health() if running else None
     if health is None:
         out("tap: unknown")
         out("last_chord: unknown")
@@ -256,6 +259,8 @@ def uninstall_agent(
         return 1
     stop_spotty_bunny(pid_dir=pid_dir)
     clear_spotty_bunny_pid(pid_dir=pid_dir)
+    # A killed overlay never runs its atexit cleanup, so remove its health file.
+    clear_spotty_bunny_health()
     err(f"{COMMAND_NAME}: uninstalled Scheduled Task '{TASK_NAME}'")
     return 0
 
