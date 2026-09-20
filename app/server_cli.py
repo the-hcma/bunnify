@@ -15,7 +15,8 @@ import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from typing import Any
 
 from app.client import check_health
 from app.config import data_dir, ensure_user_bookmarks, run_dir
@@ -156,11 +157,15 @@ def main(argv: list[str] | None = None) -> int:
     options = _parse_options(args)
     options.pid_dir.mkdir(parents=True, exist_ok=True)
     if options.stop:
-        return _stop_managed_server(
-            options.pid_dir,
-            port_timeout_s=options.port_timeout_s,
-            replace_on_port=options.replace_on_port,
-        )
+        try:
+            return _stop_managed_server(
+                options.pid_dir,
+                port_timeout_s=options.port_timeout_s,
+                replace_on_port=options.replace_on_port,
+            )
+        except OSError as exc:
+            print(f"bunnify-server: error: {exc}", file=sys.stderr)
+            return 1
 
     try:
         bookmarks = _ensure_bookmarks(options)
@@ -211,6 +216,13 @@ def _background_command(
     return command
 
 
+def _base_name(argument: str) -> str:
+    """Last path component of *argument*, using the platform's separators."""
+    if sys.platform == "win32":
+        return PureWindowsPath(argument).name
+    return Path(argument).name
+
+
 def _cleanup_files(pid_dir: Path, *, owner_pid: int | None = None) -> None:
     pid_file, port_file, watcher_pid_file = _pid_paths(pid_dir)
     if owner_pid is not None and _read_pid(pid_file) not in {None, owner_pid}:
@@ -228,6 +240,19 @@ def _configure_environment(options: ServerOptions) -> None:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
 
 
+def _detach_options() -> dict[str, Any]:
+    """``Popen`` options that detach the background server from this console."""
+    if sys.platform == "win32":
+        # start_new_session is POSIX-only. No console and its own process
+        # group, so closing this terminal (or Ctrl+C here) does not stop it.
+        return {
+            "creationflags": getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        }
+    return {"start_new_session": True}
+
+
 def _ensure_bookmarks(options: ServerOptions) -> Path:
     if options.bookmarks is None:
         try:
@@ -241,6 +266,20 @@ def _ensure_bookmarks(options: ServerOptions) -> Path:
     if not bookmarks.is_file():
         raise RuntimeError(f"bookmarks file not found: {bookmarks}")
     return bookmarks
+
+
+def _flag_value_from_arguments(arguments: list[str], flag: str) -> str | None:
+    """Return ``flag``'s value (``--flag value`` or ``--flag=value``)."""
+    prefix = f"{flag}="
+    for index, token in enumerate(arguments):
+        if token == flag:
+            if index + 1 >= len(arguments):
+                return None
+            return arguments[index + 1]
+        if token.startswith(prefix):
+            value = token[len(prefix) :]
+            return value or None
+    return None
 
 
 def _initialize_database(*, bookmarks: Path, noninteractive: bool) -> None:
@@ -278,7 +317,7 @@ def _is_bunnify_command(command: str) -> bool:
     accepted on their argv shape alone.
     """
     try:
-        arguments = shlex.split(command)
+        arguments = _split_command(command)
     except ValueError:
         return False
     if not _is_bunnify_executable(arguments):
@@ -291,12 +330,12 @@ def _is_bunnify_executable(arguments: Sequence[str]) -> bool:
     """Return whether *arguments* launch the Bunnify server program."""
     if not arguments:
         return False
-    if Path(arguments[0]).name == "bunnify-server":
+    if _program_name(arguments[0]) == "bunnify-server":
         return True
     target = _python_invocation_target(arguments)
     if target is None:
         return False
-    return target == "app.server_cli" or Path(target).name == "bunnify-server"
+    return target == "app.server_cli" or _program_name(target) == "bunnify-server"
 
 
 def _is_bunnify_process(pid: int) -> bool:
@@ -307,6 +346,12 @@ def _is_bunnify_process(pid: int) -> bool:
 def _is_process_running(pid: int) -> bool:
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        # os.kill(pid, 0) is not a liveness probe on Windows (it raises
+        # WinError 87); reuse the overlay's OpenProcess-based check.
+        from app.spotty_bunny_launch import _win32_process_alive
+
+        return _win32_process_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -317,7 +362,9 @@ def _is_process_running(pid: int) -> bool:
 
 
 def _listener_pids(port: int) -> list[int]:
-    """Return PIDs listening on TCP ``port`` (best-effort via ``lsof``)."""
+    """Return PIDs listening on TCP ``port`` (best-effort: ``lsof``/``netstat``)."""
+    if sys.platform == "win32":
+        return _listener_pids_from_netstat(port)
     try:
         completed = subprocess.run(
             ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
@@ -334,6 +381,51 @@ def _listener_pids(port: int) -> list[int]:
             pids.append(int(line.strip()))
         except ValueError:
             continue
+    return pids
+
+
+def _listener_pids_from_netstat(port: int) -> list[int]:
+    """Windows: PIDs LISTENING on TCP ``port``, from ``netstat -ano -p TCP``."""
+    try:
+        completed = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True,
+            check=False,
+            # OEM-codepage output; only the ASCII address and PID columns are
+            # used, so undecodable bytes in a localized State column are fine.
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return []
+    return _parse_netstat_listeners(completed.stdout, port)
+
+
+def _parse_netstat_listeners(output: str, port: int) -> list[int]:
+    """Parse ``netstat -ano`` output for the PIDs listening on ``port``.
+
+    The State column is localized ("ABHÖREN", "À L'ÉCOUTE", ...), so a
+    listener is recognized by its foreign address instead: an unconnected
+    socket shows ``0.0.0.0:0`` / ``[::]:0``, while a connected one has a real
+    remote port. The state can also contain spaces, so the PID is the last
+    column.
+    """
+    pids: list[int] = []
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[0].upper() != "TCP":
+            continue
+        if fields[2].rsplit(":", 1)[-1] != "0":
+            continue
+        if fields[1].rsplit(":", 1)[-1] != str(port):
+            continue
+        try:
+            pid = int(fields[-1])
+        except ValueError:
+            continue
+        if pid not in pids:
+            pids.append(pid)
     return pids
 
 
@@ -360,24 +452,10 @@ def _parse_options(argv: list[str] | None) -> ServerOptions:
     )
 
 
-def _flag_value_from_arguments(arguments: list[str], flag: str) -> str | None:
-    """Return ``flag``'s value (``--flag value`` or ``--flag=value``)."""
-    prefix = f"{flag}="
-    for index, token in enumerate(arguments):
-        if token == flag:
-            if index + 1 >= len(arguments):
-                return None
-            return arguments[index + 1]
-        if token.startswith(prefix):
-            value = token[len(prefix) :]
-            return value or None
-    return None
-
-
 def _pid_dir_from_command(command: str) -> Path | None:
     """Return ``--pid-dir`` from a process command line, if present."""
     try:
-        arguments = shlex.split(command)
+        arguments = _split_command(command)
     except ValueError:
         return None
     value = _flag_value_from_arguments(arguments, "--pid-dir")
@@ -397,7 +475,7 @@ def _pid_paths(pid_dir: Path) -> tuple[Path, Path, Path]:
 def _port_from_command(command: str) -> int | None:
     """Return ``--port`` from a process command line when it is a fixed port."""
     try:
-        arguments = shlex.split(command)
+        arguments = _split_command(command)
     except ValueError:
         return None
     value = _flag_value_from_arguments(arguments, "--port")
@@ -413,13 +491,13 @@ def _port_from_command(command: str) -> int | None:
 
 
 def _port_is_free(port: int) -> bool:
-    """Return whether ``port`` can be bound with ``SO_REUSEADDR``.
+    """Return whether ``port`` can be bound (see ``_probe_socket_options``).
 
-    Matches Django's runserver reuse behavior so a draining listen socket after
-    SIGTERM is not mistaken for an active occupant.
+    On POSIX this matches Django's runserver reuse behavior so a draining
+    listen socket after SIGTERM is not mistaken for an active occupant.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
-        candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _probe_socket_options(candidate)
         try:
             candidate.bind(("127.0.0.1", port))
         except OSError:
@@ -447,10 +525,30 @@ def _port_value(raw: str) -> int:
     return port
 
 
+def _probe_socket_options(candidate: socket.socket) -> None:
+    """Options for a socket that only probes whether a port is free.
+
+    POSIX: ``SO_REUSEADDR``. On Windows that option instead lets a bind
+    succeed on a port another socket is already listening on (Django's server
+    sets it), so a live server's port was reported free: ``--stop`` never
+    looked for the listener and a second server could share the port. There
+    ``SO_EXCLUSIVEADDRUSE`` makes the probe fail like an occupied port should.
+    """
+    if sys.platform == "win32":
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", -5)  # ~SO_REUSEADDR
+        candidate.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+    else:
+        candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+
 def _process_command(pid: int) -> str | None:
-    """Return the ``ps`` command line for ``pid``, or ``None`` on failure."""
+    """Return the command line for ``pid`` (``ps``; Windows: the process's own)."""
     if not _is_process_running(pid):
         return None
+    if sys.platform == "win32":
+        from app.spotty_bunny_launch import _win32_process_command_line
+
+        return _win32_process_command_line(pid)
     try:
         completed = subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="],
@@ -484,6 +582,21 @@ def _process_managed_by_pid_dir(pid: int, pid_dir: Path) -> bool:
         return recorded.expanduser() == pid_dir.expanduser()
 
 
+def _program_name(argument: str) -> str:
+    """Program name of *argument*, comparable within the platform.
+
+    Windows: without the ``.exe`` suffix and case-folded, since file names
+    there are case-insensitive and a process keeps the case it was launched
+    with (``Bunnify-Server``, ``BUNNIFY-SERVER.EXE``).
+    """
+    name = _base_name(argument)
+    if sys.platform == "win32":
+        name = name.casefold()
+        if name.endswith(".exe"):
+            name = name[: -len(".exe")]
+    return name
+
+
 def _python_invocation_target(arguments: Sequence[str]) -> str | None:
     """Return the script path or ``-m`` module a Python command line runs.
 
@@ -493,7 +606,7 @@ def _python_invocation_target(arguments: Sequence[str]) -> str | None:
     ``None`` when ``arguments`` is not a Python invocation, or when it runs code
     from ``-c`` or stdin rather than a named script or module.
     """
-    if not arguments or not _PYTHON_EXECUTABLE_RE.match(Path(arguments[0]).name):
+    if not arguments or not _PYTHON_EXECUTABLE_RE.match(_base_name(arguments[0])):
         return None
     index = 1
     while index < len(arguments):
@@ -528,7 +641,7 @@ def _read_port(path: Path) -> int | None:
 def _resolve_port(requested_port: int) -> int:
     if requested_port:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
-            candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            _probe_socket_options(candidate)
             try:
                 candidate.bind(("127.0.0.1", requested_port))
             except OSError as exc:
@@ -557,9 +670,11 @@ def _run_foreground(
     def handle_signal(signum: int, _frame: object) -> None:
         raise SystemExit(128 + signum)
 
-    signal.signal(signal.SIGHUP, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
+    # SIGHUP does not exist on Windows (which has SIGBREAK instead).
+    for name in ("SIGHUP", "SIGINT", "SIGTERM", "SIGBREAK"):
+        signum = getattr(signal, name, None)
+        if signum is not None:
+            signal.signal(signum, handle_signal)
     address = "0.0.0.0" if options.listen_all else "127.0.0.1"
     print(f"Bunnify server listening at http://{address}:{port}/")
     try:
@@ -573,6 +688,15 @@ def _run_foreground(
     finally:
         _cleanup_files(options.pid_dir, owner_pid=os.getpid())
     return 0
+
+
+def _split_command(command: str) -> list[str]:
+    """Split a process command line by the platform's quoting rules."""
+    if sys.platform == "win32":
+        from app.spotty_bunny_task_win32 import _split_windows_command_line
+
+        return _split_windows_command_line(command)
+    return shlex.split(command)
 
 
 def _start_background(
@@ -592,7 +716,7 @@ def _start_background(
             stdin=subprocess.DEVNULL,
             stdout=output,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **_detach_options(),
         )
     _write_runtime_files(options.pid_dir, port, pid=process.pid)
 
@@ -650,7 +774,12 @@ def _stop_managed_server(
     port = _read_port(port_file)
     if replace_on_port is not None:
         port = replace_on_port
-    if pid == os.getpid():
+    # Never stop ourselves, or the process that started us. On Windows a
+    # venv's python.exe is a launcher stub that runs the real interpreter as a
+    # child, so the pid the starter records (Popen.pid) is the *parent's*; the
+    # child's own startup stop would otherwise terminate it and, with it,
+    # itself.
+    if pid in (os.getpid(), os.getppid()):
         return 0
 
     signaled_pids: list[int] = []
@@ -712,7 +841,21 @@ def _stop_managed_server(
 
 
 def _terminate_pid(pid: int) -> None:
-    """Send SIGTERM, escalate to SIGKILL if the process does not exit."""
+    """Send SIGTERM, escalate to SIGKILL if the process does not exit.
+
+    Windows has neither: TerminateProcess is already the forceful stop. A
+    refused stop (a server started elevated or by another user) raises
+    ``PermissionError``, as ``os.kill`` does on POSIX, instead of pretending
+    the process was stopped.
+    """
+    if sys.platform == "win32":
+        from app.spotty_bunny_launch import _win32_terminate_pid
+
+        if _win32_terminate_pid(pid):
+            _wait_for_exit(pid, timeout_s=10)
+        elif _is_process_running(pid):
+            raise PermissionError(f"could not stop process {pid} (access denied)")
+        return
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:

@@ -468,13 +468,33 @@ class LocalServerTests(SimpleTestCase):
     def test_port_is_free_enables_reuseaddr_on_probe_socket(self) -> None:
         from app.local_server import port_is_free
 
-        with mock.patch("app.local_server.socket.socket") as socket_cls:
+        with (
+            # The probe's option is platform-specific; this is the POSIX one.
+            mock.patch("app.server_cli.sys.platform", "darwin"),
+            mock.patch("app.server_cli.socket.socket") as socket_cls,
+        ):
             probe = socket_cls.return_value.__enter__.return_value
             probe.bind.return_value = None
             self.assertTrue(port_is_free(8123))
             probe.setsockopt.assert_called_with(
                 socket.SOL_SOCKET,
                 socket.SO_REUSEADDR,
+                1,
+            )
+
+    def test_port_is_free_probes_exclusively_on_windows(self) -> None:
+        from app.local_server import port_is_free
+
+        with (
+            mock.patch("app.server_cli.sys.platform", "win32"),
+            mock.patch("app.server_cli.socket.socket") as socket_cls,
+        ):
+            probe = socket_cls.return_value.__enter__.return_value
+            probe.bind.return_value = None
+            self.assertTrue(port_is_free(8123))
+            probe.setsockopt.assert_called_with(
+                socket.SOL_SOCKET,
+                getattr(socket, "SO_EXCLUSIVEADDRUSE", -5),
                 1,
             )
 
