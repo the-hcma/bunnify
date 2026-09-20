@@ -47,6 +47,7 @@ from app.spotty_bunny_complete import (
     make_spotty_completer,
     should_auto_insert_completion,
 )
+from app.spotty_bunny_focus_win32 import take_foreground
 from app.spotty_bunny_history import (
     HistoryNavigator,
     append_history_line,
@@ -1388,49 +1389,10 @@ def _show_overlay_window(
     """Center the overlay, show it, and give its text box focus, best effort."""
     _center_overlay(hwnd, win32api=win32api, win32con=win32con, win32gui=win32gui)
     win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-    _take_foreground(
+    take_foreground(
         hwnd, win32api=win32api, win32gui=win32gui, win32process=win32process
     )
     try:
         win32gui.SetFocus(edit_hwnd)
     except win32gui.error:
         logger.warning("SetFocus on the overlay text box failed; continuing")
-
-
-def _take_foreground(hwnd: int, *, win32api, win32gui, win32process) -> None:
-    """Ask Windows to make *hwnd* the foreground window without ever raising.
-
-    A background process is normally refused (``SetForegroundWindow`` raises
-    ``pywintypes.error (0, ...)``). Attaching to the current foreground
-    window's input queue for the duration of the call is the standard way
-    around that foreground lock. Any refusal is logged, not propagated, so
-    the overlay still appears.
-    """
-    this_thread = win32api.GetCurrentThreadId()
-    try:
-        foreground = win32gui.GetForegroundWindow()
-        foreground_thread = (
-            win32process.GetWindowThreadProcessId(foreground)[0] if foreground else 0
-        )
-    except win32gui.error:
-        # The foreground window can close between the two calls; pywin32 then
-        # raises the same (0, ...) error shape as a refused SetForegroundWindow.
-        logger.warning("could not resolve the foreground window; continuing")
-        foreground_thread = 0
-    attached = False
-    if foreground_thread and foreground_thread != this_thread:
-        try:
-            win32process.AttachThreadInput(this_thread, foreground_thread, True)
-            attached = True
-        except win32gui.error:
-            logger.warning("could not attach to the foreground thread; continuing")
-    try:
-        win32gui.SetForegroundWindow(hwnd)
-    except win32gui.error:
-        logger.warning("SetForegroundWindow refused; continuing without focus grab")
-    finally:
-        if attached:
-            try:
-                win32process.AttachThreadInput(this_thread, foreground_thread, False)
-            except win32gui.error:
-                logger.warning("could not detach from the foreground thread")
