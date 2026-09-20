@@ -75,17 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the ``spotty-bunny`` argument parser."""
     parser = argparse.ArgumentParser(
         prog=COMMAND_NAME,
-        description=(
-            "Spotty Bunny: macOS Spotlight-style search box. Hold one modifier "
-            "key, press the other on the same side to show it (auto by "
-            "default: Control with an external keyboard attached, Option on "
-            "laptops with no second Control key; run `spotty-bunny hotkey` "
-            "to view/change). Subcommands: hotkey, install, uninstall, "
-            "status, upgrade (login LaunchAgent). Bare invocation is "
-            "foreground."
-        ),
-    )
-    # Stamped by the launcher so `ps` identifies this process and its build.
+        description=_description(),
+    )  # Stamped by the launcher so `ps` identifies this process and its build.
     # Carries no behaviour, so it stays out of --help.
     parser.add_argument(
         BUILD_MARKER_FLAG,
@@ -246,6 +237,27 @@ def _configure_spotty_bunny_logging(log_level: str, log_file: Path) -> Path | No
         logger.setLevel(level)
         logger.propagate = False
     return active_log
+
+
+def _description(platform: str | None = None) -> str:
+    """The ``--help`` description, worded for the platform it runs on."""
+    if (sys.platform if platform is None else platform) == "win32":
+        return (
+            "Spotty Bunny: a search box for Bunnify shortcuts. Hold one "
+            "Control key and press the other to show it (run `spotty-bunny "
+            "hotkey` to view/change). Subcommands: hotkey, install, "
+            "uninstall, status, upgrade (Scheduled Task that starts at "
+            "logon). Bare invocation is foreground."
+        )
+    return (
+        "Spotty Bunny: macOS Spotlight-style search box. Hold one modifier "
+        "key, press the other on the same side to show it (auto by "
+        "default: Control with an external keyboard attached, Option on "
+        "laptops with no second Control key; run `spotty-bunny hotkey` "
+        "to view/change). Subcommands: hotkey, install, uninstall, "
+        "status, upgrade (login LaunchAgent). Bare invocation is "
+        "foreground."
+    )
 
 
 def _load_run_spotty_bunny_app() -> Callable[[], int]:
