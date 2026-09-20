@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ import sys
 import tomllib
 from collections.abc import Mapping
 from functools import lru_cache
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 
 from app import _build_metadata
@@ -59,7 +60,9 @@ def git_commit(
 
     checkout = repository or Path(__file__).resolve().parents[1]
     if not (checkout / ".git").exists():
-        return "unknown"
+        # Not a checkout: a pip/pipx install straight from a VCS URL has no
+        # embedded metadata, but pip records the commit it built.
+        return _direct_url_commit() or "unknown"
 
     try:
         result = subprocess.run(
@@ -178,6 +181,21 @@ def running_command_path() -> Path:
         return argv0.absolute()
     except OSError:
         return argv0
+
+
+def _direct_url_commit() -> str:
+    """Return the commit pip recorded for a VCS install, or "" if there is none.
+
+    ``pip install git+https://...`` (and so ``pipx install git+...``) writes
+    ``direct_url.json`` into the distribution with ``vcs_info.commit_id``.
+    Editable/local-directory and index installs have no ``vcs_info``.
+    """
+    try:
+        raw = distribution(PACKAGE_NAME).read_text("direct_url.json")
+        commit = json.loads(raw or "")["vcs_info"]["commit_id"]
+    except PackageNotFoundError, ValueError, KeyError, TypeError, OSError:
+        return ""
+    return _normalize_commit(commit) if isinstance(commit, str) else ""
 
 
 def _normalize_commit(token: str) -> str:
