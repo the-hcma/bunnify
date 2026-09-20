@@ -1315,6 +1315,14 @@ def _make_overlay_wndproc(
             if not (controller.about_open or controller.about_opening):
                 controller.hide()
             return 0
+        if msg == win32con.WM_CONTEXTMENU:
+            # A right-click on the bunny logo. The static reports it to its
+            # parent as WM_CONTEXTMENU (wparam = the clicked control) once it
+            # has SS_NOTIFY; show the same action menu as the tray icon and
+            # the macOS logo. Other controls keep the default handling.
+            if theme is not None and theme.logo_hwnd and wparam == theme.logo_hwnd:
+                _show_context_menu(controller, win32gui=win32gui, win32con=win32con)
+                return 0
         if msg == win32con.WM_COMMAND:
             # EN_CHANGE's (0x0300) and LBN_SELCHANGE's (1) notification
             # codes don't overlap, so no need to also check lparam's

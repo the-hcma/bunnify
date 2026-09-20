@@ -1141,6 +1141,7 @@ class _FakeWin32Con:
     WM_DESTROY = 0x0002
     WM_LBUTTONUP = 0x0202
     WM_RBUTTONUP = 0x0205
+    WM_CONTEXTMENU = 0x007B
     MF_STRING = 0x0000
     TPM_LEFTALIGN = 0x0000
     TPM_RETURNCMD = 0x0100
@@ -1430,6 +1431,66 @@ class ThemedOverlayWndProcTests(SimpleTestCase):
         )
         wndproc(1, _FakeWin32Con.WM_PAINT, 0, 0)
         win32gui.DefWindowProc.assert_called_once_with(1, _FakeWin32Con.WM_PAINT, 0, 0)
+
+
+class LogoContextMenuTests(SimpleTestCase):
+    """Right-clicking the bunny logo shows the action menu (#513)."""
+
+    def _wndproc(self, *, logo_hwnd: int = 555):
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        theme.logo_hwnd = logo_hwnd
+        controller = _make_controller()
+        wndproc = _make_overlay_wndproc(
+            controller, theme=theme, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        return wndproc, win32gui, controller
+
+    def test_right_clicking_the_logo_shows_the_menu(self) -> None:
+        wndproc, win32gui, controller = self._wndproc()
+        with patch("app.spotty_bunny_win32_app._show_context_menu") as show:
+            result = wndproc(1, _FakeWin32Con.WM_CONTEXTMENU, 555, 0)
+        self.assertEqual(result, 0)
+        show.assert_called_once()
+        self.assertIs(show.call_args.args[0], controller)
+        win32gui.DefWindowProc.assert_not_called()
+
+    def test_a_context_menu_request_from_another_control_is_left_alone(self) -> None:
+        wndproc, win32gui, _controller = self._wndproc()
+        with patch("app.spotty_bunny_win32_app._show_context_menu") as show:
+            wndproc(1, _FakeWin32Con.WM_CONTEXTMENU, 999, 0)
+        show.assert_not_called()
+        win32gui.DefWindowProc.assert_called_once()
+
+    def test_before_the_logo_exists_no_control_matches(self) -> None:
+        # logo_hwnd starts at 0; a WM_CONTEXTMENU with wparam 0 (for example
+        # keyboard-invoked) must not pop the menu.
+        wndproc, win32gui, _controller = self._wndproc(logo_hwnd=0)
+        with patch("app.spotty_bunny_win32_app._show_context_menu") as show:
+            wndproc(1, _FakeWin32Con.WM_CONTEXTMENU, 0, 0)
+        show.assert_not_called()
+        win32gui.DefWindowProc.assert_called_once()
+
+    def test_without_a_theme_there_is_no_logo_to_match(self) -> None:
+        win32gui = _make_theme_win32gui()
+        wndproc = _make_overlay_wndproc(
+            _make_controller(), win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        with patch("app.spotty_bunny_win32_app._show_context_menu") as show:
+            wndproc(1, _FakeWin32Con.WM_CONTEXTMENU, 0, 0)
+        show.assert_not_called()
+
+    def test_the_menu_offers_the_same_actions_as_the_tray(self) -> None:
+        win32gui = MagicMock()
+        win32gui.CreatePopupMenu.return_value = 77
+        win32gui.GetCursorPos.return_value = (10, 20)
+        win32gui.TrackPopupMenu.return_value = 0
+        controller = _make_controller()
+        specs = controller.current_menu_specs()
+        _show_context_menu(controller, win32gui=win32gui, win32con=_FakeWin32Con)
+        titles = [call.args[3] for call in win32gui.AppendMenu.call_args_list]
+        self.assertEqual(titles, [title for title, _action in specs])
+        self.assertTrue(titles)
 
 
 class LogoClickTests(SimpleTestCase):
@@ -2030,6 +2091,53 @@ class RealCreateOverlayWindowTests(SimpleTestCase):
             win32gui.SendMessage(logo, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, 0)
             win32gui.SendMessage(logo, win32con.WM_LBUTTONUP, 0, 0)
             controller.show_about.assert_called_once_with()
+            # A real right-click on the real logo reaches the wndproc as
+            # WM_CONTEXTMENU. The real menu is modal, so record the request.
+            menu_requests: list[object] = []
+            original_menu = overlay_module._show_context_menu
+            overlay_module._show_context_menu = lambda *a, **k: menu_requests.append(a)
+            try:
+                win32gui.SendMessage(
+                    logo, win32con.WM_RBUTTONDOWN, win32con.MK_RBUTTON, 0
+                )
+                win32gui.SendMessage(logo, win32con.WM_RBUTTONUP, 0, 0)
+            finally:
+                overlay_module._show_context_menu = original_menu
+            self.assertEqual(len(menu_requests), 1)
+            # ... and the real menu it asks for actually appears (a popup menu
+            # window, class #32768), then goes away when cancelled.
+            import threading
+            import time
+
+            controller.hwnd = hwnd
+            seen_menu: list[bool] = []
+            finished = threading.Event()
+
+            def watch_and_cancel() -> None:
+                # The menu is modal, so this thread is the only way out. Wait
+                # (bounded) for the popup to exist, then keep posting the
+                # cancel until the modal call has returned: a late-starting
+                # menu can never leave the test blocked.
+                deadline = time.monotonic() + 10
+                while not finished.is_set() and time.monotonic() < deadline:
+                    if win32gui.FindWindow("#32768", None):
+                        seen_menu.append(True)
+                        break
+                    time.sleep(0.02)
+                while not finished.is_set():
+                    win32gui.PostMessage(hwnd, win32con.WM_CANCELMODE, 0, 0)
+                    time.sleep(0.2)
+
+            watcher = threading.Thread(target=watch_and_cancel, daemon=True)
+            watcher.start()
+            try:
+                overlay_module._show_context_menu(
+                    controller, win32gui=win32gui, win32con=win32con
+                )
+            finally:
+                finished.set()
+                watcher.join(timeout=5)
+            self.assertEqual(seen_menu, [True])
             # A double-click reports STN_DBLCLK (== LBN_SELCHANGE): it must
             # not be mistaken for a completion-list selection.
             controller.show_about.reset_mock()
