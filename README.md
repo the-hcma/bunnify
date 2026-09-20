@@ -25,9 +25,10 @@ running either command. Prefer the pipx apps over any checkout
 `./scripts/bunnify` still on `PATH`.
 
 The wheel installs **`bunnify`** (CLI), **`bunnify-server`** (Django
-server), and **`spotty-bunny`** (Spotlight-style search box; macOS needs
-extra `macos`, Windows needs extra `windows`). No repository checkout or
-`uv` is required at runtime.
+server), and **`spotty-bunny`** (Spotlight-style search box; PyObjC on macOS
+and pywin32 on Windows are installed automatically). No repository checkout or
+`uv` is required at runtime. The `bunnify[macos]` and `bunnify[windows]` extras
+from earlier releases still install, as empty aliases.
 
 Package on PyPI: [pypi.org/project/bunnify](https://pypi.org/project/bunnify/).
 
@@ -57,11 +58,9 @@ Summary of what it covers:
 3. **Chrome / Edge** — match `base_url` from `config.toml`  
    [CHROME_SETUP.md](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
 4. **Try it:** `bunnify gh` or address-bar keyword (e.g. `b gh`)
-5. **macOS Spotty Bunny** (optional) — `pipx install 'bunnify[macos]'` then
-   `bunnify spotty-bunny install`
+5. **macOS Spotty Bunny** (optional) — `bunnify spotty-bunny install`
    ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
-6. **Windows Spotty Bunny** (optional) — `pipx install 'bunnify[windows]'`
-   then `bunnify spotty-bunny install`
+6. **Windows Spotty Bunny** (optional) — `bunnify spotty-bunny install`
    ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
 
 ### Upgrade
@@ -170,7 +169,7 @@ at completion time, so Tab-completing shortcuts needs the server running.
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
 - **Spotty Bunny** — configurable-chord search box (`spotty-bunny`; auto
-  Control/Option by default, `spotty-bunny hotkey` to change; extra `macos`;
+  Control/Option by default, `spotty-bunny hotkey` to change;
   login LaunchAgent via `install` / `upgrade` / `uninstall`)
 - **macOS server LaunchAgent** — local setup installs `bunnify-server` under
   launchd (`bunnify-server install|status|upgrade|uninstall`)
@@ -186,7 +185,7 @@ Optional Spotlight-style search box. Hold the left (or right) copy of the
 chord's modifier key, then tap the other copy of the *same* modifier — for
 example, hold left Control and tap right Control. By default (`auto`) the
 modifier is chosen automatically from which keyboard is attached — see below
-to pin it or change it. Needs the `macos` extra (PyObjC).
+to pin it or change it. PyObjC is installed automatically on macOS.
 
 ### Hotkey chord
 
@@ -221,7 +220,7 @@ prefer one chord everywhere.
 ### Install
 
 ```bash
-pipx install 'bunnify[macos]'
+pipx install bunnify
 pipx ensurepath
 bunnify spotty-bunny install    # login LaunchAgent (TCC + KeepAlive)
 bunnify spotty-bunny status
@@ -269,8 +268,8 @@ Details:
 
 ## Spotty Bunny (Windows)
 
-Optional Spotlight-style search box, same overlay behavior as macOS. Needs
-the `windows` extra (pywin32).
+Optional Spotlight-style search box, same overlay behavior as macOS. pywin32
+is installed automatically on Windows.
 
 ### Hotkey chord
 
@@ -287,7 +286,7 @@ bunnify spotty-bunny hotkey control    # dual-Control (the only chord that works
 ### Install
 
 ```powershell
-pipx install 'bunnify[windows]'
+pipx install bunnify
 pipx ensurepath
 bunnify spotty-bunny install    # Scheduled Task (LogonTrigger + RestartOnFailure)
 bunnify spotty-bunny status
