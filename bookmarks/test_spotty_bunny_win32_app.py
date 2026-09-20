@@ -50,6 +50,7 @@ from app.spotty_bunny_win32_app import (
     overlay_origin,
     run_spotty_bunny_win32_app,
 )
+from bookmarks.win32_test_support import real_win32_available
 
 
 class SelectorForVkTests(SimpleTestCase):
@@ -1813,7 +1814,7 @@ class CreateOverlayWindowTests(SimpleTestCase):
         win32gui.SetWindowText.assert_called_with(101, "gh")
 
 
-@skipUnless(sys.platform == "win32", "needs the real user32/GDI")
+@skipUnless(real_win32_available(), "needs Windows with pywin32 (the windows extra)")
 class RealCreateOverlayWindowTests(SimpleTestCase):
     def test_the_real_overlay_builds_resizes_and_paints(self) -> None:
         # One test on purpose: it registers the overlay's window class, which
@@ -2288,7 +2289,7 @@ class OverlayWindowVisibilityTests(SimpleTestCase):
             win32gui.SetForegroundWindow.assert_not_called()
 
 
-@skipUnless(sys.platform == "win32", "needs the real user32")
+@skipUnless(real_win32_available(), "needs Windows with pywin32 (the windows extra)")
 class RealCenterOverlayTests(SimpleTestCase):
     def test_a_real_window_lands_centered_in_the_primary_work_area(self) -> None:
         import win32api  # pyright: ignore[reportMissingModuleSource]
@@ -2327,7 +2328,7 @@ class RealCenterOverlayTests(SimpleTestCase):
             win32gui.DestroyWindow(hwnd)
 
 
-@skipUnless(sys.platform == "win32", "needs the real user32")
+@skipUnless(real_win32_available(), "needs Windows with pywin32 (the windows extra)")
 class RealShowOverlayWindowTests(SimpleTestCase):
     def test_showing_a_real_window_never_raises(self) -> None:
         # The foreground lock decides whether focus is granted, which depends
@@ -2497,7 +2498,7 @@ class RunSpottyBunnyWin32AppTests(SimpleTestCase):
         set_timer.assert_any_call(123, TIMER_ID_UPDATE, UPDATE_CHECK_INTERVAL_MS)
 
 
-@skipUnless(sys.platform == "win32", "needs the real user32")
+@skipUnless(real_win32_available(), "needs Windows with pywin32 (the windows extra)")
 class SetWindowTimerTests(SimpleTestCase):
     def test_a_real_wm_timer_arrives(self) -> None:
         import win32con  # pyright: ignore[reportMissingModuleSource]
