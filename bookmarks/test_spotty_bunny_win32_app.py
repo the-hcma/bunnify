@@ -30,6 +30,7 @@ from app.spotty_bunny_win32_app import (
     WM_APP_TOGGLE,
     WM_APP_TRAY,
     SpottyBunnyWin32Controller,
+    _center_overlay,
     _create_overlay_window,
     _handle_tray_message,
     _make_overlay_wndproc,
@@ -38,6 +39,7 @@ from app.spotty_bunny_win32_app import (
     _set_window_timer,
     _show_context_menu,
     _show_overlay_window,
+    overlay_origin,
     run_spotty_bunny_win32_app,
 )
 
@@ -1370,8 +1372,11 @@ def _make_focus_modules(
     win32gui = _make_fake_win32gui()
     win32gui.error = _FakeGuiError
     win32gui.GetForegroundWindow = MagicMock(return_value=foreground)
+    win32gui.GetWindowRect = MagicMock(return_value=(0, 0, 420, 204))
     win32api = MagicMock()
     win32api.GetCurrentThreadId = MagicMock(return_value=this_tid)
+    win32api.MonitorFromPoint = MagicMock(return_value=77)
+    win32api.GetMonitorInfo = MagicMock(return_value={"Work": (0, 0, 1920, 1040)})
     win32process = MagicMock()
     win32process.GetWindowThreadProcessId = MagicMock(
         return_value=(foreground_tid, 4242)
@@ -1379,7 +1384,125 @@ def _make_focus_modules(
     return win32gui, win32api, win32process
 
 
+class OverlayOriginTests(SimpleTestCase):
+    def test_centered_horizontally_and_45_percent_down_the_free_height(self) -> None:
+        # Same math as macOS _center_panel: origin.y = visible.y + free * 0.55
+        # measured from the bottom, i.e. the top edge is 45% of the free
+        # height below the top of the work area.
+        x, y = overlay_origin((0, 0, 1920, 1080), 640, 76)
+        self.assertEqual(x, (1920 - 640) // 2)
+        self.assertEqual(y, int((1080 - 76) * 0.45))
+
+    def test_respects_a_work_area_that_does_not_start_at_the_origin(self) -> None:
+        # A left-docked taskbar shifts the work area's left edge.
+        x, y = overlay_origin((60, 30, 1980, 1110), 640, 76)
+        self.assertEqual(x, 60 + (1920 - 640) // 2)
+        self.assertEqual(y, 30 + int((1080 - 76) * 0.45))
+
+    def test_an_overlay_larger_than_the_work_area_is_pinned_to_the_corner(self) -> None:
+        self.assertEqual(overlay_origin((10, 20, 110, 220), 500, 500), (10, 20))
+
+    def test_taller_overlays_sit_higher(self) -> None:
+        compact = overlay_origin((0, 0, 1920, 1080), 640, 76)
+        expanded = overlay_origin((0, 0, 1920, 1080), 640, 300)
+        self.assertLess(expanded[1], compact[1])
+
+
+class CenterOverlayTests(SimpleTestCase):
+    def test_moves_the_window_to_the_computed_origin_keeping_its_size(self) -> None:
+        win32gui, win32api, _ = _make_focus_modules()
+        win32con = MagicMock()
+        _center_overlay(10, win32api=win32api, win32con=win32con, win32gui=win32gui)
+        x, y = overlay_origin((0, 0, 1920, 1040), 420, 204)
+        win32gui.SetWindowPos.assert_called_once_with(
+            10,
+            win32con.HWND_TOPMOST,
+            x,
+            y,
+            0,
+            0,
+            win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+        )
+
+    def test_uses_the_primary_monitor(self) -> None:
+        win32gui, win32api, _ = _make_focus_modules()
+        win32con = MagicMock()
+        _center_overlay(10, win32api=win32api, win32con=win32con, win32gui=win32gui)
+        win32api.MonitorFromPoint.assert_called_once_with(
+            (0, 0), win32con.MONITOR_DEFAULTTOPRIMARY
+        )
+
+    def test_a_monitor_query_failure_leaves_the_window_alone(self) -> None:
+        win32gui, win32api, _ = _make_focus_modules()
+        win32api.GetMonitorInfo = MagicMock(
+            side_effect=_FakeGuiError(0, "GetMonitorInfo", "")
+        )
+        _center_overlay(10, win32api=win32api, win32con=MagicMock(), win32gui=win32gui)
+        win32gui.SetWindowPos.assert_not_called()
+
+    def test_a_window_geometry_failure_leaves_the_window_alone(self) -> None:
+        # The other half of the fail-soft contract: GetWindowRect raises for a
+        # stale/invalid hwnd. It must stay inside the guard, not escape into
+        # the wndproc and keep the overlay from ever appearing.
+        win32gui, win32api, _ = _make_focus_modules()
+        win32gui.GetWindowRect = MagicMock(
+            side_effect=_FakeGuiError(6, "GetWindowRect", "")
+        )
+        _center_overlay(10, win32api=win32api, win32con=MagicMock(), win32gui=win32gui)
+        win32gui.SetWindowPos.assert_not_called()
+
+    def test_a_failed_move_is_not_fatal(self) -> None:
+        win32gui, win32api, _ = _make_focus_modules()
+        win32gui.SetWindowPos = MagicMock(
+            side_effect=_FakeGuiError(5, "SetWindowPos", "")
+        )
+        _center_overlay(10, win32api=win32api, win32con=MagicMock(), win32gui=win32gui)
+        win32gui.SetWindowPos.assert_called_once()
+
+
 class ShowOverlayWindowTests(SimpleTestCase):
+    def test_centers_before_showing(self) -> None:
+        win32gui, win32api, win32process = _make_focus_modules()
+        order: list[str] = []
+        win32gui.SetWindowPos = MagicMock(
+            side_effect=lambda *_a: order.append("position")
+        )
+        win32gui.ShowWindow = MagicMock(side_effect=lambda *_a: order.append("show"))
+        _show_overlay_window(
+            10,
+            20,
+            win32api=win32api,
+            win32con=MagicMock(),
+            win32gui=win32gui,
+            win32process=win32process,
+        )
+        self.assertEqual(order, ["position", "show"])
+
+    def test_moves_the_overlay_not_its_text_box_to_the_centered_origin(self) -> None:
+        # _show_overlay_window is handed the overlay and its Edit control; the
+        # move must target the overlay (10), not the Edit (20), and use the
+        # origin overlay_origin computes: (1920-420)//2 = 750 across, and
+        # int((1040-204)*0.45) = 376 down the 1920x1040 work area.
+        win32gui, win32api, win32process = _make_focus_modules()
+        win32con = MagicMock()
+        _show_overlay_window(
+            10,
+            20,
+            win32api=win32api,
+            win32con=win32con,
+            win32gui=win32gui,
+            win32process=win32process,
+        )
+        win32gui.SetWindowPos.assert_called_once_with(
+            10,
+            win32con.HWND_TOPMOST,
+            750,
+            376,
+            0,
+            0,
+            win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+        )
+
     def _show(self, win32gui, win32api, win32process) -> None:
         _show_overlay_window(
             10,
@@ -1531,6 +1654,23 @@ class OverlayWindowVisibilityTests(SimpleTestCase):
             win32gui.SetForegroundWindow.assert_called_once_with(100)
             win32gui.SetFocus.assert_called_once_with(101)
 
+    def test_showing_moves_the_overlay_window_to_the_centered_origin(self) -> None:
+        with self._create() as (controller, win32gui, win32con):
+            # Creation may position the window too; only the show is under test.
+            win32gui.SetWindowPos.reset_mock()
+            controller.set_window_visible(True)
+            # 100 is the overlay (not its Edit, 101). Its (0,0,640,76) rect in
+            # the 1920x1040 work area centers at x=640, y=int(964*0.45)=433.
+            win32gui.SetWindowPos.assert_called_once_with(
+                100,
+                win32con.HWND_TOPMOST,
+                640,
+                433,
+                0,
+                0,
+                win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+            )
+
     def test_a_refused_foreground_call_does_not_propagate_out_of_the_closure(
         self,
     ) -> None:
@@ -1546,6 +1686,45 @@ class OverlayWindowVisibilityTests(SimpleTestCase):
             controller.set_window_visible(False)
             win32gui.ShowWindow.assert_any_call(100, win32con.SW_HIDE)
             win32gui.SetForegroundWindow.assert_not_called()
+
+
+@skipUnless(sys.platform == "win32", "needs the real user32")
+class RealCenterOverlayTests(SimpleTestCase):
+    def test_a_real_window_lands_centered_in_the_primary_work_area(self) -> None:
+        import win32api  # pyright: ignore[reportMissingModuleSource]
+        import win32con  # pyright: ignore[reportMissingModuleSource]
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+
+        hwnd = win32gui.CreateWindowEx(
+            win32con.WS_EX_TOOLWINDOW,
+            "STATIC",
+            "t",
+            win32con.WS_POPUP,
+            0,
+            0,
+            300,
+            80,
+            0,
+            0,
+            0,
+            None,
+        )
+        try:
+            _center_overlay(
+                hwnd, win32api=win32api, win32con=win32con, win32gui=win32gui
+            )
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            monitor = win32api.MonitorFromPoint(
+                (0, 0), win32con.MONITOR_DEFAULTTOPRIMARY
+            )
+            work = win32api.GetMonitorInfo(monitor)["Work"]
+            self.assertEqual((left, top), overlay_origin(work, 300, 80))
+            self.assertEqual((right - left, bottom - top), (300, 80))
+            self.assertGreaterEqual(left, work[0])
+            self.assertLessEqual(right, work[2])
+            self.assertLessEqual(bottom, work[3])
+        finally:
+            win32gui.DestroyWindow(hwnd)
 
 
 @skipUnless(sys.platform == "win32", "needs the real user32")
