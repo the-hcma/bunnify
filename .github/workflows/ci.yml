@@ -117,11 +117,21 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Install shellcheck
+      # A single dropped connection here used to fail the job, and in a merge
+      # queue that ejects the PR (and any PRs stacked on it), so retry
+      # transient errors and verify the pinned release before installing it.
       run: |
-        curl --max-time 60 --fail --location --silent --show-error \
-          "https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz" \
-          | tar -xJ
-        sudo install "shellcheck-v0.10.0/shellcheck" /usr/local/bin/shellcheck
+        set -euo pipefail
+        version="0.10.0"
+        tarball="shellcheck-v${version}.linux.x86_64.tar.xz"
+        curl --fail --location --silent --show-error \
+          --max-time 60 --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
+          --output "${tarball}" \
+          "https://github.com/koalaman/shellcheck/releases/download/v${version}/${tarball}"
+        echo "6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87  ${tarball}" \
+          | sha256sum --check --strict
+        tar --extract --xz --file "${tarball}"
+        sudo install "shellcheck-v${version}/shellcheck" /usr/local/bin/shellcheck
 
     - name: Lint bash scripts with shellcheck
       run: bash .github/ci/shellcheck
