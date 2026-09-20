@@ -1432,6 +1432,145 @@ class ThemedOverlayWndProcTests(SimpleTestCase):
         win32gui.DefWindowProc.assert_called_once_with(1, _FakeWin32Con.WM_PAINT, 0, 0)
 
 
+class LogoClickTests(SimpleTestCase):
+    """Clicking the bunny logo opens About, like the macOS panel's logo."""
+
+    _WM_COMMAND = _FakeWin32Con.WM_COMMAND
+
+    def _wndproc(self, *, logo_hwnd: int = 555):
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        theme.logo_hwnd = logo_hwnd
+        controller = _make_controller()
+        controller.show_about = MagicMock()
+        controller.handle_completion_selected = MagicMock()
+        wndproc = _make_overlay_wndproc(
+            controller, theme=theme, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        return wndproc, win32gui, controller
+
+    def test_clicking_the_logo_opens_about(self) -> None:
+        wndproc, win32gui, controller = self._wndproc()
+        stn_clicked = 0
+        self.assertEqual(wndproc(1, self._WM_COMMAND, (stn_clicked << 16) | 9, 555), 0)
+        controller.show_about.assert_called_once_with()
+        win32gui.DefWindowProc.assert_not_called()
+
+    def test_a_click_from_some_other_control_does_not_open_about(self) -> None:
+        wndproc, win32gui, controller = self._wndproc()
+        wndproc(1, self._WM_COMMAND, 0 | 9, 999)
+        controller.show_about.assert_not_called()
+
+    def test_double_clicking_the_logo_is_not_a_completion_selection(self) -> None:
+        # STN_DBLCLK is 1, the same value as LBN_SELCHANGE. Without an explicit
+        # swallow it would be handled as "row 0 of the list was selected".
+        wndproc, win32gui, controller = self._wndproc()
+        stn_dblclk = 1
+        result = wndproc(1, self._WM_COMMAND, (stn_dblclk << 16) | 9, 555)
+        self.assertEqual(result, 0)
+        controller.handle_completion_selected.assert_not_called()
+        controller.show_about.assert_not_called()
+        win32gui.SendMessage.assert_not_called()
+
+    def test_a_real_list_selection_still_works(self) -> None:
+        wndproc, win32gui, controller = self._wndproc()
+        win32gui.SendMessage = MagicMock(return_value=2)
+        lbn_selchange = 1
+        wndproc(1, self._WM_COMMAND, (lbn_selchange << 16) | 9, 777)
+        controller.handle_completion_selected.assert_called_once_with(2)
+        controller.show_about.assert_not_called()
+
+    def test_before_the_logo_exists_no_control_matches(self) -> None:
+        # logo_hwnd starts at 0; a stray lparam of 0 must not open About.
+        wndproc, _gui, controller = self._wndproc(logo_hwnd=0)
+        wndproc(1, self._WM_COMMAND, 0, 0)
+        controller.show_about.assert_not_called()
+
+    def test_without_a_theme_the_logo_is_not_wired(self) -> None:
+        controller = _make_controller()
+        controller.show_about = MagicMock()
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            controller, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, self._WM_COMMAND, 0, 555)
+        controller.show_about.assert_not_called()
+
+
+class ShowAboutGateTests(SimpleTestCase):
+    """The overlay auto-hides when it loses activation, and creating About
+    activates About. Opening it from the overlay's own logo must not hide the
+    overlay it was clicked on."""
+
+    def _wndproc(self, controller):
+        return _make_overlay_wndproc(
+            controller, win32gui=_make_fake_win32gui(), win32con=_FakeWin32Con
+        )
+
+    def test_the_flag_is_set_only_while_the_popup_is_being_created(self) -> None:
+        controller = _make_controller()
+        seen: list[tuple[bool, bool]] = []
+
+        def create() -> int:
+            seen.append((controller.about_opening, controller.about_open))
+            return 42
+
+        controller.create_about_window = create
+        controller.show_about()
+        self.assertEqual(seen, [(True, False)])
+        self.assertFalse(controller.about_opening)
+        self.assertTrue(controller.about_open)
+        self.assertEqual(controller.about_hwnd, 42)
+
+    def test_a_failed_creation_leaves_both_flags_clear(self) -> None:
+        controller = _make_controller()
+        controller.create_about_window = MagicMock(side_effect=RuntimeError("boom"))
+        with self.assertRaises(RuntimeError):
+            controller.show_about()
+        self.assertFalse(controller.about_opening)
+        self.assertFalse(controller.about_open)
+        self.assertIsNone(controller.about_hwnd)
+
+    def test_the_overlay_stays_up_while_about_is_created(self) -> None:
+        controller = _make_controller()
+        controller.hide = MagicMock()
+        wndproc = self._wndproc(controller)
+
+        def create() -> int:
+            # What Windows does: activating About deactivates the overlay.
+            wndproc(1, _FakeWin32Con.WM_ACTIVATE, _FakeWin32Con.WA_INACTIVE, 0)
+            return 42
+
+        controller.create_about_window = create
+        controller.show_about()
+        controller.hide.assert_not_called()
+
+    def test_the_overlay_still_hides_on_deactivation_otherwise(self) -> None:
+        controller = _make_controller()
+        controller.hide = MagicMock()
+        wndproc = self._wndproc(controller)
+        wndproc(1, _FakeWin32Con.WM_ACTIVATE, _FakeWin32Con.WA_INACTIVE, 0)
+        controller.hide.assert_called_once()
+
+    def test_the_overlay_stays_up_while_about_is_open(self) -> None:
+        controller = _make_controller()
+        controller.hide = MagicMock()
+        controller.about_open = True
+        wndproc = self._wndproc(controller)
+        wndproc(1, _FakeWin32Con.WM_ACTIVATE, _FakeWin32Con.WA_INACTIVE, 0)
+        controller.hide.assert_not_called()
+
+    def test_a_failed_creation_does_not_suppress_later_auto_hide(self) -> None:
+        controller = _make_controller()
+        controller.hide = MagicMock()
+        controller.create_about_window = MagicMock(side_effect=RuntimeError("boom"))
+        wndproc = self._wndproc(controller)
+        with self.assertRaises(RuntimeError):
+            controller.show_about()
+        wndproc(1, _FakeWin32Con.WM_ACTIVATE, _FakeWin32Con.WA_INACTIVE, 0)
+        controller.hide.assert_called_once()
+
+
 class PaintOverlayTests(SimpleTestCase):
     def test_draws_the_panel_then_the_black_field(self) -> None:
         win32gui = _make_theme_win32gui()
@@ -1643,6 +1782,12 @@ class CreateOverlayWindowTests(SimpleTestCase):
         win32gui.SendMessage = MagicMock(return_value=0)
         win32gui.SetWindowLong = MagicMock(return_value="original-proc")
         win32con = MagicMock()
+        # Real winuser.h values where a test inspects style bits (a MagicMock
+        # `|` would hide a missing flag).
+        win32con.WS_CHILD = 0x40000000
+        win32con.WS_VISIBLE = 0x10000000
+        win32con.SS_ICON = 0x00000003
+        win32con.SS_NOTIFY = 0x00000100
         with patch(
             "app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32",
             return_value=555,
@@ -1719,6 +1864,31 @@ class CreateOverlayWindowTests(SimpleTestCase):
         _controller, win32gui, _con, hwnd, _icon = self._create()
         win32gui.CreateRoundRectRgn.assert_called_with(0, 0, 641, 77, 20, 20)
         self.assertEqual(win32gui.SetWindowRgn.call_args.args[0], hwnd)
+
+    def test_the_logo_reports_clicks_to_the_overlay(self) -> None:
+        _controller, win32gui, con, _hwnd, _icon = self._create()
+        logo_style = win32gui.CreateWindowEx.call_args_list[2].args[3]
+        self.assertTrue(logo_style & con.SS_NOTIFY, "SS_NOTIFY missing: no clicks")
+        self.assertEqual(logo_style & con.SS_ICON, con.SS_ICON)
+
+    def test_clicking_the_created_logo_opens_about(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        controller.show_about = MagicMock()
+        con.WM_COMMAND = 0x0111
+        # The window class was registered with the wndproc built for this
+        # overlay; the logo is the third window created (100 overlay, 101 edit,
+        # 102 logo).
+        wndproc = win32gui.WNDCLASS.return_value.lpfnWndProc
+        wndproc(100, con.WM_COMMAND, 0, 102)
+        controller.show_about.assert_called_once_with()
+
+    def test_clicking_another_child_does_not_open_about(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        controller.show_about = MagicMock()
+        con.WM_COMMAND = 0x0111
+        wndproc = win32gui.WNDCLASS.return_value.lpfnWndProc
+        wndproc(100, con.WM_COMMAND, 0, 103)  # the status line
+        controller.show_about.assert_not_called()
 
     def test_the_logo_is_the_bunny_on_the_panel_color(self) -> None:
         _controller, _gui, _con, _hwnd, make_icon = self._create()
@@ -1849,6 +2019,24 @@ class RealCreateOverlayWindowTests(SimpleTestCase):
             controller.set_status_text("")
             self.assertEqual(size(), (640, 76))
             self.assertTrue(win32gui.FindWindowEx(hwnd, 0, "EDIT", None))
+
+            # A real click on the real logo control reaches the overlay's
+            # wndproc as STN_CLICKED and opens About. The logo is the first
+            # STATIC child (created before the status line).
+            logo = win32gui.FindWindowEx(hwnd, 0, "STATIC", None)
+            self.assertTrue(logo)
+            controller.show_about = MagicMock()
+            controller.handle_completion_selected = MagicMock()
+            win32gui.SendMessage(logo, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, 0)
+            win32gui.SendMessage(logo, win32con.WM_LBUTTONUP, 0, 0)
+            controller.show_about.assert_called_once_with()
+            # A double-click reports STN_DBLCLK (== LBN_SELCHANGE): it must
+            # not be mistaken for a completion-list selection.
+            controller.show_about.reset_mock()
+            win32gui.SendMessage(
+                logo, win32con.WM_LBUTTONDBLCLK, win32con.MK_LBUTTON, 0
+            )
+            controller.handle_completion_selected.assert_not_called()
 
             # pywin32 swallows exceptions raised inside a wndproc (it only
             # prints them), so record what the paint handler did instead.
