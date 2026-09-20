@@ -8,6 +8,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from app.version import vcs_install_spec, vcs_install_spec_from
+
 MACOS_EXTRA_PACKAGE = "bunnify[macos]"
 MACOS_EXTRA_PROBE = (
     "import importlib.util, sys; "
@@ -72,6 +74,33 @@ def pipx_bunnify_path() -> Path | None:
                 return candidate.resolve()
             except OSError:
                 return candidate
+    return None
+
+
+def pipx_vcs_install_spec(*, pipx_home: Path | None = None) -> str | None:
+    """The pip VCS spec the pipx ``bunnify`` app was installed from, if any.
+
+    ``bunnify upgrade`` and ``onboard`` describe (and upgrade) the pipx app,
+    which is not necessarily the distribution running them (a developer may
+    run ``./scripts/bunnify`` from a checkout). So read the app's own
+    ``direct_url.json`` from its venv; None when that install is not from a
+    VCS URL. Only when no pipx venv can be found is the running distribution
+    consulted instead.
+    """
+    python = pipx_bunnify_venv_python(pipx_home=pipx_home)
+    if python is None:
+        return vcs_install_spec()
+    venv = python.parent.parent
+    patterns = (
+        "Lib/site-packages/bunnify-*.dist-info/direct_url.json",
+        "lib/python*/site-packages/bunnify-*.dist-info/direct_url.json",
+    )
+    for pattern in patterns:
+        for record in sorted(venv.glob(pattern)):
+            try:
+                return vcs_install_spec_from(record.read_text(encoding="utf-8"))
+            except OSError:
+                continue
     return None
 
 

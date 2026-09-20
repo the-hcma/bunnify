@@ -28,6 +28,8 @@ from app.version import (
     git_commit,
     package_version,
     running_command_path,
+    vcs_install_spec,
+    vcs_install_spec_from,
 )
 
 
@@ -134,6 +136,65 @@ class BuildInfoTests(SimpleTestCase):
                 "abc123def456",
             )
         lookup.assert_not_called()
+
+    def _spec_for(self, raw: str | None) -> str | None:
+        recorded = mock.Mock()
+        recorded.read_text.return_value = raw
+        with mock.patch("app.version.distribution", return_value=recorded):
+            return vcs_install_spec()
+
+    def test_vcs_install_spec_uses_the_requested_revision(self) -> None:
+        raw = json.dumps(
+            {
+                "url": "https://github.com/the-hcma/bunnify",
+                "vcs_info": {
+                    "commit_id": "0142e9ee214863482758b268e67c8e1e930a45bc",
+                    "requested_revision": "main",
+                    "vcs": "git",
+                },
+            }
+        )
+        self.assertEqual(
+            self._spec_for(raw), "git+https://github.com/the-hcma/bunnify@main"
+        )
+
+    def test_vcs_install_spec_falls_back_to_the_commit_then_to_no_revision(
+        self,
+    ) -> None:
+        url = "https://github.com/the-hcma/bunnify"
+        pinned = json.dumps({"url": url, "vcs_info": {"commit_id": "abc123"}})
+        self.assertEqual(self._spec_for(pinned), f"git+{url}@abc123")
+        bare = json.dumps({"url": url, "vcs_info": {"vcs": "git"}})
+        self.assertEqual(self._spec_for(bare), f"git+{url}")
+
+    def test_vcs_install_spec_is_none_for_other_installs_and_bad_records(self) -> None:
+        url = "https://github.com/the-hcma/bunnify"
+        for label, raw in (
+            ("no file", None),
+            ("empty", ""),
+            ("not json", "{"),
+            ("editable", json.dumps({"url": "file:///x", "dir_info": {"editable": 1}})),
+            ("no url", json.dumps({"vcs_info": {"vcs": "git"}})),
+            ("empty url", json.dumps({"url": "", "vcs_info": {"vcs": "git"}})),
+            ("vcs_info not an object", json.dumps({"url": url, "vcs_info": "git"})),
+            ("not an object", "[]"),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(self._spec_for(raw))
+
+    def test_vcs_install_spec_from_handles_missing_text(self) -> None:
+        self.assertIsNone(vcs_install_spec_from(None))
+        self.assertIsNone(vcs_install_spec_from(""))
+        self.assertEqual(
+            vcs_install_spec_from(
+                json.dumps({"url": "https://x/y", "vcs_info": {"vcs": "git"}})
+            ),
+            "git+https://x/y",
+        )
+
+    def test_vcs_install_spec_is_none_when_the_package_is_not_installed(self) -> None:
+        with mock.patch("app.version.distribution", side_effect=PackageNotFoundError):
+            self.assertIsNone(vcs_install_spec())
 
     def test_package_version_prefers_embedded(self) -> None:
         with mock.patch(

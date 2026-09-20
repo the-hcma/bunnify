@@ -968,6 +968,10 @@ class ConfigUnitTests(TestCase):
         self._ensure_spotty_mock = self.enterContext(
             patch("app.cli._ensure_spotty_after_setup")
         )
+        # The upgrade tests below expect the PyPI path: never read this machine's
+        # real pipx install, which may be a git install. Tests that want one
+        # patch their own spec.
+        self.enterContext(patch("app.cli._pipx_vcs_install_spec", return_value=None))
         # Isolate config/data dirs for the whole class so environ=None or partial
         # environ dicts cannot resolve persist_local_port to the real home.
         self._xdg_tmpdir = tempfile.TemporaryDirectory()
@@ -4641,6 +4645,43 @@ class ConfigUnitTests(TestCase):
         self.assertEqual(run.call_args.args[0], ["/usr/bin/pipx", "upgrade", "bunnify"])
         refresh_agents.assert_called_once()
         self.assertTrue(refresh_agents.call_args.kwargs["include_spotty"])
+
+    def test_upgrade_of_a_git_install_does_not_promise_a_pypi_version(self) -> None:
+        import subprocess
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import main
+
+        completed = subprocess.CompletedProcess(
+            ["pipx", "upgrade", "bunnify"], 0, "", ""
+        )
+        spec = "git+https://github.com/the-hcma/bunnify@main"
+        with (
+            patch("app.cli.sys.platform", "linux"),
+            patch("app.cli.is_source_checkout", return_value=False),
+            patch("app.cli._pipx_vcs_install_spec", return_value=spec),
+            patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli.macos_extra_installed", return_value=False),
+            patch("app.cli._pypi_latest_version", return_value="9.9.9") as pypi,
+            patch(
+                "app.cli._pipx_bunnify_path",
+                return_value=Path("/Users/me/.local/bin/bunnify"),
+            ),
+            patch(
+                "app.cli._read_executable_build",
+                side_effect=["0.15.0 (aaaaaaaaaaaa)", "0.15.0 (bbbbbbbbbbbb)"],
+            ),
+            patch("app.cli.subprocess.run", return_value=completed),
+        ):
+            result = CliRunner().invoke(main, ["upgrade"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        pypi.assert_not_called()
+        self.assertIn(f"To:   re-install from {spec}", result.output)
+        self.assertNotIn("PyPI latest", result.output)
+        self.assertNotIn("9.9.9", result.output)
+        self.assertIn("To:   0.15.0 (bbbbbbbbbbbb)", result.output)
 
     def test_upgrade_restores_macos_extra_after_pipx_upgrade(self) -> None:
         import subprocess

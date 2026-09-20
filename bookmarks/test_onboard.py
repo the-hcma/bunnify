@@ -23,6 +23,11 @@ _FIXTURE_PYPI_LATEST_VERSION = "0.0.0+test-fixture-pypi-latest"
 
 
 class OnboardTests(SimpleTestCase):
+    def setUp(self) -> None:
+        # Never read this machine's real pipx install: tests that want a git
+        # install patch their own spec.
+        self.enterContext(patch("app.onboard.pipx_vcs_install_spec", return_value=None))
+
     def test_detect_install_state_marks_upgrade_when_pypi_is_newer(self) -> None:
         with (
             patch(
@@ -41,6 +46,68 @@ class OnboardTests(SimpleTestCase):
             )
         self.assertTrue(state.upgrade_available)
         self.assertEqual(state.pypi_latest, _FIXTURE_PYPI_LATEST_VERSION)
+
+    def test_detect_install_state_skips_pypi_for_a_git_install(self) -> None:
+        with (
+            patch(
+                "app.onboard.get_build_info",
+                return_value=(_FIXTURE_INSTALLED_VERSION, _FIXTURE_COMMIT),
+            ),
+            patch(
+                "app.onboard.pipx_vcs_install_spec",
+                return_value="git+https://github.com/the-hcma/bunnify@main",
+            ),
+            patch(
+                "app.onboard.pypi_latest_version",
+                return_value=_FIXTURE_INSTALLED_VERSION,
+            ) as pypi,
+        ):
+            state = detect_install_state(read_executable_build=lambda _path: None)
+        pypi.assert_not_called()
+        self.assertIsNone(state.pypi_latest)
+        self.assertFalse(state.upgrade_available)
+        self.assertEqual(
+            state.vcs_install, "git+https://github.com/the-hcma/bunnify@main"
+        )
+
+    def test_detect_install_state_has_no_vcs_install_by_default(self) -> None:
+        with (
+            patch(
+                "app.onboard.get_build_info",
+                return_value=(_FIXTURE_INSTALLED_VERSION, _FIXTURE_COMMIT),
+            ),
+            patch("app.onboard.pipx_vcs_install_spec", return_value=None),
+            patch(
+                "app.onboard.pypi_latest_version",
+                return_value=_FIXTURE_PYPI_LATEST_VERSION,
+            ),
+        ):
+            state = detect_install_state(read_executable_build=lambda _path: None)
+        self.assertIsNone(state.vcs_install)
+        self.assertEqual(state.pypi_latest, _FIXTURE_PYPI_LATEST_VERSION)
+
+    def test_summary_names_the_git_source_instead_of_pypi(self) -> None:
+        state = InstallState(
+            bookmarks_ready=True,
+            command_path="C:\\bin\\bunnify.exe",
+            macos_extra=False,
+            macos_platform=False,
+            pipx_app_path=None,
+            pipx_version_label=None,
+            preferences_ready=True,
+            pypi_latest="0.15.0",
+            server_agent_installed=False,
+            source_checkout=False,
+            spotty_agent_installed=False,
+            upgrade_available=False,
+            version_label="0.15.0 (0142e9ee2148)",
+            vcs_install="git+https://github.com/the-hcma/bunnify@main",
+        )
+        text = format_onboarding_text(state)
+        self.assertIn(
+            "Installed from git: git+https://github.com/the-hcma/bunnify@main", text
+        )
+        self.assertNotIn("PyPI latest", text)
 
     def test_format_onboarding_text_includes_install_summary(self) -> None:
         state = InstallState(
