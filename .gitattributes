@@ -1,0 +1,8 @@
+# Line endings must not depend on each contributor's global git config.
+#
+# Git for Windows ships with core.autocrlf=true, which checks every text file
+# out with CRLF. Shell scripts then break (`#!/usr/bin/env bash\r`), shellcheck
+# fails on every one of them (SC1017), and marker files read with `cat`
+# (.github/stacking-tool) stop comparing equal. The repository stores LF, so
+# check out LF everywhere; text=auto still leaves binary files alone.
+* text=auto eol=lf
