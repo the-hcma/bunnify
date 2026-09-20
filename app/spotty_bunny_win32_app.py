@@ -149,6 +149,7 @@ UNINSTALL_INFORMATIVE_WIN32 = (
 )
 
 _LBN_SELCHANGE = 1  # winuser.h: fired when a LISTBOX's selection changes.
+_STN_CLICKED = 0  # winuser.h: a STATIC with SS_NOTIFY was clicked.
 
 
 class _OverlayTheme:
@@ -164,6 +165,8 @@ class _OverlayTheme:
         self.black_brush = win32gui.CreateSolidBrush(_rgb(0, 0, 0))
         self.fill_brush = win32gui.CreateSolidBrush(_rgb(*PANEL_FILL_RGB))
         self.layout = overlay_layout()
+        # Set once the logo control exists; the wndproc matches clicks by it.
+        self.logo_hwnd = 0
 
 
 def _selector_for_vk(vk_code: int) -> str | None:
@@ -217,6 +220,7 @@ class SpottyBunnyWin32Controller:
 
         self.visible = False
         self.about_open = False
+        self.about_opening = False
         self._resolving = False
         self._chord = ChordTracker()
         self._history = HistoryNavigator(load_history_lines())
@@ -315,7 +319,16 @@ class SpottyBunnyWin32Controller:
         """
         if self.about_open:
             return
-        self.about_hwnd = self.create_about_window()
+        # Creating the popup activates it, which deactivates the overlay
+        # (WM_ACTIVATE) before about_open can be set. When About was opened
+        # from the overlay's own logo, that would hide the overlay it was
+        # clicked on, so gate the auto-hide during creation only; about_open
+        # itself still flips only after creation succeeds.
+        self.about_opening = True
+        try:
+            self.about_hwnd = self.create_about_window()
+        finally:
+            self.about_opening = False
         self.about_open = True
         logger.info("show About panel")
 
@@ -999,13 +1012,16 @@ def _create_overlay_window(
         0,
         "STATIC",
         "",
-        win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_ICON,
+        # SS_NOTIFY makes the STATIC report clicks (STN_CLICKED) to its parent,
+        # which opens About, like the bunny button on the macOS panel.
+        win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_ICON | win32con.SS_NOTIFY,
         *layout.logo,
         hwnd,
         0,
         module,
         None,
     )
+    theme.logo_hwnd = logo_hwnd
     status_hwnd = win32gui.CreateWindowEx(
         0,
         "STATIC",
@@ -1296,14 +1312,23 @@ def _make_overlay_wndproc(
                 controller.check_for_updates()
             return 0
         if msg == win32con.WM_ACTIVATE and wparam == win32con.WA_INACTIVE:
-            if not controller.about_open:
+            if not (controller.about_open or controller.about_opening):
                 controller.hide()
             return 0
         if msg == win32con.WM_COMMAND:
             # EN_CHANGE's (0x0300) and LBN_SELCHANGE's (1) notification
             # codes don't overlap, so no need to also check lparam's
             # control HWND against a specific edit/listbox handle here.
+            # STN_CLICKED is 0, which other controls could also send, so the
+            # logo is identified by its own HWND (lparam). Its other
+            # notifications must be swallowed here too: STN_DBLCLK is 1, the
+            # same value as LBN_SELCHANGE, and would otherwise be handled
+            # below as a completion-list selection.
             notify_code = (wparam >> 16) & 0xFFFF
+            if theme is not None and theme.logo_hwnd and lparam == theme.logo_hwnd:
+                if notify_code == _STN_CLICKED:
+                    controller.show_about()
+                return 0
             if notify_code == win32con.EN_CHANGE:
                 controller.handle_field_changed()
                 return 0
