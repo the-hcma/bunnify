@@ -49,6 +49,7 @@ def _make_fake_win32_modules() -> tuple[ModuleType, ModuleType, ModuleType]:
     win32gui.FillRect = MagicMock()
     win32gui.DeleteObject = MagicMock()
     win32gui.PatBlt = MagicMock()
+    win32gui.DrawText = MagicMock(return_value=(0, (0, 0, 0, 0)))
     win32gui.DeleteDC = MagicMock()
     win32gui.CreateIconIndirect = MagicMock(return_value=42)
     win32gui.RoundRect = MagicMock()
@@ -82,9 +83,53 @@ class MakeSpottyBunnyIconWin32Tests(SimpleTestCase):
             icon = make_spotty_bunny_icon_win32(16, outdated=False)
         self.assertEqual(icon, 42)
         fake_dc.SelectObject.assert_called_once()
-        fake_dc.DrawText.assert_called_once()
         win32gui.CreateIconIndirect.assert_called_once()
         win32gui.RoundRect.assert_not_called()
+
+    def test_draws_the_emoji_with_the_wide_character_api(self) -> None:
+        # Regression: win32ui's DrawText takes ANSI text, so the emoji's UTF-8
+        # bytes were drawn as mojibake ("ðŸ°"). win32gui.DrawText is wide-char.
+        win32gui, win32con, win32ui = _make_fake_win32_modules()
+        fake_dc = MagicMock()
+        win32ui.CreateFont = MagicMock(return_value=object())
+        win32ui.CreateDCFromHandle = MagicMock(return_value=fake_dc)
+        with patch.dict(
+            sys.modules,
+            {"win32gui": win32gui, "win32con": win32con, "win32ui": win32ui},
+        ):
+            make_spotty_bunny_icon_win32(16)
+        fake_dc.DrawText.assert_not_called()
+        win32gui.DrawText.assert_called_once()
+        drawn_hdc, text = win32gui.DrawText.call_args.args[:2]
+        self.assertEqual(drawn_hdc, 2)  # the memory DC
+        self.assertEqual(text, "🐰")
+
+    def test_background_and_glyph_colors_are_applied(self) -> None:
+        win32gui, win32con, win32ui = _make_fake_win32_modules()
+        fake_dc = MagicMock()
+        win32ui.CreateFont = MagicMock(return_value=object())
+        win32ui.CreateDCFromHandle = MagicMock(return_value=fake_dc)
+        with patch.dict(
+            sys.modules,
+            {"win32gui": win32gui, "win32con": win32con, "win32ui": win32ui},
+        ):
+            make_spotty_bunny_icon_win32(
+                16, background_rgb=(0x5C, 0x8C, 0xD6), glyph_rgb=(0xFF, 0xFF, 0xFF)
+            )
+        win32gui.CreateSolidBrush.assert_any_call(_rgb(0x5C, 0x8C, 0xD6))
+        win32gui.GetSysColor.assert_not_called()
+        fake_dc.SetTextColor.assert_called_once_with(0xFFFFFF)
+
+    def test_default_background_is_the_system_window_color(self) -> None:
+        win32gui, win32con, win32ui = _make_fake_win32_modules()
+        win32ui.CreateFont = MagicMock(return_value=object())
+        win32ui.CreateDCFromHandle = MagicMock(return_value=MagicMock())
+        with patch.dict(
+            sys.modules,
+            {"win32gui": win32gui, "win32con": win32con, "win32ui": win32ui},
+        ):
+            make_spotty_bunny_icon_win32(16)
+        win32gui.GetSysColor.assert_called_once_with(win32con.COLOR_WINDOW)
 
     def test_does_not_delete_the_borrowed_memory_dc_through_the_wrapper(self) -> None:
         # win32ui.CreateDCFromHandle only wraps mem_dc; DeleteDC() on the
@@ -134,6 +179,17 @@ class RealWin32IconTests(SimpleTestCase):
         import win32gui  # pyright: ignore[reportMissingModuleSource]
 
         icon = make_spotty_bunny_icon_win32(16)
+        try:
+            self.assertTrue(icon)
+        finally:
+            win32gui.DestroyIcon(icon)
+
+    def test_builds_a_real_icon_with_custom_colors(self) -> None:
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+
+        icon = make_spotty_bunny_icon_win32(
+            40, background_rgb=(0x5C, 0x8C, 0xD6), glyph_rgb=(0xFF, 0xFF, 0xFF)
+        )
         try:
             self.assertTrue(icon)
         finally:

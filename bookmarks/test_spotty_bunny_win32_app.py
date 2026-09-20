@@ -10,12 +10,14 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
 
 from app.spotty_bunny_complete import CompletionRow
+from app.spotty_bunny_icon_win32 import _rgb
 from app.spotty_bunny_io import ImmediateIo
 from app.spotty_bunny_menu import CHECK_FOR_UPDATES_STATUS, logo_menu_specs
 from app.spotty_bunny_status import SHORTCUTS_LOAD_FAILED
 from app.spotty_bunny_tap_health import TAP_HEALTH_CHECK_INTERVAL_S
 from app.spotty_bunny_update import UpdateStatus
 from app.spotty_bunny_win32_app import (
+    FIELD_PLACEHOLDER,
     TIMER_ID_HEALTH,
     TIMER_ID_UPDATE,
     UPDATE_CHECK_INTERVAL_MS,
@@ -31,14 +33,20 @@ from app.spotty_bunny_win32_app import (
     WM_APP_TRAY,
     SpottyBunnyWin32Controller,
     _center_overlay,
+    _create_font,
     _create_overlay_window,
+    _draw_placeholder,
     _handle_tray_message,
     _make_overlay_wndproc,
+    _OverlayTheme,
+    _paint_overlay,
     _register_overlay_class,
     _selector_for_vk,
     _set_window_timer,
     _show_context_menu,
     _show_overlay_window,
+    _subclass_edit_control,
+    overlay_layout,
     overlay_origin,
     run_spotty_bunny_win32_app,
 )
@@ -1136,6 +1144,19 @@ class _FakeWin32Con:
     TPM_LEFTALIGN = 0x0000
     TPM_RETURNCMD = 0x0100
     COLOR_WINDOW = 5
+    DT_LEFT = 0x0000
+    DT_NOPREFIX = 0x0800
+    DT_SINGLELINE = 0x0020
+    DT_VCENTER = 0x0004
+    GWL_WNDPROC = -4
+    NULL_PEN = 8
+    PS_SOLID = 0
+    TRANSPARENT = 1
+    WM_CTLCOLOREDIT = 0x0133
+    WM_CTLCOLORLISTBOX = 0x0134
+    WM_CTLCOLORSTATIC = 0x0138
+    WM_KEYDOWN = 0x0100
+    WM_PAINT = 0x000F
 
 
 def _make_fake_win32gui() -> MagicMock:
@@ -1280,6 +1301,585 @@ class OverlayWndProcTests(SimpleTestCase):
         )
         wndproc(1, 0x9999, 2, 3)
         win32gui.DefWindowProc.assert_called_once_with(1, 0x9999, 2, 3)
+
+
+class OverlayLayoutTests(SimpleTestCase):
+    def test_compact_panel_matches_the_macos_size(self) -> None:
+        layout = overlay_layout()
+        self.assertEqual((layout.panel_width, layout.panel_height), (640, 76))
+
+    def test_field_and_logo_share_the_first_row_without_overlapping(self) -> None:
+        layout = overlay_layout()
+        field_x, field_y, field_w, field_h = layout.field
+        logo_x, logo_y, logo_w, logo_h = layout.logo
+        self.assertEqual((field_x, field_y, field_h), (10, 10, 56))
+        self.assertEqual(field_x + field_w + 8, logo_x)  # LOGO_GAP
+        self.assertEqual(logo_x + logo_w + 10, layout.panel_width)  # PANEL_INSET
+        self.assertEqual(logo_y + logo_h // 2, field_y + field_h // 2)
+
+    def test_the_text_box_sits_inside_the_field_with_a_text_inset(self) -> None:
+        layout = overlay_layout()
+        field_x, field_y, field_w, field_h = layout.field
+        edit_x, edit_y, edit_w, edit_h = layout.edit
+        self.assertEqual(edit_x - field_x, 12)
+        self.assertEqual(field_x + field_w - (edit_x + edit_w), 12)
+        self.assertEqual(edit_y + edit_h // 2, field_y + field_h // 2)
+
+    def test_status_line_adds_its_height_only_while_visible(self) -> None:
+        compact = overlay_layout()
+        with_status = overlay_layout(status_visible=True)
+        self.assertEqual(with_status.panel_height - compact.panel_height, 8 + 24)
+
+    def test_completion_list_adds_its_height_only_while_visible(self) -> None:
+        compact = overlay_layout()
+        with_rows = overlay_layout(rows_visible=True)
+        self.assertEqual(with_rows.panel_height - compact.panel_height, 8 + 140)
+
+    def test_rows_stack_top_to_bottom_field_status_list(self) -> None:
+        layout = overlay_layout(rows_visible=True, status_visible=True)
+        field_bottom = layout.field[1] + layout.field[3]
+        self.assertEqual(layout.status[1], field_bottom + 8)
+        self.assertEqual(layout.rows[1], layout.status[1] + layout.status[3] + 8)
+        self.assertEqual(layout.panel_height, layout.rows[1] + layout.rows[3] + 10)
+
+    def test_list_moves_up_when_there_is_no_status_line(self) -> None:
+        with_status = overlay_layout(rows_visible=True, status_visible=True)
+        without = overlay_layout(rows_visible=True)
+        self.assertLess(without.rows[1], with_status.rows[1])
+
+    def test_the_field_row_never_moves(self) -> None:
+        self.assertEqual(
+            overlay_layout().field,
+            overlay_layout(rows_visible=True, status_visible=True).field,
+        )
+
+
+def _make_theme_win32gui() -> MagicMock:
+    win32gui = _make_fake_win32gui()
+    win32gui.CreateSolidBrush = MagicMock(side_effect=lambda color: ("brush", color))
+    win32gui.BeginPaint = MagicMock(return_value=("hdc", "paint"))
+    win32gui.GetClientRect = MagicMock(return_value=(0, 0, 640, 76))
+    win32gui.CreatePen = MagicMock(return_value="pen")
+    win32gui.GetStockObject = MagicMock(return_value="null-pen")
+    win32gui.SelectObject = MagicMock(return_value="old")
+    return win32gui
+
+
+class OverlayThemeTests(SimpleTestCase):
+    def test_brushes_use_the_macos_panel_fill_and_black(self) -> None:
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        self.assertEqual(theme.fill_brush, ("brush", _rgb(0x5C, 0x8C, 0xD6)))
+        self.assertEqual(theme.black_brush, ("brush", 0))
+
+    def test_starts_with_the_compact_layout(self) -> None:
+        self.assertEqual(
+            _OverlayTheme(win32gui=_make_theme_win32gui()).layout, overlay_layout()
+        )
+
+
+class ThemedRegisterOverlayClassTests(SimpleTestCase):
+    def test_the_class_background_is_the_panel_fill_brush(self) -> None:
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        _register_overlay_class(
+            _make_controller(), theme=theme, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        self.assertEqual(win32gui.WNDCLASS.return_value.hbrBackground, theme.fill_brush)
+
+
+class ThemedOverlayWndProcTests(SimpleTestCase):
+    def _wndproc(self):
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        wndproc = _make_overlay_wndproc(
+            _make_controller(), theme=theme, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        return wndproc, win32gui, theme
+
+    def test_wm_paint_paints_the_chrome_and_reports_handled(self) -> None:
+        wndproc, win32gui, _theme = self._wndproc()
+        self.assertEqual(wndproc(1, _FakeWin32Con.WM_PAINT, 0, 0), 0)
+        win32gui.BeginPaint.assert_called_once_with(1)
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+        win32gui.DefWindowProc.assert_not_called()
+
+    def test_edit_and_list_are_white_on_black(self) -> None:
+        for message in (
+            _FakeWin32Con.WM_CTLCOLOREDIT,
+            _FakeWin32Con.WM_CTLCOLORLISTBOX,
+        ):
+            wndproc, win32gui, theme = self._wndproc()
+            self.assertEqual(wndproc(1, message, 555, 0), theme.black_brush)
+            win32gui.SetTextColor.assert_called_once_with(555, 0xFFFFFF)
+            win32gui.SetBkColor.assert_called_once_with(555, 0)
+
+    def test_static_text_is_transparent_status_colored_on_the_panel(self) -> None:
+        wndproc, win32gui, theme = self._wndproc()
+        self.assertEqual(
+            wndproc(1, _FakeWin32Con.WM_CTLCOLORSTATIC, 555, 0), theme.fill_brush
+        )
+        win32gui.SetBkMode.assert_called_once_with(555, _FakeWin32Con.TRANSPARENT)
+        win32gui.SetTextColor.assert_called_once_with(555, _rgb(0xFF, 0xC2, 0x85))
+
+    def test_without_a_theme_paint_falls_through_to_the_default_proc(self) -> None:
+        win32gui = _make_fake_win32gui()
+        wndproc = _make_overlay_wndproc(
+            _make_controller(), win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc(1, _FakeWin32Con.WM_PAINT, 0, 0)
+        win32gui.DefWindowProc.assert_called_once_with(1, _FakeWin32Con.WM_PAINT, 0, 0)
+
+
+class PaintOverlayTests(SimpleTestCase):
+    def test_draws_the_panel_then_the_black_field(self) -> None:
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        panel, field = win32gui.RoundRect.call_args_list
+        self.assertEqual(panel.args, ("hdc", 1, 1, 639, 75, 20, 20))
+        field_x, field_y, field_w, field_h = theme.layout.field
+        self.assertEqual(
+            field.args,
+            (
+                "hdc",
+                field_x,
+                field_y,
+                field_x + field_w + 1,
+                field_y + field_h + 1,
+                16,
+                16,
+            ),
+        )
+
+    def test_selects_the_fill_then_the_black_brush(self) -> None:
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        selected = [call.args[1] for call in win32gui.SelectObject.call_args_list]
+        self.assertLess(
+            selected.index(theme.fill_brush), selected.index(theme.black_brush)
+        )
+
+    def _recording_win32gui(self) -> tuple[MagicMock, list[tuple[str, object]]]:
+        win32gui = _make_theme_win32gui()
+        order: list[tuple[str, object]] = []
+
+        def select(_dc, obj):
+            order.append(("select", obj))
+            return "old"
+
+        win32gui.SelectObject = MagicMock(side_effect=select)
+        win32gui.DeleteObject = MagicMock(
+            side_effect=lambda obj: order.append(("delete", obj))
+        )
+        return win32gui, order
+
+    def test_frame_pen_is_released_and_paint_ended_even_on_error(self) -> None:
+        # A painting error must not leak the 2px frame pen or leave the DC
+        # holding our objects: the cleanup lives in the finally block.
+        win32gui, order = self._recording_win32gui()
+        win32gui.RoundRect = MagicMock(side_effect=RuntimeError("boom"))
+        theme = _OverlayTheme(win32gui=win32gui)
+        with self.assertRaises(RuntimeError):
+            _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.DeleteObject.assert_called_once_with("pen")
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+        # Deselect before deleting: GDI will not delete a selected object.
+        last_restore = max(
+            i for i, step in enumerate(order) if step == ("select", "old")
+        )
+        self.assertLess(last_restore, order.index(("delete", "pen")))
+
+    def test_the_original_pen_and_brush_are_restored_after_painting(self) -> None:
+        win32gui, order = self._recording_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        # Both original objects are selected back before the pen is deleted.
+        restores = [i for i, step in enumerate(order) if step == ("select", "old")]
+        self.assertEqual(len(restores), 2)
+        self.assertLess(max(restores), order.index(("delete", "pen")))
+
+    def test_a_failure_before_the_pen_exists_deletes_nothing(self) -> None:
+        win32gui, _order = self._recording_win32gui()
+        win32gui.GetClientRect = MagicMock(side_effect=RuntimeError("stale hdc"))
+        theme = _OverlayTheme(win32gui=win32gui)
+        with self.assertRaises(RuntimeError):
+            _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.DeleteObject.assert_not_called()
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+
+    def test_a_failed_pen_creation_deletes_nothing(self) -> None:
+        win32gui, _order = self._recording_win32gui()
+        win32gui.CreatePen = MagicMock(side_effect=RuntimeError("no pen"))
+        theme = _OverlayTheme(win32gui=win32gui)
+        with self.assertRaises(RuntimeError):
+            _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.DeleteObject.assert_not_called()
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+
+    def test_paint_is_ended_even_if_the_cleanup_itself_fails(self) -> None:
+        win32gui, _order = self._recording_win32gui()
+        win32gui.DeleteObject = MagicMock(side_effect=RuntimeError("cleanup boom"))
+        theme = _OverlayTheme(win32gui=win32gui)
+        with self.assertRaises(RuntimeError):
+            _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.EndPaint.assert_called_once_with(1, "paint")
+
+    def test_frame_pen_is_deleted(self) -> None:
+        win32gui = _make_theme_win32gui()
+        theme = _OverlayTheme(win32gui=win32gui)
+        _paint_overlay(1, theme, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.DeleteObject.assert_called_once_with("pen")
+
+
+class DrawPlaceholderTests(SimpleTestCase):
+    def _win32gui(self, *, text_length: int) -> MagicMock:
+        win32gui = _make_fake_win32gui()
+        win32gui.GetWindowTextLength = MagicMock(return_value=text_length)
+        win32gui.GetDC = MagicMock(return_value="hdc")
+        win32gui.GetClientRect = MagicMock(return_value=(0, 0, 500, 30))
+        win32gui.SelectObject = MagicMock(return_value="old-font")
+        return win32gui
+
+    def test_draws_the_hint_into_an_empty_field(self) -> None:
+        win32gui = self._win32gui(text_length=0)
+        _draw_placeholder(5, 9, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.SetTextColor.assert_called_once_with("hdc", _rgb(0x8C, 0x8C, 0x8C))
+        args = win32gui.DrawText.call_args.args
+        self.assertEqual(args[:4], ("hdc", FIELD_PLACEHOLDER, -1, (0, 0, 500, 30)))
+        win32gui.SelectObject.assert_any_call("hdc", 9)
+        win32gui.SelectObject.assert_any_call("hdc", "old-font")
+        win32gui.ReleaseDC.assert_called_once_with(5, "hdc")
+
+    def test_draws_nothing_once_the_user_has_typed(self) -> None:
+        win32gui = self._win32gui(text_length=2)
+        _draw_placeholder(5, 9, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.GetDC.assert_not_called()
+        win32gui.DrawText.assert_not_called()
+
+    def test_the_dc_is_released_even_if_drawing_fails(self) -> None:
+        win32gui = self._win32gui(text_length=0)
+        win32gui.DrawText = MagicMock(side_effect=RuntimeError("boom"))
+        with self.assertRaises(RuntimeError):
+            _draw_placeholder(5, 9, win32con=_FakeWin32Con, win32gui=win32gui)
+        win32gui.ReleaseDC.assert_called_once_with(5, "hdc")
+
+
+class SubclassEditControlTests(SimpleTestCase):
+    def _subclass(self, *, font):
+        win32gui = _make_fake_win32gui()
+        win32gui.SetWindowLong = MagicMock(return_value="original-proc")
+        win32gui.CallWindowProc = MagicMock(return_value=77)
+        controller = _make_controller()
+        controller.handle_edit_keydown = MagicMock(return_value=False)
+        _subclass_edit_control(
+            5, controller, font=font, win32gui=win32gui, win32con=_FakeWin32Con
+        )
+        wndproc = win32gui.SetWindowLong.call_args.args[2]
+        return wndproc, win32gui, controller
+
+    def test_paint_runs_the_original_proc_then_draws_the_placeholder(self) -> None:
+        wndproc, win32gui, _controller = self._subclass(font=9)
+        with patch("app.spotty_bunny_win32_app._draw_placeholder") as draw:
+            result = wndproc(5, _FakeWin32Con.WM_PAINT, 0, 0)
+        self.assertEqual(result, 77)
+        win32gui.CallWindowProc.assert_called_once_with(
+            "original-proc", 5, _FakeWin32Con.WM_PAINT, 0, 0
+        )
+        draw.assert_called_once_with(5, 9, win32con=_FakeWin32Con, win32gui=win32gui)
+
+    def test_no_font_means_no_placeholder(self) -> None:
+        wndproc, _win32gui, _controller = self._subclass(font=None)
+        with patch("app.spotty_bunny_win32_app._draw_placeholder") as draw:
+            wndproc(5, _FakeWin32Con.WM_PAINT, 0, 0)
+        draw.assert_not_called()
+
+    def test_other_messages_do_not_draw_the_placeholder(self) -> None:
+        wndproc, _win32gui, _controller = self._subclass(font=9)
+        with patch("app.spotty_bunny_win32_app._draw_placeholder") as draw:
+            wndproc(5, 0x9999, 0, 0)
+        draw.assert_not_called()
+
+    def test_handled_keys_are_swallowed_before_the_original_proc(self) -> None:
+        wndproc, win32gui, controller = self._subclass(font=9)
+        controller.handle_edit_keydown = MagicMock(return_value=True)
+        self.assertEqual(wndproc(5, _FakeWin32Con.WM_KEYDOWN, 0x09, 0), 0)
+        win32gui.CallWindowProc.assert_not_called()
+
+
+class CreateFontTests(SimpleTestCase):
+    def test_builds_a_cleartype_segoe_ui_font_of_the_requested_pixel_height(
+        self,
+    ) -> None:
+        win32gui = _make_fake_win32gui()
+        spec = win32gui.LOGFONT.return_value
+        win32gui.CreateFontIndirect = MagicMock(return_value=123)
+        self.assertEqual(_create_font(win32gui, height=22), 123)
+        self.assertEqual(spec.lfFaceName, "Segoe UI")
+        self.assertEqual(spec.lfHeight, -22)
+        self.assertEqual(spec.lfQuality, 5)
+
+
+class CreateOverlayWindowTests(SimpleTestCase):
+    """Drive the real ``_create_overlay_window`` against a recording fake."""
+
+    def _create(self, *, fonts: list[int] | None = None, outdated: bool = False):
+        controller = _make_controller()
+        # _make_controller pins this to False; a test can seed the cache-derived
+        # state the way __init__ does on a machine whose update cache says so.
+        controller._outdated = outdated
+        win32gui = _make_theme_win32gui()
+        win32gui.error = _FakeGuiError
+        handles = iter(range(100, 200))
+        win32gui.CreateWindowEx = MagicMock(side_effect=lambda *_a: next(handles))
+        win32gui.GetWindowRect = MagicMock(return_value=(640, 400, 1280, 476))
+        win32gui.CreateFontIndirect = (
+            MagicMock(side_effect=list(fonts))
+            if fonts is not None
+            else MagicMock(return_value=321)
+        )
+        win32gui.SendMessage = MagicMock(return_value=0)
+        win32gui.SetWindowLong = MagicMock(return_value="original-proc")
+        win32con = MagicMock()
+        with patch(
+            "app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32",
+            return_value=555,
+        ) as make_icon:
+            hwnd = _create_overlay_window(
+                controller, win32gui=win32gui, win32con=win32con
+            )
+        return controller, win32gui, win32con, hwnd, make_icon
+
+    def test_the_panel_is_created_compact_and_children_use_the_layout(self) -> None:
+        _controller, win32gui, _con, hwnd, _icon = self._create()
+        layout = overlay_layout()
+        creates = win32gui.CreateWindowEx.call_args_list
+        self.assertEqual(hwnd, 100)
+        self.assertEqual(creates[0].args[6:8], (640, 76))
+        classes = [call.args[1] for call in creates[1:]]
+        self.assertEqual(classes, ["EDIT", "STATIC", "STATIC", "LISTBOX"])
+        self.assertEqual(creates[1].args[4:8], layout.edit)
+        self.assertEqual(creates[2].args[4:8], layout.logo)
+        self.assertEqual(creates[3].args[4:8], layout.status)
+        self.assertEqual(creates[4].args[4:8], layout.rows)
+
+    def test_the_status_line_is_shown_only_while_it_has_text(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        # 100 overlay, 101 edit, 102 logo, 103 status, 104 list.
+        controller.set_status_text("Unknown shortcut")
+        win32gui.ShowWindow.assert_any_call(103, con.SW_SHOW)
+        win32gui.ShowWindow.reset_mock()
+        controller.set_status_text("")
+        win32gui.ShowWindow.assert_any_call(103, con.SW_HIDE)
+        self.assertNotIn(
+            ((103, con.SW_SHOW),), [c.args for c in win32gui.ShowWindow.call_args_list]
+        )
+
+    def test_the_completion_list_is_shown_only_while_it_has_rows(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        controller.set_completion_rows([CompletionRow("gh", "GitHub", 0)])
+        win32gui.ShowWindow.assert_any_call(104, con.SW_SHOW)
+        win32gui.ShowWindow.reset_mock()
+        controller.set_completion_rows([])
+        win32gui.ShowWindow.assert_any_call(104, con.SW_HIDE)
+
+    def test_status_and_list_start_hidden(self) -> None:
+        _controller, win32gui, con, _hwnd, _icon = self._create()
+        win32gui.ShowWindow.assert_any_call(103, con.SW_HIDE)
+        win32gui.ShowWindow.assert_any_call(104, con.SW_HIDE)
+
+    def test_the_status_line_and_list_toggle_independently(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        controller.set_status_text("x")
+        win32gui.ShowWindow.reset_mock()
+        controller.set_completion_rows([CompletionRow("gh", "GitHub", 0)])
+        # Showing the list must not hide the status line that is still up.
+        win32gui.ShowWindow.assert_any_call(103, con.SW_SHOW)
+        win32gui.ShowWindow.assert_any_call(104, con.SW_SHOW)
+
+    def test_the_text_box_and_the_placeholder_share_one_font(self) -> None:
+        # The placeholder is painted into the same box the user types in, so
+        # it must use the Edit's own font, not the smaller status/list one.
+        controller, win32gui, con, _hwnd, _icon = self._create(fonts=[901, 902])
+        edit, status, rows = 101, 103, 104
+        win32gui.SendMessage.assert_any_call(edit, con.WM_SETFONT, 901, True)
+        win32gui.SendMessage.assert_any_call(status, con.WM_SETFONT, 902, True)
+        win32gui.SendMessage.assert_any_call(rows, con.WM_SETFONT, 902, True)
+        con.WM_PAINT = 0x000F
+        con.WM_KEYDOWN = 0x0100
+        subclass_proc = win32gui.SetWindowLong.call_args.args[2]
+        win32gui.CallWindowProc = MagicMock(return_value=0)
+        with patch("app.spotty_bunny_win32_app._draw_placeholder") as draw:
+            subclass_proc(edit, con.WM_PAINT, 0, 0)
+        draw.assert_called_once_with(edit, 901, win32con=con, win32gui=win32gui)
+
+    def test_the_panel_is_rounded_to_its_size(self) -> None:
+        _controller, win32gui, _con, hwnd, _icon = self._create()
+        win32gui.CreateRoundRectRgn.assert_called_with(0, 0, 641, 77, 20, 20)
+        self.assertEqual(win32gui.SetWindowRgn.call_args.args[0], hwnd)
+
+    def test_the_logo_is_the_bunny_on_the_panel_color(self) -> None:
+        _controller, _gui, _con, _hwnd, make_icon = self._create()
+        make_icon.assert_called_once_with(
+            40,
+            background_rgb=(0x5C, 0x8C, 0xD6),
+            glyph_rgb=(0xFF, 0xFF, 0xFF),
+            outdated=False,
+        )
+
+    def test_the_logo_starts_with_the_cache_derived_badge_state(self) -> None:
+        # Same regression the tray icon pins in
+        # test_tray_icon_created_with_initial_outdated_state: nothing else
+        # corrects the first paint, so it must already reflect _outdated. A
+        # literal outdated=False at the call site would still pass the
+        # assertion above, because _make_controller pins the flag to False.
+        _controller, _gui, _con, _hwnd, make_icon = self._create(outdated=True)
+        make_icon.assert_called_once_with(
+            40,
+            background_rgb=(0x5C, 0x8C, 0xD6),
+            glyph_rgb=(0xFF, 0xFF, 0xFF),
+            outdated=True,
+        )
+
+    def test_a_status_line_grows_the_panel_and_keeps_its_top_left(self) -> None:
+        controller, win32gui, con, hwnd, _icon = self._create()
+        controller.set_status_text("Unknown shortcut")
+        args = win32gui.SetWindowPos.call_args.args
+        self.assertEqual(args[:2], (hwnd, 0))
+        self.assertEqual(args[2:4], (640, 400))  # top-left from GetWindowRect
+        self.assertEqual(
+            args[4:6], (640, overlay_layout(status_visible=True).panel_height)
+        )
+        self.assertEqual(args[6], con.SWP_NOZORDER | con.SWP_NOACTIVATE)
+
+    def test_clearing_the_status_shrinks_the_panel_again(self) -> None:
+        controller, win32gui, _con, _hwnd, _icon = self._create()
+        controller.set_status_text("Unknown shortcut")
+        controller.set_status_text("")
+        self.assertEqual(win32gui.SetWindowPos.call_args.args[5], 76)
+
+    def test_completions_grow_the_panel_and_an_empty_list_shrinks_it(self) -> None:
+        controller, win32gui, _con, _hwnd, _icon = self._create()
+        controller.set_completion_rows([CompletionRow("gh", "GitHub", 0)])
+        self.assertEqual(
+            win32gui.SetWindowPos.call_args.args[5],
+            overlay_layout(rows_visible=True).panel_height,
+        )
+        controller.set_completion_rows([])
+        self.assertEqual(win32gui.SetWindowPos.call_args.args[5], 76)
+
+    def test_relayout_repositions_every_child_and_repaints(self) -> None:
+        controller, win32gui, _con, hwnd, _icon = self._create()
+        win32gui.MoveWindow.reset_mock()
+        win32gui.InvalidateRect.reset_mock()
+        controller.set_status_text("x")
+        layout = overlay_layout(status_visible=True)
+        moved = [call.args[1:5] for call in win32gui.MoveWindow.call_args_list]
+        self.assertEqual(moved, [layout.edit, layout.logo, layout.status, layout.rows])
+        win32gui.InvalidateRect.assert_called_once_with(hwnd, None, True)
+
+    def test_completion_labels_and_selection_reach_the_listbox(self) -> None:
+        controller, win32gui, con, _hwnd, _icon = self._create()
+        win32gui.SendMessage.reset_mock()
+        controller.set_completion_rows(
+            [CompletionRow("gh", "GitHub", 0), CompletionRow("c", "", 0)]
+        )
+        sent = [call.args[1:] for call in win32gui.SendMessage.call_args_list]
+        self.assertIn((con.LB_RESETCONTENT, 0, 0), sent)
+        self.assertIn((con.LB_ADDSTRING, 0, "gh  GitHub"), sent)
+        self.assertIn((con.LB_ADDSTRING, 0, "c"), sent)
+        self.assertIn((con.LB_SETCURSEL, 0, 0), sent)
+
+    def test_the_logo_icon_can_be_swapped_and_the_old_one_is_destroyed(self) -> None:
+        controller, win32gui, con, _hwnd, _created_icon = self._create()
+        win32gui.SendMessage = MagicMock(return_value=555)  # previous icon
+        with patch(
+            "app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32",
+            return_value=999,
+        ) as make_icon:
+            controller.set_logo_outdated(True)
+        self.assertEqual(make_icon.call_args.kwargs["outdated"], True)
+        win32gui.SendMessage.assert_called_once_with(
+            101 + 1, con.STM_SETIMAGE, con.IMAGE_ICON, 999
+        )
+        win32gui.DestroyIcon.assert_called_once_with(555)
+
+    def test_the_controller_hooks_are_wired_to_the_real_controls(self) -> None:
+        controller, win32gui, _con, _hwnd, _icon = self._create()
+        controller.get_field_text()
+        win32gui.GetWindowText.assert_called_once_with(101)
+        controller.set_field_text("gh")
+        win32gui.SetWindowText.assert_called_with(101, "gh")
+
+
+@skipUnless(sys.platform == "win32", "needs the real user32/GDI")
+class RealCreateOverlayWindowTests(SimpleTestCase):
+    def test_the_real_overlay_builds_resizes_and_paints(self) -> None:
+        # One test on purpose: it registers the overlay's window class, which
+        # can only be registered once per process.
+        import win32con  # pyright: ignore[reportMissingModuleSource]
+        import win32gui  # pyright: ignore[reportMissingModuleSource]
+
+        from app import spotty_bunny_win32_app as overlay_module
+
+        controller = _make_controller()
+        hwnd = _create_overlay_window(controller, win32gui=win32gui, win32con=win32con)
+
+        def size() -> tuple[int, int]:
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            return right - left, bottom - top
+
+        try:
+            self.assertEqual(size(), (640, 76))
+            controller.set_status_text("Unknown shortcut")
+            self.assertEqual(
+                size(), (640, overlay_layout(status_visible=True).panel_height)
+            )
+            controller.set_completion_rows([CompletionRow("gh", "GitHub", 0)])
+            self.assertEqual(
+                size(),
+                (
+                    640,
+                    overlay_layout(rows_visible=True, status_visible=True).panel_height,
+                ),
+            )
+            controller.set_completion_rows([])
+            controller.set_status_text("")
+            self.assertEqual(size(), (640, 76))
+            self.assertTrue(win32gui.FindWindowEx(hwnd, 0, "EDIT", None))
+
+            # pywin32 swallows exceptions raised inside a wndproc (it only
+            # prints them), so record what the paint handler did instead.
+            paint_calls: list[int] = []
+            paint_errors: list[Exception] = []
+            original = overlay_module._paint_overlay
+
+            def recording_paint(*args, **kwargs) -> None:
+                paint_calls.append(1)
+                try:
+                    original(*args, **kwargs)
+                except Exception as exc:
+                    paint_errors.append(exc)
+                    raise
+
+            with patch.object(overlay_module, "_paint_overlay", recording_paint):
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+                win32gui.InvalidateRect(hwnd, None, True)
+                win32gui.UpdateWindow(hwnd)
+            self.assertTrue(paint_calls, "the overlay was never painted")
+            self.assertEqual(paint_errors, [])
+
+            controller.set_field_text("gh")
+            self.assertEqual(controller.get_field_text(), "gh")
+        finally:
+            win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            win32gui.DestroyWindow(hwnd)
+            # Destroying the overlay runs its wndproc's WM_DESTROY handler,
+            # which calls PostQuitMessage. Consume that WM_QUIT here, or it
+            # stays in this thread's queue and a later test that peeks for its
+            # own message (the real WM_TIMER test) receives it instead.
+            win32gui.PumpWaitingMessages()
 
 
 class TrayMessageTests(SimpleTestCase):
@@ -1807,6 +2407,49 @@ class RunSpottyBunnyWin32AppTests(SimpleTestCase):
         ):
             run_spotty_bunny_win32_app()
         make_icon.assert_any_call(16, outdated=True)
+
+    def test_refreshing_the_tray_icon_refreshes_the_overlay_logo_too(self) -> None:
+        captured: list[SpottyBunnyWin32Controller] = []
+
+        def fake_create(controller, **_kwargs):
+            captured.append(controller)
+            controller.set_logo_outdated = MagicMock()
+            return 123
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "win32gui": _make_fake_win32gui(),
+                    "win32con": MagicMock(),
+                    "win32api": MagicMock(),
+                },
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=MagicMock(),
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=False),
+            patch("app.spotty_bunny_win32_app._create_overlay_window", fake_create),
+            patch(
+                "app.spotty_bunny_win32_app.install_chord_hook",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.install_console_quit_handler",
+                return_value=lambda: None,
+            ),
+            patch("app.spotty_bunny_win32_app.pump_hook_messages"),
+            patch(
+                "app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32",
+                MagicMock(return_value=99),
+            ),
+            patch("app.spotty_bunny_win32_app._set_window_timer"),
+        ):
+            run_spotty_bunny_win32_app()
+            [controller] = captured
+            controller.set_icon_outdated(True)
+        controller.set_logo_outdated.assert_called_once_with(True)
 
     def test_timers_start_through_user32_not_win32gui(self) -> None:
         # Regression: pywin32 312 has no win32gui.SetTimer, so startup died

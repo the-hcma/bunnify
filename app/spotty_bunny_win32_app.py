@@ -9,11 +9,12 @@ that module) is the single ``GetMessage``/``DispatchMessage`` loop routing to
 whichever HWND owns each message -- there is no second message pump to
 coordinate.
 
-Styling is deliberately plain/native (standard system font and colors, a
-borderless topmost popup) rather than a pixel-clone of macOS's custom
-rounded blue/cream chrome -- lower risk without a Windows machine to look at
-it, and more idiomatic for Windows users. The About panel (``app.spotty_
-bunny_about_win32``) follows the same principle.
+The overlay follows the macOS panel's look (``app/spotty_bunny_app.py``): a
+rounded blue panel with a black rounded text field, placeholder text, the
+bunny logo, a centered status line and a completion list. Geometry and colors
+are the constants below, and :func:`overlay_layout` is the single place that
+turns "status/list visible" into pixel rectangles. The About panel (``app.
+spotty_bunny_about_win32``) stays plain/native.
 
 As much logic as possible lives in plain methods that take/return plain
 values (selector mapping, menu dispatch, completion/history/resolve
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from app.cli import open_url
@@ -63,7 +65,7 @@ from app.spotty_bunny_hotkey_win32 import (
     VK_RCONTROL,
     resolve_win32_chord_vks,
 )
-from app.spotty_bunny_icon_win32 import make_spotty_bunny_icon_win32
+from app.spotty_bunny_icon_win32 import _rgb, make_spotty_bunny_icon_win32
 from app.spotty_bunny_io import ThreadIo
 from app.spotty_bunny_menu import (
     CHECK_FOR_UPDATES_STATUS,
@@ -100,6 +102,30 @@ OVERLAY_WINDOW_CLASS = "BunnifySpottyBunnyOverlay"
 TRAY_WINDOW_CLASS = "BunnifySpottyBunnyTray"
 TRAY_ICON_ID = 1
 
+# Overlay geometry (pixels) and colors, mirroring app/spotty_bunny_app.py.
+# GDI's RoundRect takes the corner ellipse's diameter, so the *_RADIUS values
+# are twice macOS's corner radii (10 for the panel, 8 for the field).
+EDIT_HEIGHT = 30
+FIELD_HEIGHT = 56
+FIELD_PLACEHOLDER = "Type a shortcut (e.g., gh, c, yt, docs). Tab is your friend :)"
+FIELD_RADIUS = 16
+FIELD_TEXT_INSET = 12
+LOGO_GAP = 8
+LOGO_RGB = (0xFF, 0xFF, 0xFF)
+LOGO_SIZE = 40
+PANEL_FILL_RGB = (0x5C, 0x8C, 0xD6)
+PANEL_FRAME_RGB = (0x1A, 0x47, 0x8F)
+PANEL_INSET = 10
+PANEL_RADIUS = 20
+PANEL_WIDTH = 640
+PLACEHOLDER_RGB = (0x8C, 0x8C, 0x8C)
+ROW_GAP = 8
+STATUS_HEIGHT = 24
+STATUS_RGB = (0xFF, 0xC2, 0x85)
+TABLE_HEIGHT = 140
+
+Rect = tuple[int, int, int, int]
+
 VK_TAB = 0x09
 VK_RETURN = 0x0D
 VK_ESCAPE = 0x1B
@@ -124,6 +150,21 @@ UNINSTALL_INFORMATIVE_WIN32 = (
 _LBN_SELCHANGE = 1  # winuser.h: fired when a LISTBOX's selection changes.
 
 
+class _OverlayTheme:
+    """GDI brushes and current geometry shared with the overlay's wndproc.
+
+    The window procedure paints the panel chrome and colors the child
+    controls; ``layout`` is updated whenever the status line or list appears
+    or disappears so the black field rectangle is painted where the field
+    currently is.
+    """
+
+    def __init__(self, *, win32gui) -> None:
+        self.black_brush = win32gui.CreateSolidBrush(_rgb(0, 0, 0))
+        self.fill_brush = win32gui.CreateSolidBrush(_rgb(*PANEL_FILL_RGB))
+        self.layout = overlay_layout()
+
+
 def _selector_for_vk(vk_code: int) -> str | None:
     """Map an Edit-control keydown to the Cocoa-selector-name strings that
     ``app.spotty_bunny_complete``/``app.spotty_bunny_history`` consume.
@@ -134,6 +175,19 @@ def _selector_for_vk(vk_code: int) -> str | None:
     left to the Edit control's own default behavior.
     """
     return _VK_SELECTORS.get(vk_code)
+
+
+@dataclass(frozen=True)
+class OverlayLayout:
+    """Pixel rectangles ``(x, y, width, height)`` inside the overlay panel."""
+
+    edit: Rect
+    field: Rect
+    logo: Rect
+    panel_height: int
+    panel_width: int
+    rows: Rect
+    status: Rect
 
 
 class SpottyBunnyWin32Controller:
@@ -157,6 +211,7 @@ class SpottyBunnyWin32Controller:
         self.set_completion_index: Callable[[int], None] = lambda _index: None
         self.set_window_visible = set_window_visible or (lambda _visible: None)
         self.set_icon_outdated: Callable[[bool], None] = lambda _outdated: None
+        self.set_logo_outdated: Callable[[bool], None] = lambda _outdated: None
         self._io = io if io is not None else ThreadIo()
 
         self.visible = False
@@ -723,6 +778,48 @@ class SpottyBunnyWin32Controller:
         self._field_text = text
 
 
+def overlay_layout(
+    *, rows_visible: bool = False, status_visible: bool = False
+) -> OverlayLayout:
+    """Lay out the overlay panel, top to bottom: field row, status, list.
+
+    The field row (text field plus the logo at its right edge) is always
+    there; the status line and the completion list each add their own height
+    only while visible, as on macOS (``PANEL_HEIGHT`` 76 when compact).
+    """
+    field_width = PANEL_WIDTH - 2 * PANEL_INSET - LOGO_SIZE - LOGO_GAP
+    inner_width = PANEL_WIDTH - 2 * PANEL_INSET
+    field = (PANEL_INSET, PANEL_INSET, field_width, FIELD_HEIGHT)
+    edit = (
+        PANEL_INSET + FIELD_TEXT_INSET,
+        PANEL_INSET + (FIELD_HEIGHT - EDIT_HEIGHT) // 2,
+        field_width - 2 * FIELD_TEXT_INSET,
+        EDIT_HEIGHT,
+    )
+    logo = (
+        PANEL_WIDTH - PANEL_INSET - LOGO_SIZE,
+        PANEL_INSET + (FIELD_HEIGHT - LOGO_SIZE) // 2,
+        LOGO_SIZE,
+        LOGO_SIZE,
+    )
+    bottom = PANEL_INSET + FIELD_HEIGHT
+    status = (PANEL_INSET, bottom + ROW_GAP, inner_width, STATUS_HEIGHT)
+    if status_visible:
+        bottom += ROW_GAP + STATUS_HEIGHT
+    rows = (PANEL_INSET, bottom + ROW_GAP, inner_width, TABLE_HEIGHT)
+    if rows_visible:
+        bottom += ROW_GAP + TABLE_HEIGHT
+    return OverlayLayout(
+        edit=edit,
+        field=field,
+        logo=logo,
+        panel_height=bottom + PANEL_INSET,
+        panel_width=PANEL_WIDTH,
+        rows=rows,
+        status=status,
+    )
+
+
 def overlay_origin(
     work_area: tuple[int, int, int, int], width: int, height: int
 ) -> tuple[int, int]:
@@ -786,6 +883,7 @@ def run_spotty_bunny_win32_app() -> int:
         old_handle = icon_state["handle"]
         icon_state["handle"] = make_spotty_bunny_icon_win32(16, outdated=outdated)
         controller.icon_handle = icon_state["handle"]
+        controller.set_logo_outdated(outdated)
         win32gui.Shell_NotifyIcon(
             win32gui.NIM_MODIFY,
             (
@@ -848,6 +946,15 @@ def _center_overlay(hwnd: int, *, win32api, win32con, win32gui) -> None:
         logger.warning("could not center the overlay; leaving it where it is")
 
 
+def _create_font(win32gui, *, height: int) -> int:
+    """A ClearType Segoe UI font *height* pixels tall (the Windows UI font)."""
+    spec = win32gui.LOGFONT()
+    spec.lfFaceName = "Segoe UI"
+    spec.lfHeight = -height
+    spec.lfQuality = 5  # CLEARTYPE_QUALITY
+    return win32gui.CreateFontIndirect(spec)
+
+
 def _create_overlay_window(
     controller: SpottyBunnyWin32Controller, *, win32gui, win32con
 ) -> int:
@@ -856,21 +963,24 @@ def _create_overlay_window(
     Kept in one function since none of it is meaningfully unit-testable off
     real Windows (no interactive desktop in CI) -- see the module docstring.
     """
+    theme = _OverlayTheme(win32gui=win32gui)
     class_atom = _register_overlay_class(
-        controller, win32gui=win32gui, win32con=win32con
+        controller, theme=theme, win32gui=win32gui, win32con=win32con
     )
+    layout = theme.layout
+    module = win32gui.GetModuleHandle(None)
     hwnd = win32gui.CreateWindowEx(
         win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
         class_atom,
         "Spotty Bunny",
-        win32con.WS_POPUP,
+        win32con.WS_POPUP | win32con.WS_CLIPCHILDREN,
         0,
         0,
-        420,
-        204,
+        layout.panel_width,
+        layout.panel_height,
         0,
         0,
-        win32gui.GetModuleHandle(None),
+        module,
         None,
     )
     edit_hwnd = win32gui.CreateWindowEx(
@@ -878,51 +988,122 @@ def _create_overlay_window(
         "EDIT",
         "",
         win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.ES_AUTOHSCROLL,
-        8,
-        8,
-        404,
-        24,
+        *layout.edit,
         hwnd,
         0,
-        win32gui.GetModuleHandle(None),
+        module,
+        None,
+    )
+    logo_hwnd = win32gui.CreateWindowEx(
+        0,
+        "STATIC",
+        "",
+        win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_ICON,
+        *layout.logo,
+        hwnd,
+        0,
+        module,
         None,
     )
     status_hwnd = win32gui.CreateWindowEx(
         0,
         "STATIC",
         "",
-        win32con.WS_CHILD,
-        8,
-        36,
-        404,
-        16,
+        win32con.WS_CHILD | win32con.SS_CENTER | win32con.SS_NOPREFIX,
+        *layout.status,
         hwnd,
         0,
-        win32gui.GetModuleHandle(None),
+        module,
         None,
     )
     list_hwnd = win32gui.CreateWindowEx(
         0,
         "LISTBOX",
         "",
-        win32con.WS_CHILD | win32con.WS_BORDER | win32con.LBS_NOTIFY,
-        8,
-        56,
-        404,
-        140,
+        win32con.WS_CHILD
+        | win32con.WS_VSCROLL
+        | win32con.LBS_NOTIFY
+        | win32con.LBS_NOINTEGRALHEIGHT,
+        *layout.rows,
         hwnd,
         0,
-        win32gui.GetModuleHandle(None),
+        module,
         None,
     )
+    field_font = _create_font(win32gui, height=22)
+    small_font = _create_font(win32gui, height=17)
+    win32gui.SendMessage(edit_hwnd, win32con.WM_SETFONT, field_font, True)
+    win32gui.SendMessage(status_hwnd, win32con.WM_SETFONT, small_font, True)
+    win32gui.SendMessage(list_hwnd, win32con.WM_SETFONT, small_font, True)
+
+    visible_rows = {"rows": False, "status": False}
+
+    def _relayout() -> None:
+        """Resize the panel and reposition its children for the visible rows."""
+        current = overlay_layout(
+            rows_visible=visible_rows["rows"], status_visible=visible_rows["status"]
+        )
+        theme.layout = current
+        left, top, _right, _bottom = win32gui.GetWindowRect(hwnd)
+        win32gui.SetWindowPos(
+            hwnd,
+            0,
+            left,
+            top,
+            current.panel_width,
+            current.panel_height,
+            win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE,
+        )
+        win32gui.SetWindowRgn(
+            hwnd,
+            win32gui.CreateRoundRectRgn(
+                0,
+                0,
+                current.panel_width + 1,
+                current.panel_height + 1,
+                PANEL_RADIUS,
+                PANEL_RADIUS,
+            ),
+            True,
+        )
+        win32gui.MoveWindow(edit_hwnd, *current.edit, True)
+        win32gui.MoveWindow(logo_hwnd, *current.logo, True)
+        win32gui.MoveWindow(status_hwnd, *current.status, True)
+        win32gui.MoveWindow(list_hwnd, *current.rows, True)
+        win32gui.ShowWindow(
+            status_hwnd,
+            win32con.SW_SHOW if visible_rows["status"] else win32con.SW_HIDE,
+        )
+        win32gui.ShowWindow(
+            list_hwnd, win32con.SW_SHOW if visible_rows["rows"] else win32con.SW_HIDE
+        )
+        win32gui.InvalidateRect(hwnd, None, True)
+
+    def _set_logo_outdated(outdated: bool) -> None:
+        icon = make_spotty_bunny_icon_win32(
+            LOGO_SIZE,
+            background_rgb=PANEL_FILL_RGB,
+            glyph_rgb=LOGO_RGB,
+            outdated=outdated,
+        )
+        previous = win32gui.SendMessage(
+            logo_hwnd, win32con.STM_SETIMAGE, win32con.IMAGE_ICON, icon
+        )
+        if previous:
+            win32gui.DestroyIcon(previous)
+
+    _relayout()
+    _set_logo_outdated(controller._outdated)
+    controller.set_logo_outdated = _set_logo_outdated
     controller.get_field_text = lambda: win32gui.GetWindowText(edit_hwnd)
     controller.set_field_text = lambda text: win32gui.SetWindowText(edit_hwnd, text)
-    controller.set_status_text = lambda text: (
-        win32gui.SetWindowText(status_hwnd, text),
-        win32gui.ShowWindow(
-            status_hwnd, win32con.SW_SHOW if text else win32con.SW_HIDE
-        ),
-    )
+
+    def _set_status_text(text: str) -> None:
+        win32gui.SetWindowText(status_hwnd, text)
+        visible_rows["status"] = bool(text)
+        _relayout()
+
+    controller.set_status_text = _set_status_text
 
     def _set_completion_rows(rows: list[CompletionRow]) -> None:
         win32gui.SendMessage(list_hwnd, win32con.LB_RESETCONTENT, 0, 0)
@@ -931,7 +1112,8 @@ def _create_overlay_window(
             win32gui.SendMessage(list_hwnd, win32con.LB_ADDSTRING, 0, label)
         if rows:
             win32gui.SendMessage(list_hwnd, win32con.LB_SETCURSEL, 0, 0)
-        win32gui.ShowWindow(list_hwnd, win32con.SW_SHOW if rows else win32con.SW_HIDE)
+        visible_rows["rows"] = bool(rows)
+        _relayout()
 
     controller.set_completion_rows = _set_completion_rows
     controller.set_completion_index = lambda index: win32gui.SendMessage(
@@ -956,30 +1138,115 @@ def _create_overlay_window(
 
     controller.set_window_visible = _set_window_visible
     controller.focus_field = lambda: win32gui.SetFocus(edit_hwnd)
-    _subclass_edit_control(edit_hwnd, controller, win32gui=win32gui, win32con=win32con)
+    _subclass_edit_control(
+        edit_hwnd, controller, font=field_font, win32gui=win32gui, win32con=win32con
+    )
     return hwnd
 
 
+def _draw_placeholder(edit_hwnd: int, font: int, *, win32con, win32gui) -> None:
+    """Draw the gray hint text into an empty Edit control.
+
+    ``EM_SETCUEBANNER`` needs common-controls v6, which the Python launcher's
+    manifest does not opt in to, so paint it by hand after the Edit control's
+    own paint.
+    """
+    if win32gui.GetWindowTextLength(edit_hwnd):
+        return
+    hdc = win32gui.GetDC(edit_hwnd)
+    try:
+        old_font = win32gui.SelectObject(hdc, font)
+        win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
+        win32gui.SetTextColor(hdc, _rgb(*PLACEHOLDER_RGB))
+        win32gui.DrawText(
+            hdc,
+            FIELD_PLACEHOLDER,
+            -1,
+            win32gui.GetClientRect(edit_hwnd),
+            win32con.DT_LEFT
+            | win32con.DT_VCENTER
+            | win32con.DT_SINGLELINE
+            | win32con.DT_NOPREFIX,
+        )
+        win32gui.SelectObject(hdc, old_font)
+    finally:
+        win32gui.ReleaseDC(edit_hwnd, hdc)
+
+
+def _paint_overlay(hwnd: int, theme: _OverlayTheme, *, win32con, win32gui) -> None:
+    """Paint the rounded panel frame and the black rounded field behind the Edit."""
+    hdc, paint = win32gui.BeginPaint(hwnd)
+    frame_pen = None
+    old_pen = None
+    old_brush = None
+    try:
+        _left, _top, right, bottom = win32gui.GetClientRect(hwnd)
+        frame_pen = win32gui.CreatePen(win32con.PS_SOLID, 2, _rgb(*PANEL_FRAME_RGB))
+        old_pen = win32gui.SelectObject(hdc, frame_pen)
+        old_brush = win32gui.SelectObject(hdc, theme.fill_brush)
+        win32gui.RoundRect(hdc, 1, 1, right - 1, bottom - 1, PANEL_RADIUS, PANEL_RADIUS)
+        field_x, field_y, field_width, field_height = theme.layout.field
+        win32gui.SelectObject(hdc, win32gui.GetStockObject(win32con.NULL_PEN))
+        win32gui.SelectObject(hdc, theme.black_brush)
+        win32gui.RoundRect(
+            hdc,
+            field_x,
+            field_y,
+            field_x + field_width + 1,
+            field_y + field_height + 1,
+            FIELD_RADIUS,
+            FIELD_RADIUS,
+        )
+    finally:
+        # Runs on failure too, so a painting error cannot leak the frame pen
+        # or leave the DC with our objects selected. Deselect before deleting:
+        # GDI will not delete an object that is still selected into a DC.
+        try:
+            if old_pen is not None:
+                win32gui.SelectObject(hdc, old_pen)
+            if old_brush is not None:
+                win32gui.SelectObject(hdc, old_brush)
+            if frame_pen is not None:
+                win32gui.DeleteObject(frame_pen)
+        finally:
+            win32gui.EndPaint(hwnd, paint)
+
+
 def _subclass_edit_control(
-    edit_hwnd: int, controller: SpottyBunnyWin32Controller, *, win32gui, win32con
+    edit_hwnd: int,
+    controller: SpottyBunnyWin32Controller,
+    *,
+    font: int | None = None,
+    win32gui,
+    win32con,
 ) -> None:
     """Intercept Tab/Return/Escape/arrow keys before the Edit control's own
     default handling (which would otherwise consume Tab for focus
-    navigation and the arrow keys for cursor movement)."""
+    navigation and the arrow keys for cursor movement), and draw the
+    placeholder hint when the field is empty."""
     original: dict[str, object] = {}
 
     def _wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
         if msg == win32con.WM_KEYDOWN and controller.handle_edit_keydown(wparam):
             return 0
-        return win32gui.CallWindowProc(original["proc"], hwnd, msg, wparam, lparam)
+        result = win32gui.CallWindowProc(original["proc"], hwnd, msg, wparam, lparam)
+        if font is not None and msg == win32con.WM_PAINT:
+            _draw_placeholder(hwnd, font, win32con=win32con, win32gui=win32gui)
+        return result
 
     original["proc"] = win32gui.SetWindowLong(edit_hwnd, win32con.GWL_WNDPROC, _wndproc)
 
 
 def _register_overlay_class(
-    controller: SpottyBunnyWin32Controller, *, win32gui, win32con
+    controller: SpottyBunnyWin32Controller,
+    *,
+    theme: _OverlayTheme | None = None,
+    win32gui,
+    win32con,
 ):
-    wndproc = _make_overlay_wndproc(controller, win32gui=win32gui, win32con=win32con)
+    wndproc = _make_overlay_wndproc(
+        controller, theme=theme, win32gui=win32gui, win32con=win32con
+    )
     wnd_class = win32gui.WNDCLASS()
     wnd_class.lpfnWndProc = wndproc
     wnd_class.lpszClassName = OVERLAY_WINDOW_CLASS
@@ -987,14 +1254,32 @@ def _register_overlay_class(
     # Without a background brush, the margins around the EDIT/STATIC/LISTBOX
     # children (never covered by a child control) are never painted and show
     # whatever was on screen behind the popup.
-    wnd_class.hbrBackground = win32con.COLOR_WINDOW + 1
+    wnd_class.hbrBackground = (
+        theme.fill_brush if theme is not None else win32con.COLOR_WINDOW + 1
+    )
     return win32gui.RegisterClass(wnd_class)
 
 
 def _make_overlay_wndproc(
-    controller: SpottyBunnyWin32Controller, *, win32gui, win32con
+    controller: SpottyBunnyWin32Controller,
+    *,
+    theme: _OverlayTheme | None = None,
+    win32gui,
+    win32con,
 ):
     def _wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+        if theme is not None:
+            if msg == win32con.WM_PAINT:
+                _paint_overlay(hwnd, theme, win32con=win32con, win32gui=win32gui)
+                return 0
+            if msg in (win32con.WM_CTLCOLOREDIT, win32con.WM_CTLCOLORLISTBOX):
+                win32gui.SetTextColor(wparam, _rgb(0xFF, 0xFF, 0xFF))
+                win32gui.SetBkColor(wparam, _rgb(0, 0, 0))
+                return theme.black_brush
+            if msg == win32con.WM_CTLCOLORSTATIC:
+                win32gui.SetBkMode(wparam, win32con.TRANSPARENT)
+                win32gui.SetTextColor(wparam, _rgb(*STATUS_RGB))
+                return theme.fill_brush
         if msg in (WM_APP_TOGGLE, WM_APP_RESOLVE_READY, WM_APP_COMPLETIONS_READY):
             controller.handle_app_message(msg, wparam, lparam)
             return 0
