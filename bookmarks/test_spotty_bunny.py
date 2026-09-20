@@ -136,12 +136,16 @@ class SpottyBunnyCliTests(SimpleTestCase):
     def test_help_exits_zero(self) -> None:
         stdout = StringIO()
         with (
+            # The help text is platform-specific; this one asserts the macOS
+            # wording (the Windows wording has its own test).
+            patch("app.spotty_bunny_cli.sys.platform", "darwin"),
             patch("sys.stdout", stdout),
             self.assertRaises(SystemExit) as raised,
         ):
             main(["--help"])
         self.assertEqual(raised.exception.code, 0)
-        help_text = stdout.getvalue()
+        # argparse wraps to the terminal width; compare on collapsed whitespace.
+        help_text = " ".join(stdout.getvalue().split())
         self.assertIn("search box", help_text)
         self.assertIn("spotty-bunny", help_text)
         self.assertIn("--log-file", help_text)
@@ -181,6 +185,31 @@ class SpottyBunnyCliTests(SimpleTestCase):
         self.assertIn("bunnify[macos]", stderr.getvalue())
         self.assertIn("--force", stderr.getvalue())
         self.assertIn("bunnify onboard", stderr.getvalue())
+
+    def test_help_describes_the_scheduled_task_on_windows(self) -> None:
+        from app.spotty_bunny_cli import build_parser
+
+        with patch("app.spotty_bunny_cli.sys.platform", "win32"):
+            text = " ".join(build_parser().format_help().split())
+        self.assertIn("Scheduled Task that starts at logon", text)
+        self.assertIn("Hold one Control key and press the other", text)
+        self.assertNotIn("macOS", text)
+        self.assertNotIn("LaunchAgent", text)
+
+    def test_help_describes_the_launch_agent_on_macos(self) -> None:
+        from app.spotty_bunny_cli import build_parser
+
+        with patch("app.spotty_bunny_cli.sys.platform", "darwin"):
+            text = " ".join(build_parser().format_help().split())
+        self.assertIn("macOS Spotlight-style search box", text)
+        self.assertIn("login LaunchAgent", text)
+        self.assertNotIn("Scheduled Task", text)
+
+    def test_description_can_be_asked_for_a_platform(self) -> None:
+        from app.spotty_bunny_cli import _description
+
+        self.assertIn("Scheduled Task", _description("win32"))
+        self.assertIn("LaunchAgent", _description("darwin"))
 
     def test_not_macos_prints_hint(self) -> None:
         stderr = StringIO()

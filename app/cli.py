@@ -2384,12 +2384,12 @@ def main(
 
     \b
     Interactive REPL (loop with fuzzy Tab completion + history):
-      ./scripts/bunnify
+      bunnify
 
     \b
     Direct:
-      ./scripts/bunnify vault
-      ./scripts/bunnify pr 12345
+      bunnify vault
+      bunnify pr 12345
 
     \b
     After pipx install or upgrade (`onboard` is a reserved shortcut name):
@@ -2409,8 +2409,8 @@ def main(
 
     \b
     Server setup (`setup` is a reserved shortcut name):
-      ./scripts/bunnify setup
-      ./scripts/bunnify --setup
+      bunnify setup
+      bunnify --setup
 
     \b
     Stop the local managed server (`stop` is a reserved shortcut name):
@@ -2424,8 +2424,8 @@ def main(
 
     \b
     Build identity (`version` is a reserved shortcut name):
-      ./scripts/bunnify version
-      ./scripts/bunnify --version
+      bunnify version
+      bunnify --version
 
     \b
     Upgrade the pipx install (`upgrade` is a reserved shortcut name):
@@ -2434,9 +2434,9 @@ def main(
 
     \b
     Fuzzy pick (fzf) for argv / shell completion workflows:
-      ./scripts/bunnify --fzf
-      ./scripts/bunnify --list-keys | fzf
-      ./scripts/bunnify --list-usage
+      bunnify --fzf
+      bunnify --list-keys | fzf
+      bunnify --list-usage
     """
     if shortcut_args == ("version",):
         _echo_version()

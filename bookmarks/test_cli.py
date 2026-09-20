@@ -4683,6 +4683,23 @@ class ConfigUnitTests(TestCase):
         self.assertNotIn("9.9.9", result.output)
         self.assertIn("To:   0.15.0 (bbbbbbbbbbbb)", result.output)
 
+    def test_help_examples_use_the_installed_command_not_checkout_scripts(
+        self,
+    ) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["--help"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertNotIn("./scripts/", result.output)
+        for example in (
+            "bunnify vault",
+            "bunnify setup",
+            "bunnify --version",
+            "bunnify --fzf",
+            "bunnify --list-keys | fzf",
+        ):
+            self.assertIn(example, result.output)
+
     def test_help_describes_spotty_bunny_for_every_platform(self) -> None:
         from app.cli import main
 
