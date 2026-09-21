@@ -14,7 +14,10 @@ from app.spotty_bunny_icon_win32 import _rgb
 from app.spotty_bunny_io import ImmediateIo
 from app.spotty_bunny_menu import CHECK_FOR_UPDATES_STATUS, logo_menu_specs
 from app.spotty_bunny_status import SHORTCUTS_LOAD_FAILED
-from app.spotty_bunny_tap_health import TAP_HEALTH_CHECK_INTERVAL_S
+from app.spotty_bunny_tap_health import (
+    TAP_HEALTH_CHECK_INTERVAL_S,
+    try_write_spotty_bunny_health,
+)
 from app.spotty_bunny_update import UpdateStatus
 from app.spotty_bunny_win32_app import (
     FIELD_PLACEHOLDER,
@@ -2664,6 +2667,9 @@ class RealShowOverlayWindowTests(SimpleTestCase):
             win32gui.DestroyWindow(hwnd)
 
 
+_REAL_HEALTH_WRITE = try_write_spotty_bunny_health
+
+
 class RunSpottyBunnyWin32AppTests(SimpleTestCase):
     def test_tray_icon_created_with_initial_outdated_state(self) -> None:
         # Regression: the tray icon is created (icon_state = {"handle":
@@ -2747,6 +2753,103 @@ class RunSpottyBunnyWin32AppTests(SimpleTestCase):
             [controller] = captured
             controller.set_icon_outdated(True)
         controller.set_logo_outdated.assert_called_once_with(True)
+
+    def _run_app(
+        self,
+        *,
+        hook: object,
+        health_write: MagicMock | None = None,
+    ) -> None:
+        """Run the app's startup with fakes, recording its health writes."""
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "win32gui": _make_fake_win32gui(),
+                    "win32con": MagicMock(),
+                    "win32api": MagicMock(),
+                },
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.read_cached_update_status",
+                return_value=MagicMock(),
+            ),
+            patch("app.spotty_bunny_win32_app.badge_should_show", return_value=False),
+            patch(
+                "app.spotty_bunny_win32_app._create_overlay_window", return_value=123
+            ),
+            patch("app.spotty_bunny_win32_app.install_chord_hook", **hook),  # type: ignore[arg-type]
+            patch(
+                "app.spotty_bunny_win32_app.install_console_quit_handler",
+                return_value=lambda: None,
+            ),
+            patch("app.spotty_bunny_win32_app.pump_hook_messages"),
+            patch(
+                "app.spotty_bunny_win32_app.make_spotty_bunny_icon_win32",
+                MagicMock(return_value=99),
+            ),
+            patch("app.spotty_bunny_win32_app._set_window_timer"),
+            patch(
+                "app.spotty_bunny_win32_app.try_write_spotty_bunny_health",
+                health_write if health_write is not None else _REAL_HEALTH_WRITE,
+            ),
+        ):
+            run_spotty_bunny_win32_app()
+
+    def test_startup_records_this_processs_own_tap_health(self) -> None:
+        # The health file otherwise keeps the previous run's "ok" until a
+        # chord fires (#534).
+        write = MagicMock()
+        self._run_app(hook={"return_value": MagicMock()}, health_write=write)
+        write.assert_called_once()
+        self.assertEqual(write.call_args.kwargs["tap"], "ok")
+        self.assertEqual(write.call_args.kwargs["reinstall_failures"], 0)
+
+    def test_startup_builds_on_an_empty_snapshot_not_the_previous_runs(self) -> None:
+        # A write keeps the prior last_chord/last_event unless told otherwise.
+        write = MagicMock()
+        self._run_app(hook={"return_value": MagicMock()}, health_write=write)
+        previous = write.call_args.kwargs["previous"]
+        self.assertIsNone(previous.last_chord_at)
+        self.assertIsNone(previous.last_event_at)
+        self.assertEqual(previous.reinstall_failures, 0)
+
+    def test_the_real_startup_write_drops_a_dead_runs_chord_times(self) -> None:
+        # End to end through the real writer and the (isolated) data dir: a
+        # snapshot left by a previous process must not survive into this one.
+        from app.spotty_bunny_tap_health import (
+            TAP_STATE_OK,
+            read_spotty_bunny_health,
+            write_spotty_bunny_health,
+        )
+
+        write_spotty_bunny_health(
+            tap=TAP_STATE_OK,
+            last_chord_at=1_700_000_000.0,
+            last_event_at=1_700_000_001.0,
+            reinstall_failures=3,
+            previous=None,
+        )
+        self._run_app(hook={"return_value": MagicMock()})
+        health = read_spotty_bunny_health()
+        assert health is not None
+        self.assertEqual(health.tap, TAP_STATE_OK)
+        self.assertIsNone(health.last_chord_at)
+        self.assertIsNone(health.last_event_at)
+        self.assertEqual(health.reinstall_failures, 0)
+
+    def test_a_refused_hook_records_no_health(self) -> None:
+        # The process exits right after this, and its atexit cleanup removes
+        # the health file, so a "missing" snapshot could never be read; the
+        # error and console hint are the report.
+        from app.spotty_bunny_cli import SpottyBunnyHookError
+
+        write = MagicMock()
+        with self.assertRaises(SpottyBunnyHookError):
+            self._run_app(
+                hook={"side_effect": OSError("hook refused")}, health_write=write
+            )
+        write.assert_not_called()
 
     def test_timers_start_through_user32_not_win32gui(self) -> None:
         # Regression: pywin32 312 has no win32gui.SetTimer, so startup died

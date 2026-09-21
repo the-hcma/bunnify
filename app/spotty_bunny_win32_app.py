@@ -76,7 +76,12 @@ from app.spotty_bunny_menu import (
 )
 from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
 from app.spotty_bunny_status import SHORTCUTS_LOAD_FAILED, format_spotty_bunny_status
-from app.spotty_bunny_tap_health import TAP_HEALTH_CHECK_INTERVAL_S
+from app.spotty_bunny_tap_health import (
+    TAP_HEALTH_CHECK_INTERVAL_S,
+    TAP_STATE_OK,
+    SpottyBunnyHealth,
+    try_write_spotty_bunny_health,
+)
 from app.spotty_bunny_update import (
     badge_should_show,
     cache_is_stale,
@@ -916,7 +921,21 @@ def run_spotty_bunny_win32_app() -> int:
     controller._reinstall_hook()
     if controller._hook is None:
         raise SpottyBunnyHookError("could not listen for the hotkey chord")
-
+    # Record this process's own tap state now: the health file otherwise still
+    # holds the previous run's until a chord fires (#534). Hand the write an
+    # empty snapshot to build on: by default a write keeps the prior
+    # last_chord/last_event, which belong to a process that no longer exists.
+    try_write_spotty_bunny_health(
+        previous=SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=0,
+            tap=TAP_STATE_OK,
+            updated_at=0.0,
+        ),
+        reinstall_failures=0,
+        tap=TAP_STATE_OK,
+    )
     _set_window_timer(hwnd, TIMER_ID_HEALTH, int(TAP_HEALTH_CHECK_INTERVAL_S * 1000))
     _set_window_timer(hwnd, TIMER_ID_UPDATE, UPDATE_CHECK_INTERVAL_MS)
 
