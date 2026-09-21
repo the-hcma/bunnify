@@ -4207,6 +4207,68 @@ class SpottyBunnyWin32ProcessTests(SimpleTestCase):
             _terminate_pid(4242)
         wait_for_exit.assert_not_called()
 
+    def test_start_time_none_when_open_process_fails(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_start_time
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=0)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertIsNone(_win32_process_start_time(4242))
+
+    def test_start_time_none_when_the_times_cannot_be_read(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_start_time
+
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+        kernel32.GetProcessTimes = MagicMock(return_value=False)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertIsNone(_win32_process_start_time(4242))
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_start_time_is_the_creation_time_as_unix_seconds(self) -> None:
+        from app.spotty_bunny_launch import _win32_process_start_time
+
+        # 2026-09-20 22:00:00 UTC as a FILETIME (100 ns ticks since 1601).
+        unix = 1_789_941_600
+        ticks = unix * 10_000_000 + 116_444_736_000_000_000
+        kernel32 = self._fake_kernel32()
+        kernel32.OpenProcess = MagicMock(return_value=99)
+
+        def _times(_handle: int, created: object, *_others: object) -> bool:
+            created._obj.dwLowDateTime = ticks & 0xFFFFFFFF
+            created._obj.dwHighDateTime = ticks >> 32
+            return True
+
+        kernel32.GetProcessTimes = MagicMock(side_effect=_times)
+        with patch("ctypes.WinDLL", return_value=kernel32, create=True):
+            self.assertEqual(_win32_process_start_time(4242), unix)
+        kernel32.CloseHandle.assert_called_once_with(99)
+
+    def test_a_real_process_start_time_is_recent_for_a_fresh_child(self) -> None:
+        if sys.platform != "win32":
+            self.skipTest("Windows only")
+        import time
+
+        from app.spotty_bunny_launch import _win32_process_start_time
+
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            started = _win32_process_start_time(child.pid)
+            self.assertIsNotNone(started)
+            assert started is not None
+            self.assertLess(abs(time.time() - started), 10)
+            own = _win32_process_start_time(os.getpid())
+            assert own is not None
+            self.assertLess(own, started)
+        finally:
+            child.kill()
+            child.wait()
+
     def test_image_name_none_when_open_process_fails(self) -> None:
         from app.spotty_bunny_launch import _win32_process_image_name
 

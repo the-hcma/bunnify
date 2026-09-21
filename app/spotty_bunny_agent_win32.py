@@ -26,6 +26,7 @@ from app.spotty_bunny_agent import (
 )
 from app.spotty_bunny_cli import COMMAND_NAME, _spotty_bunny_log_file
 from app.spotty_bunny_launch import (
+    _win32_process_start_time,
     clear_spotty_bunny_pid,
     read_spotty_bunny_runtime,
     spotty_bunny_is_running,
@@ -33,6 +34,7 @@ from app.spotty_bunny_launch import (
 )
 from app.spotty_bunny_tap_health import (
     TAP_STATE_OK,
+    SpottyBunnyHealth,
     clear_spotty_bunny_health,
     format_activity_timestamp,
     read_spotty_bunny_health,
@@ -66,6 +68,7 @@ INSTALL_WAIT_TIMEOUT_S = 15.0
 NOT_WINDOWS_MESSAGE = f"{COMMAND_NAME}: this command is only available on Windows."
 ROLLBACK_WAIT_TIMEOUT_S = 15.0
 TASK_IDLE_WAIT_TIMEOUT_S = 5.0
+_HEALTH_CLOCK_SLACK_S = 1.0
 
 
 def install_agent(
@@ -225,6 +228,8 @@ def status_agent(
     # The health file is the last overlay process's: without a live overlay
     # its "ok" and last chord would make a stopped one look healthy (#525).
     health = read_spotty_bunny_health() if running else None
+    if health is not None and not _health_is_from_this_run(health, pid_dir=pid_dir):
+        health = None
     if health is None:
         out("tap: unknown")
         out("last_chord: unknown")
@@ -306,6 +311,26 @@ def upgrade_agent(
     )
 
 
+def _health_is_from_this_run(
+    health: SpottyBunnyHealth, *, pid_dir: Path | None
+) -> bool:
+    """False when *health* was written before the running overlay started.
+
+    The overlay writes its own health right after its chord hook is installed,
+    so a snapshot older than the process is a previous run's (#534). When the
+    process start time cannot be read, the snapshot is trusted rather than
+    guessed at from a file time: the launcher rewrites the pid file after the
+    overlay is up, which would make a healthy overlay look stale.
+    """
+    runtime = read_spotty_bunny_runtime(pid_dir=pid_dir)
+    if runtime is None:
+        return True
+    started = _process_started_at(runtime[0])
+    if started is None:
+        return True
+    return health.updated_at + _HEALTH_CLOCK_SLACK_S >= started
+
+
 def _is_win32(platform: str | None) -> bool:
     return (sys.platform if platform is None else platform) == "win32"
 
@@ -319,6 +344,13 @@ def _pid_text(*, pid_dir: Path | None) -> str:
 
 def _print_err(message: str) -> None:
     print(message, file=sys.stderr)
+
+
+def _process_started_at(pid: int) -> float | None:
+    """When *pid* started (epoch seconds), or None where that is not readable."""
+    if sys.platform != "win32":
+        return None
+    return _win32_process_start_time(pid)
 
 
 def _rollback_failed_install(

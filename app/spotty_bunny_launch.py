@@ -303,6 +303,7 @@ def _spotty_bunny_process_alive(pid: int) -> bool:
 
 
 _WIN32_ERROR_ACCESS_DENIED = 5
+_WIN32_FILETIME_TO_UNIX_100NS = 116_444_736_000_000_000  # 1601 -> 1970, in 100 ns
 _WIN32_PROCESS_COMMAND_LINE_INFORMATION = 60  # ProcessCommandLineInformation
 _WIN32_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _WIN32_PROCESS_TERMINATE = 0x0001
@@ -416,6 +417,35 @@ def _win32_process_alive(pid: int) -> bool:
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
             return False
         return exit_code.value == _WIN32_STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _win32_process_start_time(pid: int) -> float | None:
+    """Epoch seconds at which *pid* started, or None if it cannot be read.
+
+    ``GetProcessTimes`` needs only ``PROCESS_QUERY_LIMITED_INFORMATION``;
+    None covers "gone" and "denied".
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = _win32_kernel32()
+    handle = kernel32.OpenProcess(_WIN32_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(created),
+            ctypes.byref(exited),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        ):
+            return None
+        ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+        return (ticks - _WIN32_FILETIME_TO_UNIX_100NS) / 10_000_000
     finally:
         kernel32.CloseHandle(handle)
 

@@ -440,6 +440,29 @@ class UninstallAgentTests(SimpleTestCase):
         self.assertNotIn("uninstalled Scheduled Task", stderr.getvalue())
 
 
+class ProcessStartedAtTests(SimpleTestCase):
+    def test_reads_the_win32_start_time_only_on_windows(self) -> None:
+        from app.spotty_bunny_agent_win32 import _process_started_at
+
+        with patch(
+            "app.spotty_bunny_agent_win32._win32_process_start_time",
+            return_value=123.5,
+        ) as read:
+            with patch("app.spotty_bunny_agent_win32.sys.platform", "win32"):
+                self.assertEqual(_process_started_at(4242), 123.5)
+            read.assert_called_once_with(4242)
+
+    def test_is_unknown_elsewhere(self) -> None:
+        from app.spotty_bunny_agent_win32 import _process_started_at
+
+        with (
+            patch("app.spotty_bunny_agent_win32.sys.platform", "linux"),
+            patch("app.spotty_bunny_agent_win32._win32_process_start_time") as read,
+        ):
+            self.assertIsNone(_process_started_at(4242))
+        read.assert_not_called()
+
+
 class StatusAgentTests(SimpleTestCase):
     def test_not_installed_shape(self) -> None:
         from app.spotty_bunny_agent_win32 import status_agent
@@ -544,6 +567,81 @@ class StatusAgentTests(SimpleTestCase):
         self.assertIn("last_chord: unknown", lines)
         self.assertNotIn(f"tap: {TAP_STATE_OK}", lines)
         read.assert_not_called()
+
+    def _status_lines(
+        self, *, health_updated_at: float, process_started_at: float | None
+    ):
+        """status of a running overlay with this health age and start time.
+
+        *process_started_at* None means the start time cannot be read.
+        """
+        from app.spotty_bunny_agent_win32 import status_agent
+        from app.spotty_bunny_launch import spotty_bunny_pid_path
+        from app.spotty_bunny_tap_health import TAP_STATE_OK, SpottyBunnyHealth
+
+        health = SpottyBunnyHealth(
+            last_chord_at=1_700_000_000.0,
+            last_event_at=None,
+            reinstall_failures=0,
+            tap=TAP_STATE_OK,
+            updated_at=health_updated_at,
+        )
+        lines: list[str] = []
+        with TemporaryDirectory() as tmp:
+            pid_dir = Path(tmp) / "run"
+            pid_file = spotty_bunny_pid_path(pid_dir=pid_dir)
+            pid_file.parent.mkdir(parents=True)
+            # Written (or rewritten) *after* everything else: it must not
+            # decide anything.
+            pid_file.write_text("4242\nabc\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.spotty_bunny_agent_win32.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_agent_win32.read_spotty_bunny_health",
+                    return_value=health,
+                ),
+                patch(
+                    "app.spotty_bunny_agent_win32._process_started_at",
+                    return_value=process_started_at,
+                ) as started,
+            ):
+                status_agent(
+                    pid_dir=pid_dir,
+                    platform="win32",
+                    print_fn=lines.append,
+                    schtasks=_FakeSchtasks(),
+                )
+        started.assert_called_once_with(4242)
+        return lines
+
+    def test_health_from_before_the_process_started_is_not_reported(self) -> None:
+        lines = self._status_lines(
+            health_updated_at=1_000.0, process_started_at=5_000.0
+        )
+        self.assertIn("running: yes", lines)
+        self.assertIn("tap: unknown", lines)
+        self.assertIn("last_chord: unknown", lines)
+
+    def test_health_written_since_the_process_started_is_reported(self) -> None:
+        lines = self._status_lines(
+            health_updated_at=5_002.0, process_started_at=5_000.0
+        )
+        self.assertIn("tap: ok", lines)
+
+    def test_a_health_write_within_clock_slack_of_the_start_is_reported(self) -> None:
+        lines = self._status_lines(
+            health_updated_at=4_999.5, process_started_at=5_000.0
+        )
+        self.assertIn("tap: ok", lines)
+
+    def test_an_unreadable_start_time_trusts_the_snapshot(self) -> None:
+        # Not a guess from the pid file's time, which the launcher rewrites
+        # after the overlay is up.
+        lines = self._status_lines(health_updated_at=1_000.0, process_started_at=None)
+        self.assertIn("tap: ok", lines)
 
     def test_unhealthy_when_tap_not_ok_while_running(self) -> None:
         from app.spotty_bunny_agent_win32 import status_agent
