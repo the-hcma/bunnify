@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import socket
 import subprocess
 import sys
 import time
@@ -95,19 +94,19 @@ def ensure_local_server(
 
 
 def port_is_free(port: int) -> bool:
-    """Return whether ``port`` can be bound with ``SO_REUSEADDR`` (Django-compatible).
+    """Return whether ``port`` can be bound (Django-compatible).
 
-    A plain bind without reuse can fail on macOS after a process exits while the
-    prior listen socket is still draining, even though nothing accepts connections
-    and Django's runserver (which sets reuse) could start successfully.
+    Shares ``server_cli``'s probe, so choosing a port here and the server's own
+    check agree. POSIX binds with ``SO_REUSEADDR``: a plain bind can fail on
+    macOS after a process exits while the prior listen socket is still
+    draining, even though nothing accepts connections and Django's runserver
+    (which sets reuse) could start successfully. On Windows that option would
+    let the probe bind onto a port another server is listening on, so it uses
+    ``SO_EXCLUSIVEADDRUSE`` there (#535).
     """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
-        candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            candidate.bind(("127.0.0.1", port))
-        except OSError:
-            return False
-    return True
+    from app.server_cli import _port_is_free
+
+    return _port_is_free(port)
 
 
 def stop_local_server(
