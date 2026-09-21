@@ -1145,6 +1145,8 @@ class _FakeWin32Con:
     WM_LBUTTONUP = 0x0202
     WM_RBUTTONUP = 0x0205
     WM_CONTEXTMENU = 0x007B
+    EM_SETSEL = 0x00B1
+    EM_SCROLLCARET = 0x00B7
     MF_STRING = 0x0000
     TPM_LEFTALIGN = 0x0000
     TPM_RETURNCMD = 0x0100
@@ -1434,6 +1436,44 @@ class ThemedOverlayWndProcTests(SimpleTestCase):
         )
         wndproc(1, _FakeWin32Con.WM_PAINT, 0, 0)
         win32gui.DefWindowProc.assert_called_once_with(1, _FakeWin32Con.WM_PAINT, 0, 0)
+
+
+class SetEditTextTests(SimpleTestCase):
+    """Programmatic text changes leave the caret at the end (#541)."""
+
+    def _set(self, text: str) -> MagicMock:
+        from app.spotty_bunny_win32_app import _set_edit_text
+
+        win32gui = MagicMock()
+        _set_edit_text(42, text, win32gui=win32gui, win32con=_FakeWin32Con)
+        return win32gui
+
+    def test_the_text_is_set_and_the_caret_moved_to_the_end(self) -> None:
+        win32gui = self._set("bheitdoc")
+        win32gui.SetWindowText.assert_called_once_with(42, "bheitdoc")
+        win32gui.SendMessage.assert_any_call(42, _FakeWin32Con.EM_SETSEL, 8, 8)
+        win32gui.SendMessage.assert_any_call(42, _FakeWin32Con.EM_SCROLLCARET, 0, 0)
+
+    def test_the_caret_is_placed_after_the_text_is_set(self) -> None:
+        win32gui = self._set("gh")
+        names = [call[0] for call in win32gui.mock_calls]
+        self.assertLess(names.index("SetWindowText"), names.index("SendMessage"))
+
+    def test_a_lone_surrogate_does_not_raise_or_lose_the_caret(self) -> None:
+        # An EDIT can hold one (pasted from a file name) and history/completion
+        # feed the field text straight back in.
+        win32gui = self._set("a\ud83dz")
+        win32gui.SetWindowText.assert_called_once_with(42, "a\ud83dz")
+        win32gui.SendMessage.assert_any_call(42, _FakeWin32Con.EM_SETSEL, 3, 3)
+
+    def test_empty_text_puts_the_caret_at_zero(self) -> None:
+        win32gui = self._set("")
+        win32gui.SendMessage.assert_any_call(42, _FakeWin32Con.EM_SETSEL, 0, 0)
+
+    def test_the_end_counts_utf16_code_units_not_characters(self) -> None:
+        # A rabbit emoji is one character but two UTF-16 units.
+        win32gui = self._set("\U0001f430x")
+        win32gui.SendMessage.assert_any_call(42, _FakeWin32Con.EM_SETSEL, 3, 3)
 
 
 class LogoContextMenuTests(SimpleTestCase):
@@ -2082,7 +2122,20 @@ class RealCreateOverlayWindowTests(SimpleTestCase):
             controller.set_completion_rows([])
             controller.set_status_text("")
             self.assertEqual(size(), (640, 76))
-            self.assertTrue(win32gui.FindWindowEx(hwnd, 0, "EDIT", None))
+            edit = win32gui.FindWindowEx(hwnd, 0, "EDIT", None)
+            self.assertTrue(edit)
+            # Programmatic text (Tab completion, history) leaves the caret at
+            # the end of the real EDIT, not at 0 (#541); the end counts UTF-16
+            # units.
+            for text, units in (("bheitdoc", 8), ("", 0), ("\U0001f430x", 3)):
+                controller.set_field_text(text)
+                selection = win32gui.SendMessage(edit, win32con.EM_GETSEL, 0, 0)
+                self.assertEqual(
+                    (selection & 0xFFFF, (selection >> 16) & 0xFFFF),
+                    (units, units),
+                    text,
+                )
+            controller.set_field_text("")
 
             # A real click on the real logo control reaches the overlay's
             # wndproc as STN_CLICKED and opens About. The logo is the first

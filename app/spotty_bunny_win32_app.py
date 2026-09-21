@@ -1132,7 +1132,9 @@ def _create_overlay_window(
     _set_logo_outdated(controller._outdated)
     controller.set_logo_outdated = _set_logo_outdated
     controller.get_field_text = lambda: win32gui.GetWindowText(edit_hwnd)
-    controller.set_field_text = lambda text: win32gui.SetWindowText(edit_hwnd, text)
+    controller.set_field_text = lambda text: _set_edit_text(
+        edit_hwnd, text, win32gui=win32gui, win32con=win32con
+    )
 
     def _set_status_text(text: str) -> None:
         win32gui.SetWindowText(status_hwnd, text)
@@ -1379,6 +1381,21 @@ def _handle_tray_message(
         return
     if lparam == win32con.WM_RBUTTONUP:
         _show_context_menu(controller, win32gui=win32gui, win32con=win32con)
+
+
+def _set_edit_text(edit_hwnd: int, text: str, *, win32gui, win32con) -> None:
+    """Replace the EDIT control's text and leave the caret at its end.
+
+    ``SetWindowText`` resets an EDIT's caret to position 0, so after Tab
+    completion, history navigation or a list selection the user would be left
+    at the start of the new text (#541). ``EM_SETSEL`` counts UTF-16 code units.
+    """
+    win32gui.SetWindowText(edit_hwnd, text)
+    # surrogatepass: an EDIT can hold an unpaired surrogate (pasted from a file
+    # name, say) and it comes straight back here via history/completion.
+    end = len(text.encode("utf-16-le", errors="surrogatepass")) // 2
+    win32gui.SendMessage(edit_hwnd, win32con.EM_SETSEL, end, end)
+    win32gui.SendMessage(edit_hwnd, win32con.EM_SCROLLCARET, 0, 0)
 
 
 def _set_window_timer(hwnd: int, timer_id: int, interval_ms: int) -> None:
