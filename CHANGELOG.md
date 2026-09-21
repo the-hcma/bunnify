@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.0.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.15.0...bunnify-v1.0.0) (2026-09-21)
+
+
+### Features
+
+* give the Windows overlay the macOS panel's look ([#486](https://github.com/the-hcma/bunnify/issues/486)) ([b016240](https://github.com/the-hcma/bunnify/commit/b01624092116277f0c7a1791fb3f3c6930e14643))
+* open About when the Windows overlay's bunny logo is clicked ([#504](https://github.com/the-hcma/bunnify/issues/504)) ([0076095](https://github.com/the-hcma/bunnify/commit/0076095386cc976b12ced930cb209e747c1445df))
+
+
+### Bug Fixes
+
+* describe a git-based pipx install as one, not as the PyPI release ([#517](https://github.com/the-hcma/bunnify/issues/517)) ([d540899](https://github.com/the-hcma/bunnify/commit/d5408994203982b88eb39b92577e2b095fccf615))
+* describe Spotty Bunny for the platform in `spotty-bunny --help` and drop checkout scripts from `bunnify --help` ([#531](https://github.com/the-hcma/bunnify/issues/531)) ([6bc9b00](https://github.com/the-hcma/bunnify/commit/6bc9b007930074b1b41cd394e6f7de03a82981ee))
+* do not report a stopped overlay's last tap health in status ([#530](https://github.com/the-hcma/bunnify/issues/530)) ([53e120e](https://github.com/the-hcma/bunnify/commit/53e120e4c69b53ccb165480046d49fc234152093))
+* find the pipx app and venv by their Windows names ([#516](https://github.com/the-hcma/bunnify/issues/516)) ([d6ecf45](https://github.com/the-hcma/bunnify/commit/d6ecf450947001d137c80cf5ec73e08a58dd3fd7))
+* ignore a health snapshot from before the running overlay started ([#539](https://github.com/the-hcma/bunnify/issues/539)) ([b029378](https://github.com/the-hcma/bunnify/commit/b0293785c8f5da5c4688729ed08441ceed2f7899))
+* keep the Windows overlay usable when the foreground lock refuses focus ([#484](https://github.com/the-hcma/bunnify/issues/484)) ([2f5ca97](https://github.com/the-hcma/bunnify/commit/2f5ca9722dac9ecff0fbffb6d6198ab5894c315d))
+* leave the caret at the end after Tab completion and history ([#542](https://github.com/the-hcma/bunnify/issues/542)) ([2f0163b](https://github.com/the-hcma/bunnify/commit/2f0163bd79aee1e8c55fbf81230dd6e6b6575fc5))
+* let Upgrade and Install from the overlay's own menu hand off to a new instance ([#532](https://github.com/the-hcma/bunnify/issues/532)) ([398c76a](https://github.com/the-hcma/bunnify/commit/398c76a21a68a43710b33692e23c3af5519c0aec))
+* make the help and onboard Spotty Bunny guidance work for Windows ([#519](https://github.com/the-hcma/bunnify/issues/519)) ([b9da86b](https://github.com/the-hcma/bunnify/commit/b9da86bf1c2778bf330d9b2c747055f6faa7ef64))
+* paint the Windows About window with one uniform background ([#521](https://github.com/the-hcma/bunnify/issues/521)) ([e3d0176](https://github.com/the-hcma/bunnify/commit/e3d0176adcdada55668035e06a6a89bcb401a431))
+* print the onboard install summary once ([#528](https://github.com/the-hcma/bunnify/issues/528)) ([15b859c](https://github.com/the-hcma/bunnify/commit/15b859c64ea1c4212a44a0753934dab99706c663))
+* recognize the Windows overlay by command line, not image name ([#505](https://github.com/the-hcma/bunnify/issues/505)) ([80ee7df](https://github.com/the-hcma/bunnify/commit/80ee7df74cc96e0e06f488f2bf5b0781857cf14e))
+* record the overlay's own tap health at startup ([#536](https://github.com/the-hcma/bunnify/issues/536)) ([4d1703f](https://github.com/the-hcma/bunnify/commit/4d1703f322a9c135d75583c5ef98df3a810e3ce3))
+* report the commit of a pipx install from git instead of unknown ([#515](https://github.com/the-hcma/bunnify/issues/515)) ([0166a3e](https://github.com/the-hcma/bunnify/commit/0166a3e1ad13219b985a687216b970055bd64a75))
+* run the managed bunnify-server on Windows ([#537](https://github.com/the-hcma/bunnify/issues/537)) ([3ef1f75](https://github.com/the-hcma/bunnify/commit/3ef1f754f0a776e8efe4ef2ec9167b9942d1b929))
+* scope the Spotty Bunny Scheduled Task to the current user ([#481](https://github.com/the-hcma/bunnify/issues/481)) ([690d333](https://github.com/the-hcma/bunnify/commit/690d33388ac28a7e022ada1a5b2fe1e6344be6b9))
+* show the action menu when the Windows overlay's bunny is right-clicked ([#520](https://github.com/the-hcma/bunnify/issues/520)) ([747ac3c](https://github.com/the-hcma/bunnify/commit/747ac3c176a213ea0e9fcb3eb1837cdff4cabd58))
+* start the Windows overlay timers through user32 instead of win32gui ([#483](https://github.com/the-hcma/bunnify/issues/483)) ([01853ec](https://github.com/the-hcma/bunnify/commit/01853ece48634b01b8ea672269f18cdf56008db6))
+* stop the running overlay before install/upgrade re-runs the task ([#518](https://github.com/the-hcma/bunnify/issues/518)) ([8c01ca2](https://github.com/the-hcma/bunnify/commit/8c01ca2cb4aa0b80f7046d86ab840d96e17894de))
+* stop the Windows icon code destroying its own device context ([#482](https://github.com/the-hcma/bunnify/issues/482)) ([dd4032e](https://github.com/the-hcma/bunnify/commit/dd4032e4149e441357ed00597a3856616472cfaa))
+
+
+### Documentation
+
+* add a Windows section to CONTRIBUTING ([#506](https://github.com/the-hcma/bunnify/issues/506)) ([0142e9e](https://github.com/the-hcma/bunnify/commit/0142e9ee214863482758b268e67c8e1e930a45bc))
+
 ## [0.15.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.14.0...bunnify-v0.15.0) (2026-09-19)
 
 
