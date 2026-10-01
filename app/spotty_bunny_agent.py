@@ -219,9 +219,12 @@ def doctor_agent(
             "If the hotkey still fails, re-authorize the interpreter above."
         )
     healthy = diagnosis.healthy
-    if healthy and recorded is None and not stale_plist:
-        record_grant(current)
-        out("Recorded this interpreter as the authorized one for future checks.")
+    if healthy and recorded is None:
+        out(
+            "No authorized interpreter is on record, so a future change cannot "
+            f"be pinpointed. Run `{COMMAND_NAME} "
+            f"{'upgrade' if installed else 'install'}` to record it."
+        )
     if stale_plist:
         healthy = False
         out(f"problem: the LaunchAgent plist is stale. Run: {COMMAND_NAME} upgrade")

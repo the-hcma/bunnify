@@ -43,6 +43,7 @@ class InterpreterIdentity:
     sha256: str | None
     version: str | None
     app_path: str | None = None
+    app_sha256: str | None = None
 
     def label(self) -> str:
         version = self.version or "unknown version"
@@ -56,8 +57,10 @@ def describe_interpreter(
 ) -> InterpreterIdentity:
     """Return the current identity of *interpreter* (resolved real path)."""
     real = interpreter.resolve()
+    app_path = _framework_app_binary(real)
     return InterpreterIdentity(
-        app_path=_framework_app_binary(real),
+        app_path=app_path,
+        app_sha256=_file_sha256(Path(app_path)) if app_path else None,
         path=str(real),
         sha256=_file_sha256(real),
         version=_interpreter_version(real, run=run),
@@ -149,6 +152,7 @@ def read_recorded_grant(*, grant_dir: Path | None = None) -> InterpreterIdentity
         payload = json.loads(_grant_path(grant_dir).read_text(encoding="utf-8"))
         return InterpreterIdentity(
             app_path=payload.get("app_path"),
+            app_sha256=payload.get("app_sha256"),
             path=str(payload["path"]),
             sha256=payload.get("sha256"),
             version=payload.get("version"),
@@ -174,6 +178,12 @@ def record_grant(
 def _binary_changed(
     recorded: InterpreterIdentity, current: InterpreterIdentity
 ) -> bool:
+    if (
+        recorded.app_sha256 is not None
+        and current.app_sha256 is not None
+        and recorded.app_sha256 != current.app_sha256
+    ):
+        return True
     if recorded.sha256 is not None and current.sha256 is not None:
         return recorded.sha256 != current.sha256
     return (

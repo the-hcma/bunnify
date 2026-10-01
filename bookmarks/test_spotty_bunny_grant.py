@@ -125,6 +125,21 @@ class SpottyBunnyGrantTests(SimpleTestCase):
             )
             self.assertIn(str(app.resolve()), "\n".join(result.lines))
 
+    def test_diagnose_app_binary_replaced_with_same_launcher(self) -> None:
+        recorded = InterpreterIdentity(
+            OLD.path, OLD.sha256, OLD.version, "/a/Python", "1" * 64
+        )
+        current = InterpreterIdentity(
+            OLD.path, OLD.sha256, OLD.version, "/a/Python", "2" * 64
+        )
+        result = diagnose_grant(
+            accessibility=False,
+            current=current,
+            input_monitoring=False,
+            recorded=recorded,
+        )
+        self.assertEqual(result.state, "interpreter_modified")
+
     def test_diagnose_unrecorded(self) -> None:
         result = diagnose_grant(
             accessibility=False, current=NEW, input_monitoring=False, recorded=None
@@ -183,11 +198,12 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertIn(f"authorized_interpreter: {OLD.label()}", text)
         self.assertIn(NEW.path, text)
 
-    def test_doctor_healthy_baselines_unrecorded_grant(self) -> None:
+    def test_doctor_does_not_write_baseline_for_unrecorded_grant(self) -> None:
         code, text = self._run(current=OLD, recorded=None, tcc=TccStatus(True, True))
         self.assertEqual(code, 0)
         self.assertIn("authorized_interpreter: not recorded", text)
-        self.assertEqual(self.recorded_calls, 1)
+        self.assertIn("to record it", text)
+        self.assertEqual(self.recorded_calls, 0)
 
     def test_doctor_rejects_non_macos(self) -> None:
         errors: list[str] = []
