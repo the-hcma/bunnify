@@ -246,8 +246,19 @@ jobs:
     - name: Import the PyObjC overlay
       run: uv run python -c "import app.spotty_bunny_app"
 
-    - name: Run unit tests
+    - name: Validate spotty-bunny script
+      run: ./scripts/spotty-bunny --help
+
+    - name: Run unit tests (macOS-only tests must not skip)
+      env:
+        BUNNIFY_REQUIRE_MACOS_TESTS: "1"
       run: ./test_bunnify
+
+    - name: Provide GNU timeout for the packaging smoke
+      run: command -v timeout >/dev/null || brew install coreutils
+
+    - name: Run installed-wheel packaging smoke
+      run: ./test_packaging
 
   secret-scan:
     name: Secret Scan

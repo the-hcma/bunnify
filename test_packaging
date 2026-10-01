@@ -275,6 +275,11 @@ installed_env "$bin_dir/bunnify-server" --version
 installed_env "$bin_dir/spotty-bunny" --help >/dev/null
 installed_env "$bin_dir/spotty-bunny" --version
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "📦 Verifying the installed wheel pulled in PyObjC for the overlay..."
+    "$venv_dir/bin/python" -c "import app.spotty_bunny_app"
+fi
+
 echo "📦 Verifying installed --completion bash needs no source checkout..."
 completion_output="$("$bin_dir/bunnify" --completion bash)"
 if [[ "$completion_output" != *"_bunnify_completion"* ]]; then
