@@ -296,21 +296,35 @@ def run_doctor(
     print_fn: Callable[[str], None] | None = None,
     theme: Theme | None = None,
 ) -> int:
-    """Diagnose the Spotty Bunny hotkey and say exactly what to re-authorize.
+    """Comprehensive diagnostics: the server, plus Spotty Bunny when present.
 
-    Returns 0 when nothing is wrong, 1 otherwise.
+    On macOS, runs Spotty Bunny's own doctor (privacy-grant diagnosis with the
+    exact System Settings fix) when it is installed or running. Returns 0 when
+    nothing is wrong, 1 otherwise.
     """
     log = print_fn or click.echo
     colors = theme if theme is not None else Theme(enabled=False)
-    if sys.platform != "darwin":
-        log("Nothing to diagnose: `bunnify doctor` checks macOS privacy grants.")
-        return 0
-    from app.spotty_bunny_agent import doctor_agent
-
     log(colors.header(_command_banner("doctor")))
-    return doctor_agent(
-        print_err=lambda message: log(colors.warn(message)),
-        print_fn=log,
+    log("")
+    log(colors.header("Server"))
+    code = run_status(print_fn=log, theme=colors)
+    log("")
+    log(colors.header("Spotty Bunny"))
+    if sys.platform != "darwin":
+        log("Privacy-grant diagnostics are only available on macOS.")
+        return code
+    from app.spotty_bunny_agent import doctor_agent, is_agent_installed
+    from app.spotty_bunny_launch import spotty_bunny_is_running
+
+    if not (is_agent_installed() or spotty_bunny_is_running()):
+        log("Not installed. Install with: bunnify spotty-bunny install")
+        return code
+    return max(
+        code,
+        doctor_agent(
+            print_err=lambda message: log(colors.warn(message)),
+            print_fn=log,
+        ),
     )
 
 

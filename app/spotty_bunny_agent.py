@@ -146,6 +146,30 @@ def doctor_agent(
         out(f"Install it with: {COMMAND_NAME} install")
         return 1
     interpreter = interpreter_for_program(binary)
+    if not interpreter.exists():
+        recorded = read_recorded_grant()
+        out(f"problem: interpreter no longer exists: {interpreter}")
+        if recorded is not None:
+            out(f"authorized_interpreter: {recorded.label()}")
+        fresh = spotty_bunny_program() if program is None else None
+        fresh_interpreter = (
+            interpreter_for_program(fresh) if fresh is not None else None
+        )
+        if fresh_interpreter is None or not fresh_interpreter.exists():
+            out(
+                "The installed LaunchAgent points at a removed Python (typically "
+                "after a Python upgrade or pipx reinstall). Reinstall "
+                f"spotty-bunny, then run: {COMMAND_NAME} upgrade"
+            )
+            return 1
+        out(
+            f"A replacement interpreter is available: {fresh_interpreter}. "
+            "Checking it instead; the LaunchAgent plist is stale."
+        )
+        interpreter = fresh_interpreter
+        stale_plist = True
+    else:
+        stale_plist = False
     try:
         tcc = (probe_tcc or _probe_tcc)(interpreter)
     except ImportError:
@@ -172,10 +196,13 @@ def doctor_agent(
     out(f"diagnosis: {diagnosis.state}")
     for line in diagnosis.lines:
         out(line)
-    if diagnosis.state == "ok" and recorded is None:
+    healthy = diagnosis.healthy
+    if diagnosis.healthy and recorded != current:
         record_grant(current)
         out("Recorded this interpreter as the authorized one for future checks.")
-    healthy = diagnosis.healthy
+    if stale_plist:
+        healthy = False
+        out(f"problem: the LaunchAgent plist is stale. Run: {COMMAND_NAME} upgrade")
     health = read_spotty_bunny_health()
     if spotty_bunny_is_running() and health is not None and health.tap != TAP_STATE_OK:
         healthy = False

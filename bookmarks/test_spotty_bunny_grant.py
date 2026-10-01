@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -72,11 +73,13 @@ class SpottyBunnyGrantTests(SimpleTestCase):
         self.assertIn("Input Monitoring", text)
         self.assertIn("bunnify spotty-bunny upgrade", text)
 
-    def test_diagnose_moved_wins_even_if_probe_reports_granted(self) -> None:
+    def test_diagnose_stale_record_with_both_granted_is_healthy(self) -> None:
         result = diagnose_grant(
             accessibility=True, current=NEW, input_monitoring=True, recorded=OLD
         )
-        self.assertEqual(result.state, "interpreter_moved")
+        self.assertEqual(result.state, "ok")
+        self.assertTrue(result.healthy)
+        self.assertIn(OLD.label(), "\n".join(result.lines))
 
     def test_diagnose_revoked_same_interpreter(self) -> None:
         result = diagnose_grant(
@@ -126,7 +129,7 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
             patch("app.spotty_bunny_agent.read_spotty_bunny_health", return_value=None),
         ):
             program = Path(tmp) / "spotty-bunny"
-            program.write_text("#!/usr/bin/python3\n", encoding="utf-8")
+            program.write_text(f"#!{sys.executable}\n", encoding="utf-8")
             code = doctor_agent(
                 home=Path(tmp),
                 platform="darwin",
@@ -155,3 +158,72 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         code = doctor_agent(platform="linux", print_err=errors.append)
         self.assertEqual(code, 1)
         self.assertTrue(errors)
+
+    def test_doctor_refreshes_stale_record_when_granted(self) -> None:
+        code, text = self._run(current=NEW, recorded=OLD, tcc=TccStatus(True, True))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.recorded_calls, 1)
+        self.assertIn("diagnosis: ok", text)
+
+    def test_doctor_reports_missing_interpreter(self) -> None:
+        lines: list[str] = []
+        with (
+            TemporaryDirectory() as tmp,
+            patch("app.spotty_bunny_agent.read_recorded_grant", return_value=OLD),
+        ):
+            program = Path(tmp) / "spotty-bunny"
+            program.write_text("#!/nonexistent/python\n", encoding="utf-8")
+            code = doctor_agent(
+                home=Path(tmp),
+                platform="darwin",
+                print_fn=lines.append,
+                probe_tcc=lambda _p: TccStatus(True, True),
+                program=program,
+            )
+        text = "\n".join(lines)
+        self.assertEqual(code, 1)
+        self.assertIn("no longer exists", text)
+        self.assertIn(f"authorized_interpreter: {OLD.label()}", text)
+
+
+class BunnifyDoctorCommandTests(SimpleTestCase):
+    def test_non_macos_reports_server_and_skips_spotty(self) -> None:
+        from app.cli import run_doctor
+
+        lines: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "linux"),
+            patch("app.cli.run_status", return_value=0),
+        ):
+            code = run_doctor(print_fn=lines.append)
+        self.assertEqual(code, 0)
+        self.assertIn("only available on macOS", "\n".join(lines))
+
+    def test_macos_runs_spotty_doctor_when_installed(self) -> None:
+        from app.cli import run_doctor
+
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.run_status", return_value=0),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch("app.spotty_bunny_agent.doctor_agent", return_value=1) as doctor,
+        ):
+            code = run_doctor(print_fn=lambda _l: None)
+        doctor.assert_called_once()
+        self.assertEqual(code, 1)
+
+    def test_macos_skips_spotty_doctor_when_absent(self) -> None:
+        from app.cli import run_doctor
+
+        with (
+            patch("app.cli.sys.platform", "darwin"),
+            patch("app.cli.run_status", return_value=0),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=False),
+            patch(
+                "app.spotty_bunny_launch.spotty_bunny_is_running", return_value=False
+            ),
+            patch("app.spotty_bunny_agent.doctor_agent") as doctor,
+        ):
+            code = run_doctor(print_fn=lambda _l: None)
+        doctor.assert_not_called()
+        self.assertEqual(code, 0)

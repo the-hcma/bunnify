@@ -70,6 +70,17 @@ def diagnose_grant(
     recorded: InterpreterIdentity | None,
 ) -> GrantDiagnosis:
     """Explain, as specifically as the evidence allows, what to re-authorize."""
+    if accessibility and input_monitoring:
+        lines = [
+            f"Accessibility and Input Monitoring are granted for {current.label()}."
+        ]
+        if recorded is not None and recorded != current:
+            lines.append(
+                f"Note: the recorded authorized interpreter was {recorded.label()}; "
+                "the grants are present for the current one, so the record is "
+                "refreshed."
+            )
+        return GrantDiagnosis(healthy=True, lines=tuple(lines), state="ok")
     if recorded is not None and recorded.path != current.path:
         return GrantDiagnosis(
             healthy=False,
@@ -98,15 +109,6 @@ def diagnose_grant(
                 *_reauthorize_steps(current),
             ),
             state="interpreter_modified",
-        )
-    if accessibility and input_monitoring:
-        return GrantDiagnosis(
-            healthy=True,
-            lines=(
-                "Accessibility and Input Monitoring are granted for "
-                f"{current.label()}.",
-            ),
-            state="ok",
         )
     missing = " and ".join(
         name
