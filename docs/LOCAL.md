@@ -123,7 +123,20 @@ bunnify spotty-bunny upgrade     # rewrite plist + bounce launchd
 
 ### Diagnose a dead hotkey with `bunnify doctor`
 
-If the chord stops working (classically after a Homebrew Python upgrade or a pipx reinstall), **run `bunnify doctor` first**; it is the supported way to find out what is wrong. macOS grants Input Monitoring and Accessibility to one specific interpreter executable, so when that executable's path or binary changes the old grant silently stops applying. `install` and `upgrade` record the interpreter that was authorized (real path, version, and a SHA-256 of the binary), and `doctor` compares it with the interpreter launchd execs now. It reports `interpreter_moved` (a different path), `interpreter_modified` (same path, replaced binary), `revoked` (same interpreter, grant removed or reset), or `unrecorded` (no earlier grant on record), and for each prints System Settings steps and the interpreter path to add (plus the `Python.app` binary for framework builds). `doctor` never writes the record, because its permission probe may reflect the terminal; only `install` and `upgrade` do, so run one of them once after updating bunnify to start tracking. The permission check runs from your terminal session, so macOS may attribute the grants to the terminal app; treat a clean result as "no change detected" and re-authorize the interpreter if the hotkey still fails. `bunnify doctor` also reports server reachability and runs the Spotty Bunny check when it is installed or running; `bunnify spotty-bunny doctor` runs only the Spotty Bunny part. If the interpreter launchd would exec was removed, `doctor` says so and names the stale plist instead of a permissions failure. Exit `0` means nothing is wrong.
+If the chord stops working (classically after a Homebrew Python upgrade or a pipx reinstall), **run `bunnify doctor` first**; it is the supported way to find out what is wrong. It reports server reachability and, when Spotty Bunny is installed or running, checks it too; `bunnify spotty-bunny doctor` runs only the Spotty Bunny part. Exit `0` means nothing is wrong.
+
+macOS grants Input Monitoring and Accessibility to one specific executable, so when that executable's path or binary changes the old grant silently stops applying. `install` and `upgrade` record the interpreter that was authorized (real path, version, and SHA-256 of the binary); `doctor` never writes that record. Run `install` or `upgrade` once after updating bunnify to start tracking. `doctor` compares the record with the interpreter launchd starts now and reports one of:
+
+- `interpreter_moved`: a different path (for example a new Homebrew patch release).
+- `interpreter_modified`: same path, replaced binary.
+- `revoked`: same interpreter, grant removed or reset.
+- `unrecorded`: no earlier grant on record.
+
+Each comes with System Settings steps and the path to add. For framework Pythons (Homebrew, python.org) that path is the `Python.app` bundle, which System Settings lists as "Python"; the `bin/python3.x` launcher hands off to it, so adding the launcher does not help.
+
+`doctor` also flags a running overlay whose executable (`running_executable`) differs from what launchd would start now, typically the old, already deleted Python after `brew upgrade`. The hotkey keeps working until the overlay restarts (log out, reboot, `upgrade`), then dies, so re-authorize before that. If the interpreter launchd would start was removed outright, `doctor` says so and names the stale plist.
+
+How permissions are checked (`permissions_source`): a launchd-started overlay records its own Accessibility and Input Monitoring status, and `doctor` uses that report when it comes from the live process and is recent. Otherwise, for example when the overlay is not running or was started from a terminal, `doctor` probes from your terminal session, where macOS may attribute the grants to the terminal app; treat a clean result there as "no change detected" and re-authorize if the hotkey still fails.
 
 ### Uninstall
 

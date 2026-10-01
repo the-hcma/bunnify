@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,7 @@ from app.spotty_bunny_grant import (
     read_recorded_grant,
     read_runtime_grant,
     record_grant,
+    runtime_grant_rejection,
 )
 from app.spotty_bunny_launch import (
     clear_spotty_bunny_pid,
@@ -201,12 +203,14 @@ def doctor_agent(
         else ()
     )
     report = read_runtime_grant()
+    rejection = (
+        runtime_grant_rejection(report, pid=running_pid)
+        if running_pid is not None and not stale_running
+        else None
+    )
     agent_report = (
         report
-        if running_pid is not None
-        and not stale_running
-        and report is not None
-        and report.pid == running_pid
+        if running_pid is not None and not stale_running and rejection is None
         else None
     )
     if agent_report is not None:
@@ -235,14 +239,12 @@ def doctor_agent(
     out(f"interpreter: {current.label()}")
     if running_executable is not None:
         out(f"running_executable: {running_executable} (pid {running_pid})")
-    out(
-        "permissions_source: "
-        + (
-            f"running spotty-bunny (pid {running_pid})"
-            if agent_report is not None
-            else "this terminal"
-        )
-    )
+    if agent_report is not None:
+        age = max(0, int(time.time() - agent_report.updated_at))
+        source = f"running spotty-bunny (pid {running_pid}, reported {age}s ago)"
+    else:
+        source = "this terminal" + (f" ({rejection})" if rejection else "")
+    out(f"permissions_source: {source}")
     out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
     out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
     out(

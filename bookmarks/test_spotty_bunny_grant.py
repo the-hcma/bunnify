@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
+import time
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import skipUnless
@@ -9,8 +12,15 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from app.spotty_bunny_agent import TccStatus, doctor_agent
+from app.spotty_bunny_agent import (
+    AGENT_LABEL,
+    TccStatus,
+    doctor_agent,
+    format_agent_plist,
+)
 from app.spotty_bunny_grant import (
+    RUNTIME_GRANT_HEARTBEAT_S,
+    RUNTIME_GRANT_MAX_AGE_S,
     InterpreterIdentity,
     RuntimeGrant,
     describe_interpreter,
@@ -20,16 +30,34 @@ from app.spotty_bunny_grant import (
     read_recorded_grant,
     read_runtime_grant,
     record_grant,
-    record_runtime_grant,
+    runtime_grant_due,
+    runtime_grant_rejection,
+    write_runtime_grant,
 )
+from app.spotty_bunny_tap_health import SpottyBunnyHealth
 
-OLD = InterpreterIdentity(
-    path="/opt/py/3.14.1/bin/python", sha256="a" * 64, version="Python 3.14.1"
-)
 NEW = InterpreterIdentity(
     path="/opt/py/3.14.2/bin/python", sha256="b" * 64, version="Python 3.14.2"
 )
+OLD = InterpreterIdentity(
+    path="/opt/py/3.14.1/bin/python", sha256="a" * 64, version="Python 3.14.1"
+)
+_HAS_PYOBJC = (
+    sys.platform == "darwin" and importlib.util.find_spec("Quartz") is not None
+)
 _PASTE_STEP = "  2. Click +, press ⌘⇧G, paste this path, and click Open:"
+
+
+def _report(**changes: object) -> RuntimeGrant:
+    base = RuntimeGrant(
+        accessibility=True,
+        executable="/opt/py/Python",
+        input_monitoring=True,
+        launchd=True,
+        pid=77,
+        updated_at=0.0,
+    )
+    return replace(base, **changes)  # type: ignore[arg-type]
 
 
 class SpottyBunnyGrantTests(SimpleTestCase):
@@ -233,27 +261,57 @@ class SpottyBunnyGrantTests(SimpleTestCase):
         self.assertTrue(os.path.isabs(executable))
 
     def test_runtime_grant_round_trip_and_corrupt(self) -> None:
+        grant = _report(pid=9, updated_at=1.5)
         with TemporaryDirectory() as tmp:
             grant_dir = Path(tmp) / "nested"
             self.assertIsNone(read_runtime_grant(grant_dir=grant_dir))
-            self.assertTrue(
-                record_runtime_grant(
-                    accessibility=True,
-                    executable="/opt/py/Python",
-                    grant_dir=grant_dir,
-                    input_monitoring=False,
-                    pid=9,
-                    time_fn=lambda: 1.5,
-                )
-            )
-            self.assertEqual(
-                read_runtime_grant(grant_dir=grant_dir),
-                RuntimeGrant(True, "/opt/py/Python", False, 9, 1.5),
-            )
+            self.assertTrue(write_runtime_grant(grant, grant_dir=grant_dir))
+            self.assertEqual(read_runtime_grant(grant_dir=grant_dir), grant)
             (grant_dir / ".spotty-bunny-runtime-grant").write_text(
                 "{}", encoding="utf-8"
             )
             self.assertIsNone(read_runtime_grant(grant_dir=grant_dir))
+
+    def test_runtime_grant_without_provenance_reads_as_not_launchd(self) -> None:
+        with TemporaryDirectory() as tmp:
+            grant_dir = Path(tmp)
+            (grant_dir / ".spotty-bunny-runtime-grant").write_text(
+                '{"accessibility": true, "executable": "/x", '
+                '"input_monitoring": true, "pid": 1, "updated_at": 2.0}',
+                encoding="utf-8",
+            )
+            grant = read_runtime_grant(grant_dir=grant_dir)
+        assert grant is not None
+        self.assertFalse(grant.launchd)
+
+    def test_runtime_grant_due_on_change_or_heartbeat_only(self) -> None:
+        first = _report(updated_at=100.0)
+        self.assertTrue(runtime_grant_due(None, first))
+        self.assertFalse(runtime_grant_due(first, _report(updated_at=160.0)))
+        self.assertTrue(
+            runtime_grant_due(first, _report(input_monitoring=False, updated_at=160.0))
+        )
+        self.assertTrue(
+            runtime_grant_due(
+                first, _report(updated_at=100.0 + RUNTIME_GRANT_HEARTBEAT_S)
+            )
+        )
+
+    def test_runtime_grant_rejection_reasons(self) -> None:
+        now = 1000.0
+        cases = {
+            "no report": None,
+            "pid 76": _report(pid=76, updated_at=now),
+            "not started by launchd": _report(launchd=False, updated_at=now),
+            "stale": _report(updated_at=now - RUNTIME_GRANT_MAX_AGE_S - 1),
+        }
+        for reason, report in cases.items():
+            with self.subTest(reason=reason):
+                rejection = runtime_grant_rejection(report, now=now, pid=77)
+                self.assertIn(reason, rejection or "")
+        self.assertIsNone(
+            runtime_grant_rejection(_report(updated_at=now), now=now, pid=77)
+        )
 
     def test_read_missing_or_corrupt_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -276,12 +334,16 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self,
         *,
         current: InterpreterIdentity,
+        fresh_program: bool = False,
+        health: SpottyBunnyHealth | None = None,
+        plist_program: str | None = None,
         recorded: InterpreterIdentity | None,
         report: RuntimeGrant | None = None,
         running_executable: str | None = None,
         running_pid: int | None = None,
         tcc: TccStatus,
     ) -> tuple[int, str]:
+        """Run doctor_agent; *plist_program* installs a plist instead of ``program``."""
         lines: list[str] = []
         probes: list[Path] = []
 
@@ -289,66 +351,158 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
             probes.append(path)
             return tcc
 
-        with (
-            TemporaryDirectory() as tmp,
-            patch("app.spotty_bunny_agent.describe_interpreter", return_value=current),
-            patch("app.spotty_bunny_agent.read_recorded_grant", return_value=recorded),
-            patch("app.spotty_bunny_agent.read_runtime_grant", return_value=report),
-            patch("app.spotty_bunny_agent.record_grant") as record,
-            patch(
-                "app.spotty_bunny_agent._running_agent_pid", return_value=running_pid
-            ),
-            patch(
-                "app.spotty_bunny_agent.process_executable",
-                return_value=running_executable,
-            ),
-            patch("app.spotty_bunny_agent.read_spotty_bunny_health", return_value=None),
-        ):
-            program = Path(tmp) / "spotty-bunny"
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
             program.write_text(f"#!{sys.executable}\n", encoding="utf-8")
-            code = doctor_agent(
-                home=Path(tmp),
-                platform="darwin",
-                print_fn=lines.append,
-                probe_tcc=probe,
-                program=program,
-            )
-            self.recorded_calls = record.call_count
+            if plist_program is not None:
+                plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+                plist.parent.mkdir(parents=True)
+                plist.write_text(
+                    format_agent_plist(home=home, program_arguments=[plist_program]),
+                    encoding="utf-8",
+                )
+            with (
+                patch(
+                    "app.spotty_bunny_agent.describe_interpreter", return_value=current
+                ),
+                patch(
+                    "app.spotty_bunny_agent.read_recorded_grant", return_value=recorded
+                ),
+                patch("app.spotty_bunny_agent.read_runtime_grant", return_value=report),
+                patch("app.spotty_bunny_agent.record_grant") as record,
+                patch(
+                    "app.spotty_bunny_agent._running_agent_pid",
+                    return_value=running_pid,
+                ),
+                patch(
+                    "app.spotty_bunny_agent.process_executable",
+                    return_value=running_executable,
+                ),
+                patch(
+                    "app.spotty_bunny_agent.read_spotty_bunny_health",
+                    return_value=health,
+                ),
+                patch(
+                    "app.spotty_bunny_agent.spotty_bunny_program",
+                    return_value=program if fresh_program else None,
+                ),
+            ):
+                code = doctor_agent(
+                    home=home,
+                    platform="darwin",
+                    print_fn=lines.append,
+                    probe_tcc=probe,
+                    program=None if plist_program is not None else program,
+                )
+                self.recorded_calls = record.call_count
         self.probe_calls = len(probes)
         return code, "\n".join(lines)
 
     def test_doctor_prefers_the_running_agents_own_report(self) -> None:
-        report = RuntimeGrant(True, NEW.path, True, 77, 1.0)
         code, text = self._run(
             current=NEW,
             recorded=NEW,
-            report=report,
+            report=_report(executable=NEW.path, updated_at=time.time()),
             running_executable=NEW.path,
             running_pid=77,
             tcc=TccStatus(False, False),
         )
         self.assertEqual(code, 0)
         self.assertEqual(self.probe_calls, 0)
-        self.assertIn("permissions_source: running spotty-bunny (pid 77)", text)
+        self.assertIn(
+            "permissions_source: running spotty-bunny (pid 77, reported", text
+        )
         self.assertNotIn("probed from this terminal", text)
 
     def test_doctor_ignores_report_from_another_pid(self) -> None:
-        report = RuntimeGrant(True, NEW.path, True, 76, 1.0)
         code, text = self._run(
             current=NEW,
             recorded=NEW,
-            report=report,
+            report=_report(executable=NEW.path, pid=76, updated_at=time.time()),
             running_executable=NEW.path,
             running_pid=77,
             tcc=TccStatus(False, False),
         )
         self.assertEqual(code, 1)
         self.assertEqual(self.probe_calls, 1)
-        self.assertIn("permissions_source: this terminal", text)
+        self.assertIn("permissions_source: this terminal (report is from pid 76", text)
+
+    def test_doctor_ignores_report_from_terminal_started_overlay(self) -> None:
+        code, text = self._run(
+            current=NEW,
+            recorded=NEW,
+            report=_report(executable=NEW.path, launchd=False, updated_at=time.time()),
+            running_executable=NEW.path,
+            running_pid=77,
+            tcc=TccStatus(True, True),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.probe_calls, 1)
+        self.assertIn("not started by launchd", text)
+        self.assertIn("probed from this terminal", text)
+
+    def test_doctor_ignores_stale_report(self) -> None:
+        code, text = self._run(
+            current=NEW,
+            recorded=NEW,
+            report=_report(executable=NEW.path, updated_at=1.0),
+            running_executable=NEW.path,
+            running_pid=77,
+            tcc=TccStatus(False, False),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.probe_calls, 1)
+        self.assertIn("report is stale", text)
+
+    def test_doctor_checks_replacement_and_flags_stale_plist(self) -> None:
+        code, text = self._run(
+            current=NEW,
+            fresh_program=True,
+            plist_program="/gone/bin/spotty-bunny",
+            recorded=NEW,
+            tcc=TccStatus(True, True),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.probe_calls, 1)
+        gone = Path("/gone/bin/spotty-bunny")
+        self.assertIn(f"spotty-bunny binary no longer exists: {gone}", text)
+        self.assertIn("A replacement interpreter is available", text)
+        self.assertIn("diagnosis: ok", text)
+        self.assertIn("problem: the LaunchAgent plist is stale", text)
+        self.assertEqual(self.recorded_calls, 0)
+
+    def test_doctor_reports_unhealthy_event_tap(self) -> None:
+        health = SpottyBunnyHealth(
+            last_chord_at=None,
+            last_event_at=None,
+            reinstall_failures=2,
+            tap="disabled",
+            updated_at=time.time(),
+        )
+        code, text = self._run(
+            current=NEW,
+            health=health,
+            recorded=NEW,
+            report=_report(executable=NEW.path, updated_at=time.time()),
+            running_executable=NEW.path,
+            running_pid=77,
+            tcc=TccStatus(False, False),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("problem: event tap is disabled (reinstall_failures: 2)", text)
+
+    def test_doctor_skips_tap_health_when_overlay_not_running(self) -> None:
+        health = SpottyBunnyHealth(None, None, 0, "disabled", 1.0)
+        code, text = self._run(
+            current=NEW, health=health, recorded=NEW, tcc=TccStatus(True, True)
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("event tap", text)
 
     def test_doctor_flags_agent_still_running_removed_interpreter(self) -> None:
         old_exe = "/gone/3.14.1/Python.app/Contents/MacOS/Python"
-        report = RuntimeGrant(True, old_exe, True, 77, 1.0)
+        report = _report(executable=old_exe, updated_at=time.time())
         code, text = self._run(
             current=NEW,
             recorded=None,
@@ -428,8 +582,8 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
 
 
 class SpottyBunnyGrantRecordingTests(SimpleTestCase):
-    def _install(self, *, bootstrap_ok: bool) -> MagicMock:
-        from app.spotty_bunny_agent import install_agent
+    def _reload(self, command: str, *, bootstrap_ok: bool) -> MagicMock:
+        from app.spotty_bunny_agent import install_agent, upgrade_agent
 
         def launchctl(
             argv: list[str], **_k: object
@@ -437,33 +591,85 @@ class SpottyBunnyGrantRecordingTests(SimpleTestCase):
             code = 1 if argv[1] == "bootstrap" and not bootstrap_ok else 0
             return subprocess.CompletedProcess(argv, code, "", "")
 
+        probed: list[Path] = []
+
+        def probe(path: Path) -> TccStatus:
+            probed.append(path)
+            return TccStatus(True, True)
+
         with (
             TemporaryDirectory() as tmp,
             patch("app.spotty_bunny_agent.record_grant") as record,
+            patch(
+                "app.spotty_bunny_agent.describe_interpreter", return_value=NEW
+            ) as describe,
         ):
-            program = Path(tmp) / "bin" / "spotty-bunny"
+            home = Path(tmp)
+            program = home / "bin" / "spotty-bunny"
             program.parent.mkdir()
             program.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
             program.chmod(0o755)
-            install_agent(
-                home=Path(tmp),
+            if command == "upgrade":
+                plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+                plist.parent.mkdir(parents=True)
+                plist.write_text(
+                    format_agent_plist(home=home, program_arguments=["/old/sb"]),
+                    encoding="utf-8",
+                )
+            run = upgrade_agent if command == "upgrade" else install_agent
+            run(
+                home=home,
                 launchctl=launchctl,
                 platform="darwin",
                 print_err=lambda _m: None,
-                probe_tcc=lambda _p: TccStatus(True, True),
+                probe_tcc=probe,
                 program=program,
                 skip_chord_confirm=True,
             )
+        if record.called:
+            record.assert_called_once_with(NEW)
+            describe.assert_called_once_with(probed[-1])
         return record
 
-    def test_install_records_grant_after_successful_reload(self) -> None:
-        self.assertEqual(self._install(bootstrap_ok=True).call_count, 1)
+    def test_install_and_upgrade_record_grant_after_successful_reload(self) -> None:
+        for command in ("install", "upgrade"):
+            with self.subTest(command=command):
+                record = self._reload(command, bootstrap_ok=True)
+                self.assertEqual(record.call_count, 1)
 
-    def test_install_does_not_record_grant_when_bootstrap_fails(self) -> None:
-        self.assertEqual(self._install(bootstrap_ok=False).call_count, 0)
+    def test_install_and_upgrade_skip_record_when_bootstrap_fails(self) -> None:
+        for command in ("install", "upgrade"):
+            with self.subTest(command=command):
+                record = self._reload(command, bootstrap_ok=False)
+                self.assertEqual(record.call_count, 0)
 
 
 class BunnifyDoctorCommandTests(SimpleTestCase):
+    def test_main_dispatches_doctor_with_env_file(self) -> None:
+        from click.testing import CliRunner
+
+        from app.cli import main
+
+        env_file = Path("/tmp/custom-config.toml")
+        with (
+            patch("app.cli.sys.platform", "linux"),
+            patch("app.cli.run_status", return_value=1) as status,
+        ):
+            result = CliRunner().invoke(main, ["--env-file", str(env_file), "doctor"])
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(status.call_args.kwargs["env_path"], env_file)
+        self.assertIn("only available on macOS", result.output)
+
+    def test_main_doctor_reports_config_errors_without_traceback(self) -> None:
+        from click.testing import CliRunner
+
+        from app.cli import main
+
+        with patch("app.cli.run_status", side_effect=ValueError("bad config.toml")):
+            result = CliRunner().invoke(main, ["doctor"])
+        self.assertIn("error: bad config.toml", result.output)
+        self.assertNotIsInstance(result.exception, ValueError)
+
     def test_non_macos_reports_server_and_skips_spotty(self) -> None:
         from app.cli import run_doctor
 
@@ -515,3 +721,59 @@ class BunnifyDoctorCommandTests(SimpleTestCase):
         ):
             run_doctor(env_path=env_path, print_fn=lambda _l: None)
         self.assertEqual(status.call_args.kwargs["env_path"], env_path)
+
+
+@skipUnless(_HAS_PYOBJC, "needs macOS with PyObjC")
+class SpottyBunnyRuntimeGrantRecorderTests(SimpleTestCase):
+    def _record(
+        self, *, at: float, environ: dict[str, str], input_monitoring: bool = True
+    ) -> MagicMock:
+        from app import spotty_bunny_app
+
+        with (
+            patch.dict("os.environ", environ, clear=True),
+            patch.object(spotty_bunny_app, "AXIsProcessTrusted", return_value=True),
+            patch.object(
+                spotty_bunny_app,
+                "CGPreflightListenEventAccess",
+                return_value=input_monitoring,
+            ),
+            patch.object(
+                spotty_bunny_app, "_own_executable", return_value="/opt/py/Python"
+            ),
+            patch.object(
+                spotty_bunny_app, "write_runtime_grant", return_value=True
+            ) as write,
+        ):
+            spotty_bunny_app._record_runtime_grant(time_fn=lambda: at)
+        return write
+
+    def setUp(self) -> None:
+        from app import spotty_bunny_app
+
+        patcher = patch.object(spotty_bunny_app, "_last_runtime_grant", None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_records_payload_with_launchd_provenance(self) -> None:
+        import os
+
+        write = self._record(at=5.0, environ={"XPC_SERVICE_NAME": AGENT_LABEL})
+        write.assert_called_once_with(_report(pid=os.getpid(), updated_at=5.0))
+
+    def test_terminal_started_overlay_is_not_launchd(self) -> None:
+        write = self._record(at=5.0, environ={"XPC_SERVICE_NAME": "0"})
+        self.assertFalse(write.call_args.args[0].launchd)
+
+    def test_writes_only_on_change_or_heartbeat(self) -> None:
+        launchd = {"XPC_SERVICE_NAME": AGENT_LABEL}
+        self.assertEqual(self._record(at=0.0, environ=launchd).call_count, 1)
+        self.assertEqual(self._record(at=60.0, environ=launchd).call_count, 0)
+        changed = self._record(at=120.0, environ=launchd, input_monitoring=False)
+        self.assertEqual(changed.call_count, 1)
+        heartbeat = self._record(
+            at=120.0 + RUNTIME_GRANT_HEARTBEAT_S,
+            environ=launchd,
+            input_monitoring=False,
+        )
+        self.assertEqual(heartbeat.call_count, 1)

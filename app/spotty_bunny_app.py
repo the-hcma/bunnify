@@ -137,6 +137,7 @@ from app.spotty_bunny_about import (
 )
 from app.spotty_bunny_about_info import load_about_runtime_info
 from app.spotty_bunny_agent import (
+    AGENT_LABEL,
     bootout_loaded_agent,
     install_agent,
     is_agent_installed,
@@ -168,7 +169,12 @@ from app.spotty_bunny_edit import (
     line_navigation_modifies_selection,
     line_navigation_selected_range,
 )
-from app.spotty_bunny_grant import process_executable, record_runtime_grant
+from app.spotty_bunny_grant import (
+    RuntimeGrant,
+    process_executable,
+    runtime_grant_due,
+    write_runtime_grant,
+)
 from app.spotty_bunny_history import (
     HistoryNavigator,
     append_history_line,
@@ -257,6 +263,8 @@ FIELD_WIDTH = LOGO_LEFT - FIELD_LEFT - LOGO_GAP
 STATUS_WRAP_WIDTH = PANEL_WIDTH - 2.0 * PANEL_INSET
 
 logger = logging.getLogger(__name__)
+
+_last_runtime_grant: RuntimeGrant | None = None
 
 
 class SpottyBunnyController(NSObject):
@@ -1880,16 +1888,22 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
     reset_reinstall_failures()
 
 
-def _record_runtime_grant() -> None:
+def _record_runtime_grant(*, time_fn: Callable[[], float] = time.time) -> None:
     """Publish this process's own grants: a terminal probe sees the terminal's."""
+    global _last_runtime_grant
     executable = _own_executable()
     if executable is None:
         return
-    record_runtime_grant(
+    grant = RuntimeGrant(
         accessibility=bool(AXIsProcessTrusted()),
         executable=executable,
         input_monitoring=bool(CGPreflightListenEventAccess()),
+        launchd=os.environ.get("XPC_SERVICE_NAME") == AGENT_LABEL,
+        pid=os.getpid(),
+        updated_at=time_fn(),
     )
+    if runtime_grant_due(_last_runtime_grant, grant) and write_runtime_grant(grant):
+        _last_runtime_grant = grant
 
 
 def _record_tap_activity(*, chord: bool) -> None:

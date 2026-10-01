@@ -26,6 +26,8 @@ GRANT_FILE_NAME = ".spotty-bunny-tcc-grant"
 INTERPRETER_VERSION_TIMEOUT_S = 15
 PROCESS_EXECUTABLE_TIMEOUT_S = 5
 RUNTIME_GRANT_FILE_NAME = ".spotty-bunny-runtime-grant"
+RUNTIME_GRANT_HEARTBEAT_S = 300.0
+RUNTIME_GRANT_MAX_AGE_S = 900.0
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +58,17 @@ class InterpreterIdentity:
 
 @dataclass(frozen=True)
 class RuntimeGrant:
-    """Privacy grants as seen by the running overlay itself (launchd-attributed)."""
+    """Privacy grants as seen by the running overlay itself.
+
+    Only a launchd-started overlay is its own responsible process; one started
+    from a terminal (foreground run or spawn fallback) reports the terminal's
+    grants, so ``launchd`` records which case this is.
+    """
 
     accessibility: bool
     executable: str
     input_monitoring: bool
+    launchd: bool
     pid: int
     updated_at: float
 
@@ -260,6 +268,7 @@ def read_runtime_grant(*, grant_dir: Path | None = None) -> RuntimeGrant | None:
             accessibility=bool(payload["accessibility"]),
             executable=str(payload["executable"]),
             input_monitoring=bool(payload["input_monitoring"]),
+            launchd=bool(payload.get("launchd", False)),
             pid=int(payload["pid"]),
             updated_at=float(payload["updated_at"]),
         )
@@ -281,24 +290,37 @@ def record_grant(
     return True
 
 
-def record_runtime_grant(
+def runtime_grant_due(previous: RuntimeGrant | None, current: RuntimeGrant) -> bool:
+    """True when *current* changed since *previous* or a heartbeat is due."""
+    if previous is None:
+        return True
+    if asdict(previous) | {"updated_at": 0} != asdict(current) | {"updated_at": 0}:
+        return True
+    return current.updated_at - previous.updated_at >= RUNTIME_GRANT_HEARTBEAT_S
+
+
+def runtime_grant_rejection(
+    report: RuntimeGrant | None,
     *,
-    accessibility: bool,
-    executable: str,
-    grant_dir: Path | None = None,
-    input_monitoring: bool,
-    pid: int | None = None,
-    time_fn: Callable[[], float] | None = None,
-) -> bool:
+    now: float | None = None,
+    pid: int,
+) -> str | None:
+    """Why *report* cannot stand in for the live overlay's grants, or None."""
+    if report is None:
+        return "no report from the running spotty-bunny"
+    if report.pid != pid:
+        return f"report is from pid {report.pid}, not the running pid {pid}"
+    if not report.launchd:
+        return "running spotty-bunny was not started by launchd"
+    age = (time.time() if now is None else now) - report.updated_at
+    if age > RUNTIME_GRANT_MAX_AGE_S:
+        return f"report is stale ({int(age)}s old)"
+    return None
+
+
+def write_runtime_grant(grant: RuntimeGrant, *, grant_dir: Path | None = None) -> bool:
     """Persist the overlay's own view of its grants; False if not writable."""
     directory = data_dir() if grant_dir is None else grant_dir
-    grant = RuntimeGrant(
-        accessibility=accessibility,
-        executable=executable,
-        input_monitoring=input_monitoring,
-        pid=os.getpid() if pid is None else pid,
-        updated_at=(time_fn or time.time)(),
-    )
     path = directory / RUNTIME_GRANT_FILE_NAME
     temp = path.with_name(f"{path.name}.tmp")
     try:
