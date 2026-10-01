@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/the-hcma/bunnify/compare/bunnify-v1.0.0...bunnify-v1.1.0) (2026-10-01)
+
+
+### Features
+
+* **spotty-bunny:** add bunnify doctor for stale Input Monitoring grants ([#554](https://github.com/the-hcma/bunnify/issues/554)) ([909d208](https://github.com/the-hcma/bunnify/commit/909d208a1ea74bb21b1c223c361dece7ddb5ea33))
+
+
+### Documentation
+
+* refresh local github-api-throttle summary to match canonical ([#546](https://github.com/the-hcma/bunnify/issues/546)) ([61538ce](https://github.com/the-hcma/bunnify/commit/61538ce582fcd1cc193b74d9167f40404e97d393))
+* sync agent rule template fixes from repository-helpers ([#551](https://github.com/the-hcma/bunnify/issues/551)) ([9d67f40](https://github.com/the-hcma/bunnify/commit/9d67f40fd7cb7fca04ae1ebff97d6341a27ff589))
+* sync unwrapped agent rule templates from repository-helpers ([#549](https://github.com/the-hcma/bunnify/issues/549)) ([dcaff87](https://github.com/the-hcma/bunnify/commit/dcaff87292ddbf37818aee0b72e2ba27778c3026))
+
 ## [1.0.0](https://github.com/the-hcma/bunnify/compare/bunnify-v0.15.0...bunnify-v1.0.0) (2026-09-21)
 
 
