@@ -191,7 +191,7 @@ def diagnose_running_agent(
     Python upgrade keeps working on the old (possibly deleted) binary; the next
     launch uses the new one, which has no grant of its own.
     """
-    if executable is None or not os.path.isabs(executable):
+    if executable is None or "/" not in executable:
         return ()
     expected = launched_executable(current)
     if os.path.realpath(executable) == os.path.realpath(expected):
