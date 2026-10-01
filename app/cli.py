@@ -291,6 +291,29 @@ def pick_key_with_fzf(
     return selected or None
 
 
+def run_doctor(
+    *,
+    print_fn: Callable[[str], None] | None = None,
+    theme: Theme | None = None,
+) -> int:
+    """Diagnose the Spotty Bunny hotkey and say exactly what to re-authorize.
+
+    Returns 0 when nothing is wrong, 1 otherwise.
+    """
+    log = print_fn or click.echo
+    colors = theme if theme is not None else Theme(enabled=False)
+    if sys.platform != "darwin":
+        log("Nothing to diagnose: `bunnify doctor` checks macOS privacy grants.")
+        return 0
+    from app.spotty_bunny_agent import doctor_agent
+
+    log(colors.header(_command_banner("doctor")))
+    return doctor_agent(
+        print_err=lambda message: log(colors.warn(message)),
+        print_fn=log,
+    )
+
+
 def run_setup(
     *,
     prompt_fn: Callable[[str], str] | None = None,
@@ -2408,6 +2431,11 @@ def main(
       spotty-bunny --verbose
 
     \b
+    Diagnose a dead Spotty Bunny hotkey and get the exact System Settings
+    fix (`doctor` is a reserved shortcut name):
+      bunnify doctor
+
+    \b
     Server setup (`setup` is a reserved shortcut name):
       bunnify setup
       bunnify --setup
@@ -2454,6 +2482,9 @@ def main(
     if onboard_requested or shortcut_args == ("onboard",):
         run_onboard(print_fn=click.echo, prompt_fn=prompt_fn, theme=theme)
         return
+
+    if shortcut_args == ("doctor",):
+        raise SystemExit(run_doctor(print_fn=click.echo, theme=theme))
 
     if shortcut_args and shortcut_args[0] == "spotty-bunny":
         from app.spotty_bunny_cli import main as spotty_bunny_main

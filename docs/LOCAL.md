@@ -226,6 +226,16 @@ Package updates stay on `bunnify upgrade` (`pipx upgrade bunnify`); run that
 first, then `bunnify spotty-bunny upgrade` so launchd does not keep a stale
 binary path.
 
+### Diagnose a dead hotkey with `bunnify doctor`
+
+If the chord stops working (classically after a Homebrew Python upgrade or a pipx reinstall), **run `bunnify doctor` first**; it is the supported way to find out what is wrong.
+macOS grants Input Monitoring and Accessibility to one specific interpreter executable, so when that executable's path or binary changes the old grant silently stops applying.
+`install` and `upgrade` record the interpreter that was authorized (real path, version, and a SHA-256 of the binary), and `doctor` compares it with the interpreter launchd execs now.
+It reports `interpreter_moved` (a different path), `interpreter_modified` (same path, replaced binary), `revoked` (same interpreter, grant removed or reset), or `unrecorded` (no earlier grant on record), and for each prints the exact System Settings steps and the path to add.
+On a first run with working grants and no record, `doctor` records the current interpreter as the baseline.
+`bunnify spotty-bunny doctor` is equivalent.
+Exit `0` means nothing is wrong.
+
 ### Uninstall
 
 ```bash

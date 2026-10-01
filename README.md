@@ -232,6 +232,8 @@ launchd will exec** (typically the pipx venv Python), writes
 it. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no subcommand) still
 runs in the **foreground** for debugging.
 
+If the hotkey stops working (for example after a Homebrew Python upgrade), run `bunnify doctor`: it compares the interpreter that was authorized for Input Monitoring with the one running now and tells you exactly what to re-authorize in System Settings.
+
 ### Upgrade
 
 ```bash

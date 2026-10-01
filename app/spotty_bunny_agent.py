@@ -20,6 +20,12 @@ from app.spotty_bunny_cli import (
     NOT_MACOS_MESSAGE,
     _spotty_bunny_log_file,
 )
+from app.spotty_bunny_grant import (
+    describe_interpreter,
+    diagnose_grant,
+    read_recorded_grant,
+    record_grant,
+)
 from app.spotty_bunny_launch import (
     clear_spotty_bunny_pid,
     spotty_bunny_command,
@@ -33,7 +39,9 @@ from app.spotty_bunny_tap_health import (
 )
 from app.version import build_version
 
-AGENT_COMMANDS = frozenset({"hotkey", "install", "status", "uninstall", "upgrade"})
+AGENT_COMMANDS = frozenset(
+    {"doctor", "hotkey", "install", "status", "uninstall", "upgrade"}
+)
 AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
@@ -63,7 +71,7 @@ TCC_RECHECK_PROMPT = (
 TCC_PROBE_TIMEOUT_S = 15
 UNKNOWN_COMMAND_MESSAGE = (
     f"{COMMAND_NAME}: unknown command '{{command}}'. "
-    "Use hotkey, install, uninstall, status, or upgrade; "
+    "Use doctor, hotkey, install, uninstall, status, or upgrade; "
     "or run with no subcommand for the foreground overlay."
 )
 
@@ -102,6 +110,82 @@ def bootout_loaded_agent(
         return False
     _bootout_agent(launchctl=launchctl, uid=uid)
     return True
+
+
+def doctor_agent(
+    *,
+    home: Path | None = None,
+    platform: str | None = None,
+    print_err: Callable[[str], None] | None = None,
+    print_fn: Callable[[str], None] | None = None,
+    probe_tcc: TccFn | None = None,
+    program: Path | None = None,
+) -> int:
+    """Diagnose why the hotkey may not work; name the exact System Settings fix.
+
+    Compares the interpreter that was authorized for Input Monitoring (recorded
+    by ``install`` / ``upgrade``) with the one launchd execs now. Exit 0 when
+    nothing is wrong, 1 otherwise.
+    """
+    err = print_err or _print_err
+    out = print_fn or print
+    if not _is_darwin(platform):
+        err(NOT_MACOS_MESSAGE)
+        return 1
+    root = home if home is not None else Path.home()
+    plist = agent_plist_path(home=root)
+    if program is not None:
+        binary = program
+    elif plist.is_file():
+        plist_argv = _plist_program_arguments(plist)
+        binary = Path(plist_argv[0]) if plist_argv else spotty_bunny_program()
+    else:
+        binary = spotty_bunny_program()
+    if binary is None:
+        out("problem: could not find the spotty-bunny binary on PATH.")
+        out(f"Install it with: {COMMAND_NAME} install")
+        return 1
+    interpreter = interpreter_for_program(binary)
+    try:
+        tcc = (probe_tcc or _probe_tcc)(interpreter)
+    except ImportError:
+        err(MACOS_EXTRA_HINT)
+        return 1
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        out(f"problem: could not verify TCC for {interpreter}: {exc}")
+        return 1
+    current = describe_interpreter(interpreter)
+    recorded = read_recorded_grant()
+    diagnosis = diagnose_grant(
+        accessibility=tcc.accessibility,
+        current=current,
+        input_monitoring=tcc.input_monitoring,
+        recorded=recorded,
+    )
+    out(f"interpreter: {current.label()}")
+    out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
+    out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
+    out(
+        "authorized_interpreter: "
+        + (recorded.label() if recorded is not None else "not recorded")
+    )
+    out(f"diagnosis: {diagnosis.state}")
+    for line in diagnosis.lines:
+        out(line)
+    if diagnosis.state == "ok" and recorded is None:
+        record_grant(current)
+        out("Recorded this interpreter as the authorized one for future checks.")
+    healthy = diagnosis.healthy
+    health = read_spotty_bunny_health()
+    if spotty_bunny_is_running() and health is not None and health.tap != TAP_STATE_OK:
+        healthy = False
+        out(
+            f"problem: event tap is {health.tap} "
+            f"(reinstall_failures: {health.reinstall_failures}) — the hotkey "
+            "will not work. Restart spotty-bunny (launchd relaunches it) and, "
+            "if it persists, re-authorize the interpreter above."
+        )
+    return 0 if healthy else 1
 
 
 def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
@@ -166,6 +250,7 @@ def install_agent(
     )
     if status is None:
         return 1
+    record_grant(describe_interpreter(interpreter))
     root = home if home is not None else Path.home()
     plist = agent_plist_path(home=root)
     _write_plist(plist, home=root, program_arguments=program_argv)
@@ -309,6 +394,8 @@ def run_agent_command(
             file=sys.stderr,
         )
         return 2
+    if command == "doctor":
+        return doctor_agent(**kwargs)
     if command == "install":
         return install_agent(**kwargs)
     if command == "status":
@@ -549,6 +636,7 @@ def upgrade_agent(
     )
     if status is None:
         return 1
+    record_grant(describe_interpreter(interpreter))
     _write_plist(plist, home=root, program_arguments=program_argv)
     if not _reload_agent(
         plist,
