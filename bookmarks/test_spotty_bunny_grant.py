@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 import time
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest import skipUnless
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -35,15 +33,13 @@ from app.spotty_bunny_grant import (
     write_runtime_grant,
 )
 from app.spotty_bunny_tap_health import SpottyBunnyHealth
+from bookmarks.macos_test_support import macos_only, pyobjc_available
 
 NEW = InterpreterIdentity(
     path="/opt/py/3.14.2/bin/python", sha256="b" * 64, version="Python 3.14.2"
 )
 OLD = InterpreterIdentity(
     path="/opt/py/3.14.1/bin/python", sha256="a" * 64, version="Python 3.14.1"
-)
-_HAS_PYOBJC = (
-    sys.platform == "darwin" and importlib.util.find_spec("Quartz") is not None
 )
 _PASTE_STEP = "  2. Click +, press ⌘⇧G, paste this path, and click Open:"
 
@@ -251,7 +247,7 @@ class SpottyBunnyGrantTests(SimpleTestCase):
         self.assertEqual(ok, "/opt/py/Python")
         self.assertIsNone(failed)
 
-    @skipUnless(sys.platform == "darwin", "ps reports the full image path on macOS")
+    @macos_only(sys.platform == "darwin", "ps reports the full image path on macOS")
     def test_process_executable_reports_this_process(self) -> None:
         import os
 
@@ -723,7 +719,7 @@ class BunnifyDoctorCommandTests(SimpleTestCase):
         self.assertEqual(status.call_args.kwargs["env_path"], env_path)
 
 
-@skipUnless(_HAS_PYOBJC, "needs macOS with PyObjC")
+@macos_only(pyobjc_available(), "needs macOS with PyObjC")
 class SpottyBunnyRuntimeGrantRecorderTests(SimpleTestCase):
     def _record(
         self, *, at: float, environ: dict[str, str], input_monitoring: bool = True
