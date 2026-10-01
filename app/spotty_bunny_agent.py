@@ -145,10 +145,16 @@ def doctor_agent(
         out("problem: could not find the spotty-bunny binary on PATH.")
         out(f"Install it with: {COMMAND_NAME} install")
         return 1
+    installed = plist.is_file()
     interpreter = interpreter_for_program(binary)
-    if not interpreter.exists():
+    stale_plist = False
+    missing = binary if not binary.exists() else None
+    if missing is None and not interpreter.exists():
+        missing = interpreter
+    if missing is not None:
+        what = "spotty-bunny binary" if missing == binary else "interpreter"
+        out(f"problem: {what} no longer exists: {missing}")
         recorded = read_recorded_grant()
-        out(f"problem: interpreter no longer exists: {interpreter}")
         if recorded is not None:
             out(f"authorized_interpreter: {recorded.label()}")
         fresh = spotty_bunny_program() if program is None else None
@@ -156,20 +162,29 @@ def doctor_agent(
             interpreter_for_program(fresh) if fresh is not None else None
         )
         if fresh_interpreter is None or not fresh_interpreter.exists():
+            follow_up = (
+                f"{COMMAND_NAME} upgrade" if installed else f"{COMMAND_NAME} install"
+            )
+            cause = (
+                "The installed LaunchAgent points at a removed Python or console script"
+                if installed
+                else "spotty-bunny is not installed as a LaunchAgent and its "
+                "Python or console script is missing"
+            )
             out(
-                "The installed LaunchAgent points at a removed Python (typically "
-                "after a Python upgrade or pipx reinstall). Reinstall "
-                f"spotty-bunny, then run: {COMMAND_NAME} upgrade"
+                f"{cause} (typically after a Python upgrade or pipx reinstall). "
+                f"Reinstall spotty-bunny, then run: {follow_up}"
             )
             return 1
-        out(
-            f"A replacement interpreter is available: {fresh_interpreter}. "
-            "Checking it instead; the LaunchAgent plist is stale."
-        )
         interpreter = fresh_interpreter
-        stale_plist = True
-    else:
-        stale_plist = False
+        if installed:
+            stale_plist = True
+            out(
+                f"A replacement interpreter is available: {fresh_interpreter}. "
+                "Checking it instead; the LaunchAgent plist is stale."
+            )
+        else:
+            out(f"Checking the interpreter on PATH instead: {fresh_interpreter}.")
     try:
         tcc = (probe_tcc or _probe_tcc)(interpreter)
     except ImportError:
@@ -182,6 +197,7 @@ def doctor_agent(
     recorded = read_recorded_grant()
     diagnosis = diagnose_grant(
         accessibility=tcc.accessibility,
+        agent_installed=installed,
         current=current,
         input_monitoring=tcc.input_monitoring,
         recorded=recorded,
@@ -196,8 +212,14 @@ def doctor_agent(
     out(f"diagnosis: {diagnosis.state}")
     for line in diagnosis.lines:
         out(line)
+    if tcc.accessibility and tcc.input_monitoring:
+        out(
+            "note: permissions are probed from this terminal session; macOS "
+            "may attribute them to the terminal app rather than the interpreter. "
+            "If the hotkey still fails, re-authorize the interpreter above."
+        )
     healthy = diagnosis.healthy
-    if diagnosis.healthy and recorded != current:
+    if healthy and recorded is None and not stale_plist:
         record_grant(current)
         out("Recorded this interpreter as the authorized one for future checks.")
     if stale_plist:
@@ -277,7 +299,6 @@ def install_agent(
     )
     if status is None:
         return 1
-    record_grant(describe_interpreter(interpreter))
     root = home if home is not None else Path.home()
     plist = agent_plist_path(home=root)
     _write_plist(plist, home=root, program_arguments=program_argv)
@@ -288,6 +309,7 @@ def install_agent(
     ):
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
+    record_grant(describe_interpreter(interpreter))
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: plist {plist}")
     err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")
@@ -663,7 +685,6 @@ def upgrade_agent(
     )
     if status is None:
         return 1
-    record_grant(describe_interpreter(interpreter))
     _write_plist(plist, home=root, program_arguments=program_argv)
     if not _reload_agent(
         plist,
@@ -672,6 +693,7 @@ def upgrade_agent(
     ):
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
+    record_grant(describe_interpreter(interpreter))
     err(f"{COMMAND_NAME}: refreshed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: binary {binary}")
     err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")

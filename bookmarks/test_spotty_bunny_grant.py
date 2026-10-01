@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
@@ -89,6 +89,42 @@ class SpottyBunnyGrantTests(SimpleTestCase):
         self.assertIn("Input Monitoring", result.lines[0])
         self.assertNotIn("Accessibility", result.lines[0])
 
+    def test_diagnose_follow_up_matches_install_state(self) -> None:
+        installed = diagnose_grant(
+            accessibility=False, current=NEW, input_monitoring=False, recorded=OLD
+        )
+        not_installed = diagnose_grant(
+            accessibility=False,
+            agent_installed=False,
+            current=NEW,
+            input_monitoring=False,
+            recorded=OLD,
+        )
+        self.assertIn("spotty-bunny upgrade", installed.lines[-1])
+        self.assertIn("spotty-bunny install", not_installed.lines[-1])
+
+    def test_framework_python_names_app_binary(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Versions" / "3.14"
+            launcher = root / "bin" / "python3.14"
+            app = root / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+            app.parent.mkdir(parents=True)
+            launcher.parent.mkdir(parents=True)
+            launcher.write_bytes(b"x")
+            app.write_bytes(b"y")
+            identity = describe_interpreter(
+                launcher,
+                run=lambda *_a, **_k: subprocess.CompletedProcess([], 1, "", ""),
+            )
+            self.assertEqual(identity.app_path, str(app.resolve()))
+            result = diagnose_grant(
+                accessibility=False,
+                current=identity,
+                input_monitoring=False,
+                recorded=None,
+            )
+            self.assertIn(str(app.resolve()), "\n".join(result.lines))
+
     def test_diagnose_unrecorded(self) -> None:
         result = diagnose_grant(
             accessibility=False, current=NEW, input_monitoring=False, recorded=None
@@ -159,11 +195,12 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertEqual(code, 1)
         self.assertTrue(errors)
 
-    def test_doctor_refreshes_stale_record_when_granted(self) -> None:
+    def test_doctor_leaves_stale_record_when_granted(self) -> None:
         code, text = self._run(current=NEW, recorded=OLD, tcc=TccStatus(True, True))
         self.assertEqual(code, 0)
-        self.assertEqual(self.recorded_calls, 1)
+        self.assertEqual(self.recorded_calls, 0)
         self.assertIn("diagnosis: ok", text)
+        self.assertIn("probed from this terminal", text)
 
     def test_doctor_reports_missing_interpreter(self) -> None:
         lines: list[str] = []
@@ -184,6 +221,58 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertEqual(code, 1)
         self.assertIn("no longer exists", text)
         self.assertIn(f"authorized_interpreter: {OLD.label()}", text)
+
+    def test_doctor_reports_missing_binary_not_interpreter(self) -> None:
+        lines: list[str] = []
+        with TemporaryDirectory() as tmp:
+            code = doctor_agent(
+                home=Path(tmp),
+                platform="darwin",
+                print_fn=lines.append,
+                probe_tcc=lambda _p: TccStatus(True, True),
+                program=Path(tmp) / "gone" / "spotty-bunny",
+            )
+        text = "\n".join(lines)
+        self.assertEqual(code, 1)
+        self.assertIn("spotty-bunny binary no longer exists", text)
+        self.assertIn("spotty-bunny install", text)
+        self.assertNotIn("LaunchAgent points", text)
+
+
+class SpottyBunnyGrantRecordingTests(SimpleTestCase):
+    def _install(self, *, bootstrap_ok: bool) -> MagicMock:
+        from app.spotty_bunny_agent import install_agent
+
+        def launchctl(
+            argv: list[str], **_k: object
+        ) -> subprocess.CompletedProcess[str]:
+            code = 1 if argv[1] == "bootstrap" and not bootstrap_ok else 0
+            return subprocess.CompletedProcess(argv, code, "", "")
+
+        with (
+            TemporaryDirectory() as tmp,
+            patch("app.spotty_bunny_agent.record_grant") as record,
+        ):
+            program = Path(tmp) / "bin" / "spotty-bunny"
+            program.parent.mkdir()
+            program.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            program.chmod(0o755)
+            install_agent(
+                home=Path(tmp),
+                launchctl=launchctl,
+                platform="darwin",
+                print_err=lambda _m: None,
+                probe_tcc=lambda _p: TccStatus(True, True),
+                program=program,
+                skip_chord_confirm=True,
+            )
+        return record
+
+    def test_install_records_grant_after_successful_reload(self) -> None:
+        self.assertEqual(self._install(bootstrap_ok=True).call_count, 1)
+
+    def test_install_does_not_record_grant_when_bootstrap_fails(self) -> None:
+        self.assertEqual(self._install(bootstrap_ok=False).call_count, 0)
 
 
 class BunnifyDoctorCommandTests(SimpleTestCase):
@@ -227,3 +316,14 @@ class BunnifyDoctorCommandTests(SimpleTestCase):
             code = run_doctor(print_fn=lambda _l: None)
         doctor.assert_not_called()
         self.assertEqual(code, 0)
+
+    def test_run_doctor_passes_env_path_to_status(self) -> None:
+        from app.cli import run_doctor
+
+        env_path = Path("/tmp/custom-config.toml")
+        with (
+            patch("app.cli.sys.platform", "linux"),
+            patch("app.cli.run_status", return_value=0) as status,
+        ):
+            run_doctor(env_path=env_path, print_fn=lambda _l: None)
+        self.assertEqual(status.call_args.kwargs["env_path"], env_path)

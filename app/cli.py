@@ -293,6 +293,7 @@ def pick_key_with_fzf(
 
 def run_doctor(
     *,
+    env_path: Path | None = None,
     print_fn: Callable[[str], None] | None = None,
     theme: Theme | None = None,
 ) -> int:
@@ -307,7 +308,7 @@ def run_doctor(
     log(colors.header(_command_banner("doctor")))
     log("")
     log(colors.header("Server"))
-    code = run_status(print_fn=log, theme=colors)
+    code = run_status(env_path=env_path, print_fn=log, theme=colors)
     log("")
     log(colors.header("Spotty Bunny"))
     if sys.platform != "darwin":
@@ -323,7 +324,9 @@ def run_doctor(
         code,
         doctor_agent(
             print_err=lambda message: log(colors.warn(message)),
-            print_fn=log,
+            print_fn=lambda line: log(
+                colors.warn(line) if line.startswith("problem:") else line
+            ),
         ),
     )
 
@@ -2497,9 +2500,6 @@ def main(
         run_onboard(print_fn=click.echo, prompt_fn=prompt_fn, theme=theme)
         return
 
-    if shortcut_args == ("doctor",):
-        raise SystemExit(run_doctor(print_fn=click.echo, theme=theme))
-
     if shortcut_args and shortcut_args[0] == "spotty-bunny":
         from app.spotty_bunny_cli import main as spotty_bunny_main
 
@@ -2521,6 +2521,10 @@ def main(
         if upgrade_requested or shortcut_args == ("upgrade",):
             run_upgrade(print_fn=click.echo, theme=theme)
             return
+        if shortcut_args == ("doctor",):
+            raise SystemExit(
+                run_doctor(env_path=env_file, print_fn=click.echo, theme=theme)
+            )
         if status_requested or shortcut_args == ("status",):
             raise SystemExit(
                 run_status(env_path=env_file, print_fn=click.echo, theme=theme)
