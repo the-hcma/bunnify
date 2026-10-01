@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import skipUnless
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -11,10 +12,15 @@ from django.test import SimpleTestCase
 from app.spotty_bunny_agent import TccStatus, doctor_agent
 from app.spotty_bunny_grant import (
     InterpreterIdentity,
+    RuntimeGrant,
     describe_interpreter,
     diagnose_grant,
+    diagnose_running_agent,
+    process_executable,
     read_recorded_grant,
+    read_runtime_grant,
     record_grant,
+    record_runtime_grant,
 )
 
 OLD = InterpreterIdentity(
@@ -23,6 +29,7 @@ OLD = InterpreterIdentity(
 NEW = InterpreterIdentity(
     path="/opt/py/3.14.2/bin/python", sha256="b" * 64, version="Python 3.14.2"
 )
+_PASTE_STEP = "  2. Click +, press ⌘⇧G, paste this path, and click Open:"
 
 
 class SpottyBunnyGrantTests(SimpleTestCase):
@@ -103,11 +110,12 @@ class SpottyBunnyGrantTests(SimpleTestCase):
         self.assertIn("spotty-bunny upgrade", installed.lines[-1])
         self.assertIn("spotty-bunny install", not_installed.lines[-1])
 
-    def test_framework_python_names_app_binary(self) -> None:
+    def test_framework_python_asks_for_the_app_bundle(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "Versions" / "3.14"
             launcher = root / "bin" / "python3.14"
-            app = root / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+            bundle = root / "Resources" / "Python.app"
+            app = bundle / "Contents" / "MacOS" / "Python"
             app.parent.mkdir(parents=True)
             launcher.parent.mkdir(parents=True)
             launcher.write_bytes(b"x")
@@ -123,7 +131,16 @@ class SpottyBunnyGrantTests(SimpleTestCase):
                 input_monitoring=False,
                 recorded=None,
             )
-            self.assertIn(str(app.resolve()), "\n".join(result.lines))
+            paste = result.lines[result.lines.index(_PASTE_STEP) + 1].strip()
+            self.assertEqual(paste, str(bundle.resolve()))
+            self.assertIn("“Python”", "\n".join(result.lines))
+
+    def test_non_framework_python_asks_for_the_interpreter_path(self) -> None:
+        result = diagnose_grant(
+            accessibility=False, current=NEW, input_monitoring=False, recorded=None
+        )
+        paste = result.lines[result.lines.index(_PASTE_STEP) + 1].strip()
+        self.assertEqual(paste, NEW.path)
 
     def test_diagnose_app_binary_replaced_with_same_launcher(self) -> None:
         recorded = InterpreterIdentity(
@@ -145,6 +162,98 @@ class SpottyBunnyGrantTests(SimpleTestCase):
             accessibility=False, current=NEW, input_monitoring=False, recorded=None
         )
         self.assertEqual(result.state, "unrecorded")
+        self.assertIn("Accessibility and Input Monitoring are not", result.lines[0])
+
+    def test_diagnose_unrecorded_single_permission_is_singular(self) -> None:
+        result = diagnose_grant(
+            accessibility=True, current=NEW, input_monitoring=False, recorded=None
+        )
+        self.assertIn("Input Monitoring is not", result.lines[0])
+
+    def test_healthy_note_skips_terminal_caveat_when_agent_reported(self) -> None:
+        result = diagnose_grant(
+            accessibility=True,
+            current=NEW,
+            input_monitoring=True,
+            probed_by_agent=True,
+            recorded=OLD,
+        )
+        self.assertNotIn("terminal", "\n".join(result.lines))
+
+    def test_running_agent_on_removed_interpreter_is_flagged(self) -> None:
+        lines = diagnose_running_agent(
+            current=NEW, executable="/gone/3.14.1/Python", pid=42
+        )
+        text = "\n".join(lines)
+        self.assertIn("pid 42", text)
+        self.assertIn("has been removed", text)
+        self.assertIn(NEW.path, text)
+
+    def test_running_agent_on_framework_app_binary_matches(self) -> None:
+        current = InterpreterIdentity(
+            NEW.path,
+            NEW.sha256,
+            NEW.version,
+            "/opt/py/Python.app/Contents/MacOS/Python",
+        )
+        self.assertEqual(
+            diagnose_running_agent(
+                current=current, executable=current.app_path, pid=42
+            ),
+            (),
+        )
+
+    def test_running_agent_with_unusable_executable_is_ignored(self) -> None:
+        for executable in (None, "python3"):
+            self.assertEqual(
+                diagnose_running_agent(current=NEW, executable=executable, pid=1),
+                (),
+            )
+
+    def test_process_executable_reads_ps_and_tolerates_failure(self) -> None:
+        ok = process_executable(
+            7,
+            run=lambda *_a, **_k: subprocess.CompletedProcess(
+                [], 0, stdout="/opt/py/Python\n", stderr=""
+            ),
+        )
+        failed = process_executable(
+            7, run=lambda *_a, **_k: subprocess.CompletedProcess([], 1, "", "")
+        )
+        self.assertEqual(ok, "/opt/py/Python")
+        self.assertIsNone(failed)
+
+    @skipUnless(sys.platform == "darwin", "ps reports the full image path on macOS")
+    def test_process_executable_reports_this_process(self) -> None:
+        import os
+
+        executable = process_executable(os.getpid())
+        self.assertIsNotNone(executable)
+        assert executable is not None
+        self.assertTrue(os.path.isabs(executable))
+
+    def test_runtime_grant_round_trip_and_corrupt(self) -> None:
+        with TemporaryDirectory() as tmp:
+            grant_dir = Path(tmp) / "nested"
+            self.assertIsNone(read_runtime_grant(grant_dir=grant_dir))
+            self.assertTrue(
+                record_runtime_grant(
+                    accessibility=True,
+                    executable="/opt/py/Python",
+                    grant_dir=grant_dir,
+                    input_monitoring=False,
+                    pid=9,
+                    time_fn=lambda: 1.5,
+                )
+            )
+            self.assertEqual(
+                read_runtime_grant(grant_dir=grant_dir),
+                RuntimeGrant(True, "/opt/py/Python", False, 9, 1.5),
+            )
+            (grant_dir / ".spotty-bunny-runtime-grant").write_text(
+                "{}", encoding="utf-8"
+            )
+            self.assertIsNone(read_runtime_grant(grant_dir=grant_dir))
 
     def test_read_missing_or_corrupt_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -168,15 +277,31 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         *,
         current: InterpreterIdentity,
         recorded: InterpreterIdentity | None,
+        report: RuntimeGrant | None = None,
+        running_executable: str | None = None,
+        running_pid: int | None = None,
         tcc: TccStatus,
     ) -> tuple[int, str]:
         lines: list[str] = []
+        probes: list[Path] = []
+
+        def probe(path: Path) -> TccStatus:
+            probes.append(path)
+            return tcc
+
         with (
             TemporaryDirectory() as tmp,
             patch("app.spotty_bunny_agent.describe_interpreter", return_value=current),
             patch("app.spotty_bunny_agent.read_recorded_grant", return_value=recorded),
+            patch("app.spotty_bunny_agent.read_runtime_grant", return_value=report),
             patch("app.spotty_bunny_agent.record_grant") as record,
-            patch("app.spotty_bunny_agent.spotty_bunny_is_running", return_value=False),
+            patch(
+                "app.spotty_bunny_agent._running_agent_pid", return_value=running_pid
+            ),
+            patch(
+                "app.spotty_bunny_agent.process_executable",
+                return_value=running_executable,
+            ),
             patch("app.spotty_bunny_agent.read_spotty_bunny_health", return_value=None),
         ):
             program = Path(tmp) / "spotty-bunny"
@@ -185,11 +310,58 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
                 home=Path(tmp),
                 platform="darwin",
                 print_fn=lines.append,
-                probe_tcc=lambda _p: tcc,
+                probe_tcc=probe,
                 program=program,
             )
             self.recorded_calls = record.call_count
+        self.probe_calls = len(probes)
         return code, "\n".join(lines)
+
+    def test_doctor_prefers_the_running_agents_own_report(self) -> None:
+        report = RuntimeGrant(True, NEW.path, True, 77, 1.0)
+        code, text = self._run(
+            current=NEW,
+            recorded=NEW,
+            report=report,
+            running_executable=NEW.path,
+            running_pid=77,
+            tcc=TccStatus(False, False),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.probe_calls, 0)
+        self.assertIn("permissions_source: running spotty-bunny (pid 77)", text)
+        self.assertNotIn("probed from this terminal", text)
+
+    def test_doctor_ignores_report_from_another_pid(self) -> None:
+        report = RuntimeGrant(True, NEW.path, True, 76, 1.0)
+        code, text = self._run(
+            current=NEW,
+            recorded=NEW,
+            report=report,
+            running_executable=NEW.path,
+            running_pid=77,
+            tcc=TccStatus(False, False),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.probe_calls, 1)
+        self.assertIn("permissions_source: this terminal", text)
+
+    def test_doctor_flags_agent_still_running_removed_interpreter(self) -> None:
+        old_exe = "/gone/3.14.1/Python.app/Contents/MacOS/Python"
+        report = RuntimeGrant(True, old_exe, True, 77, 1.0)
+        code, text = self._run(
+            current=NEW,
+            recorded=None,
+            report=report,
+            running_executable=old_exe,
+            running_pid=77,
+            tcc=TccStatus(False, False),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.probe_calls, 1)
+        self.assertIn(f"running_executable: {old_exe} (pid 77)", text)
+        self.assertIn("has been removed", text)
+        self.assertIn("keeps working only until it restarts", text)
 
     def test_doctor_names_changed_interpreter(self) -> None:
         code, text = self._run(current=NEW, recorded=OLD, tcc=TccStatus(False, False))

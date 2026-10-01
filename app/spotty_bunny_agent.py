@@ -23,7 +23,10 @@ from app.spotty_bunny_cli import (
 from app.spotty_bunny_grant import (
     describe_interpreter,
     diagnose_grant,
+    diagnose_running_agent,
+    process_executable,
     read_recorded_grant,
+    read_runtime_grant,
     record_grant,
 )
 from app.spotty_bunny_launch import (
@@ -185,24 +188,61 @@ def doctor_agent(
             )
         else:
             out(f"Checking the interpreter on PATH instead: {fresh_interpreter}.")
-    try:
-        tcc = (probe_tcc or _probe_tcc)(interpreter)
-    except ImportError:
-        err(MACOS_EXTRA_HINT)
-        return 1
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        out(f"problem: could not verify TCC for {interpreter}: {exc}")
-        return 1
     current = describe_interpreter(interpreter)
+    running_pid = _running_agent_pid()
+    running_executable = (
+        process_executable(running_pid) if running_pid is not None else None
+    )
+    stale_running = (
+        diagnose_running_agent(
+            current=current, executable=running_executable, pid=running_pid
+        )
+        if running_pid is not None
+        else ()
+    )
+    report = read_runtime_grant()
+    agent_report = (
+        report
+        if running_pid is not None
+        and not stale_running
+        and report is not None
+        and report.pid == running_pid
+        else None
+    )
+    if agent_report is not None:
+        tcc = TccStatus(
+            accessibility=agent_report.accessibility,
+            input_monitoring=agent_report.input_monitoring,
+        )
+    else:
+        try:
+            tcc = (probe_tcc or _probe_tcc)(interpreter)
+        except ImportError:
+            err(MACOS_EXTRA_HINT)
+            return 1
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            out(f"problem: could not verify TCC for {interpreter}: {exc}")
+            return 1
     recorded = read_recorded_grant()
     diagnosis = diagnose_grant(
         accessibility=tcc.accessibility,
         agent_installed=installed,
         current=current,
         input_monitoring=tcc.input_monitoring,
+        probed_by_agent=agent_report is not None,
         recorded=recorded,
     )
     out(f"interpreter: {current.label()}")
+    if running_executable is not None:
+        out(f"running_executable: {running_executable} (pid {running_pid})")
+    out(
+        "permissions_source: "
+        + (
+            f"running spotty-bunny (pid {running_pid})"
+            if agent_report is not None
+            else "this terminal"
+        )
+    )
     out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
     out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
     out(
@@ -212,13 +252,16 @@ def doctor_agent(
     out(f"diagnosis: {diagnosis.state}")
     for line in diagnosis.lines:
         out(line)
-    if tcc.accessibility and tcc.input_monitoring:
+    if agent_report is None and tcc.accessibility and tcc.input_monitoring:
         out(
             "note: permissions are probed from this terminal session; macOS "
             "may attribute them to the terminal app rather than the interpreter. "
             "If the hotkey still fails, re-authorize the interpreter above."
         )
     healthy = diagnosis.healthy
+    for line in stale_running:
+        healthy = False
+        out(line)
     if healthy and recorded is None:
         out(
             "No authorized interpreter is on record, so a future change cannot "
@@ -229,7 +272,7 @@ def doctor_agent(
         healthy = False
         out(f"problem: the LaunchAgent plist is stale. Run: {COMMAND_NAME} upgrade")
     health = read_spotty_bunny_health()
-    if spotty_bunny_is_running() and health is not None and health.tap != TAP_STATE_OK:
+    if running_pid is not None and health is not None and health.tap != TAP_STATE_OK:
         healthy = False
         out(
             f"problem: event tap is {health.tap} "
@@ -1018,6 +1061,15 @@ def _run_tcc_probe(interpreter: Path, *, prompt: bool) -> TccStatus:
         )
     except (KeyError, TypeError) as exc:
         raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
+
+
+def _running_agent_pid() -> int | None:
+    from app.spotty_bunny_launch import read_spotty_bunny_runtime
+
+    if not spotty_bunny_is_running():
+        return None
+    runtime = read_spotty_bunny_runtime()
+    return runtime[0] if runtime is not None else None
 
 
 def _probe_tcc_for_status(

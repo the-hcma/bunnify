@@ -10,9 +10,10 @@ import signal
 import sys
 import time
 from collections.abc import Callable
-from functools import partial
+from functools import cache, partial
 
 import objc
+from ApplicationServices import AXIsProcessTrusted
 from Cocoa import (
     NSAlert,
     NSAlertFirstButtonReturn,
@@ -92,6 +93,7 @@ from Quartz import (
     CGEventTapCreate,
     CGEventTapEnable,
     CGEventTapIsEnabled,
+    CGPreflightListenEventAccess,
     CGRequestListenEventAccess,
     kCFRunLoopCommonModes,
     kCGEventFlagMaskAlternate,
@@ -166,6 +168,7 @@ from app.spotty_bunny_edit import (
     line_navigation_modifies_selection,
     line_navigation_selected_range,
 )
+from app.spotty_bunny_grant import process_executable, record_runtime_grant
 from app.spotty_bunny_history import (
     HistoryNavigator,
     append_history_line,
@@ -1392,6 +1395,7 @@ def run_spotty_bunny_app() -> int:
     _resolve_configured_chord(
         controller, on_resolved=partial(_print_hotkey_banner, controller)
     )
+    _record_runtime_grant()
     _install_event_tap(controller)
     _register_wake_observer(controller)
     _schedule_tap_health_checks(controller)
@@ -1694,6 +1698,7 @@ def _apply_resolved_chord(
 
 def _check_event_tap_health(controller: SpottyBunnyController) -> None:
     """Re-enable or reinstall the tap when macOS disables it silently."""
+    _record_runtime_grant()
     _resolve_configured_chord(controller)
     tap = controller.tap
     action = decide_tap_health_check(
@@ -1875,6 +1880,18 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
     reset_reinstall_failures()
 
 
+def _record_runtime_grant() -> None:
+    """Publish this process's own grants: a terminal probe sees the terminal's."""
+    executable = _own_executable()
+    if executable is None:
+        return
+    record_runtime_grant(
+        accessibility=bool(AXIsProcessTrusted()),
+        executable=executable,
+        input_monitoring=bool(CGPreflightListenEventAccess()),
+    )
+
+
 def _record_tap_activity(*, chord: bool) -> None:
     now = time.time()
     try_write_spotty_bunny_health(
@@ -1958,6 +1975,11 @@ def _install_edit_menu() -> None:
     edit_item.setSubmenu_(edit_menu)
     main.addItem_(edit_item)
     NSApp.setMainMenu_(main)
+
+
+@cache
+def _own_executable() -> str | None:
+    return process_executable(os.getpid())
 
 
 def _post_wake_event() -> None:

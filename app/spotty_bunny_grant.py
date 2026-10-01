@@ -13,7 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -22,6 +24,8 @@ from app.config import data_dir
 
 GRANT_FILE_NAME = ".spotty-bunny-tcc-grant"
 INTERPRETER_VERSION_TIMEOUT_S = 15
+PROCESS_EXECUTABLE_TIMEOUT_S = 5
+RUNTIME_GRANT_FILE_NAME = ".spotty-bunny-runtime-grant"
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,27 @@ class InterpreterIdentity:
         return f"{self.path} ({version})"
 
 
+@dataclass(frozen=True)
+class RuntimeGrant:
+    """Privacy grants as seen by the running overlay itself (launchd-attributed)."""
+
+    accessibility: bool
+    executable: str
+    input_monitoring: bool
+    pid: int
+    updated_at: float
+
+
+def app_bundle_path(identity: InterpreterIdentity) -> str | None:
+    """Return the ``Python.app`` bundle a framework interpreter runs as, if any."""
+    if identity.app_path is None:
+        return None
+    for parent in Path(identity.app_path).parents:
+        if parent.suffix == ".app":
+            return str(parent)
+    return None
+
+
 def describe_interpreter(
     interpreter: Path,
     *,
@@ -73,6 +98,7 @@ def diagnose_grant(
     agent_installed: bool = True,
     current: InterpreterIdentity,
     input_monitoring: bool,
+    probed_by_agent: bool = False,
     recorded: InterpreterIdentity | None,
 ) -> GrantDiagnosis:
     """Explain, as specifically as the evidence allows, what to re-authorize."""
@@ -81,11 +107,16 @@ def diagnose_grant(
             f"Accessibility and Input Monitoring are granted for {current.label()}."
         ]
         if recorded is not None and recorded != current:
+            why = (
+                ""
+                if probed_by_agent
+                else " because this check runs from your terminal and may "
+                "reflect the terminal's grants"
+            )
             lines.append(
                 f"Note: the recorded authorized interpreter was {recorded.label()}; "
                 "the grants are present for the current one. The record is left "
-                "unchanged because this check runs from your terminal and may "
-                "reflect the terminal's grants; `install` / `upgrade` refresh it."
+                f"unchanged{why}; `install` / `upgrade` refresh it."
             )
         return GrantDiagnosis(healthy=True, lines=tuple(lines), state="ok")
     if recorded is not None and recorded.path != current.path:
@@ -117,24 +148,26 @@ def diagnose_grant(
             ),
             state="interpreter_modified",
         )
-    missing = " and ".join(
+    absent = [
         name
         for name, granted in (
             ("Accessibility", accessibility),
             ("Input Monitoring", input_monitoring),
         )
         if not granted
-    )
+    ]
+    missing = " and ".join(absent)
+    was, wasnt = ("were", "are") if len(absent) > 1 else ("was", "is")
     if recorded is not None:
         reason = (
-            f"{missing} was authorized for this exact interpreter before but "
+            f"{missing} {was} authorized for this exact interpreter before but "
             "macOS no longer reports it: the entry was removed, toggled off, "
             "or reset."
         )
         state = "revoked"
     else:
         reason = (
-            f"{missing} is not granted for this interpreter, and no earlier "
+            f"{missing} {wasnt} not granted for this interpreter, and no earlier "
             "grant is on record (it was never granted, or was granted before "
             "bunnify began recording it)."
         )
@@ -144,6 +177,61 @@ def diagnose_grant(
         lines=(reason, *_reauthorize_steps(current, agent_installed)),
         state=state,
     )
+
+
+def diagnose_running_agent(
+    *,
+    current: InterpreterIdentity,
+    executable: str | None,
+    pid: int,
+) -> tuple[str, ...]:
+    """Problem lines when the live overlay runs a different binary than launchd would.
+
+    A grant follows the process that holds it, so an overlay started before a
+    Python upgrade keeps working on the old (possibly deleted) binary; the next
+    launch uses the new one, which has no grant of its own.
+    """
+    if executable is None or not os.path.isabs(executable):
+        return ()
+    expected = launched_executable(current)
+    if os.path.realpath(executable) == os.path.realpath(expected):
+        return ()
+    removed = "" if Path(executable).exists() else ", which has been removed"
+    return (
+        f"problem: the running spotty-bunny (pid {pid}) is still the old "
+        f"interpreter {executable}{removed}.",
+        "The hotkey keeps working only until it restarts (log out, reboot, "
+        "or `bunnify spotty-bunny upgrade`); launchd will then start "
+        f"{expected}, which needs its own Accessibility and Input Monitoring "
+        "grants.",
+    )
+
+
+def launched_executable(identity: InterpreterIdentity) -> str:
+    """The binary macOS actually runs (and attributes grants to) for *identity*."""
+    return identity.app_path or identity.path
+
+
+def process_executable(
+    pid: int,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> str | None:
+    """Return the executable image of *pid* (still reported after it is deleted)."""
+    runner = run or subprocess.run
+    try:
+        completed = runner(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=PROCESS_EXECUTABLE_TIMEOUT_S,
+        )
+    except OSError, subprocess.SubprocessError:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
 
 
 def read_recorded_grant(*, grant_dir: Path | None = None) -> InterpreterIdentity | None:
@@ -161,6 +249,24 @@ def read_recorded_grant(*, grant_dir: Path | None = None) -> InterpreterIdentity
         return None
 
 
+def read_runtime_grant(*, grant_dir: Path | None = None) -> RuntimeGrant | None:
+    """Return the grants the overlay last reported for itself, or None."""
+    directory = data_dir() if grant_dir is None else grant_dir
+    try:
+        payload = json.loads(
+            (directory / RUNTIME_GRANT_FILE_NAME).read_text(encoding="utf-8")
+        )
+        return RuntimeGrant(
+            accessibility=bool(payload["accessibility"]),
+            executable=str(payload["executable"]),
+            input_monitoring=bool(payload["input_monitoring"]),
+            pid=int(payload["pid"]),
+            updated_at=float(payload["updated_at"]),
+        )
+    except OSError, KeyError, TypeError, ValueError:
+        return None
+
+
 def record_grant(
     identity: InterpreterIdentity, *, grant_dir: Path | None = None
 ) -> bool:
@@ -171,6 +277,36 @@ def record_grant(
         path.write_text(json.dumps(asdict(identity)) + "\n", encoding="utf-8")
     except OSError as exc:
         logger.warning("could not record the TCC grant identity: %s", exc)
+        return False
+    return True
+
+
+def record_runtime_grant(
+    *,
+    accessibility: bool,
+    executable: str,
+    grant_dir: Path | None = None,
+    input_monitoring: bool,
+    pid: int | None = None,
+    time_fn: Callable[[], float] | None = None,
+) -> bool:
+    """Persist the overlay's own view of its grants; False if not writable."""
+    directory = data_dir() if grant_dir is None else grant_dir
+    grant = RuntimeGrant(
+        accessibility=accessibility,
+        executable=executable,
+        input_monitoring=input_monitoring,
+        pid=os.getpid() if pid is None else pid,
+        updated_at=(time_fn or time.time)(),
+    )
+    path = directory / RUNTIME_GRANT_FILE_NAME
+    temp = path.with_name(f"{path.name}.tmp")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        temp.write_text(json.dumps(asdict(grant)) + "\n", encoding="utf-8")
+        temp.replace(path)
+    except OSError as exc:
+        logger.warning("could not record the runtime TCC grant: %s", exc)
         return False
     return True
 
@@ -238,19 +374,19 @@ def _interpreter_version(
 def _reauthorize_steps(
     current: InterpreterIdentity, agent_installed: bool = True
 ) -> tuple[str, ...]:
+    bundle = app_bundle_path(current)
     steps = [
         "To re-authorize, in System Settings → Privacy & Security, for BOTH "
         "Input Monitoring and Accessibility:",
-        "  1. Select any stale python entry and remove it with the − button.",
+        "  1. Select any stale Python / python3 entry and remove it with the − button.",
         "  2. Click +, press ⌘⇧G, paste this path, and click Open:",
-        f"       {current.path}",
+        f"       {bundle or current.path}",
     ]
-    if current.app_path is not None:
+    if bundle is not None:
         steps.append(
-            "     (framework Python: if macOS lists it as Python, or the entry "
-            "does not stick, add this bundle binary instead:"
+            "     (this framework Python runs as that app bundle, so macOS "
+            "lists the entry as “Python”, not as a python3 path)"
         )
-        steps.append(f"       {current.app_path} )")
     steps.append("  3. Make sure the new entry's toggle is on.")
     steps.append(
         "Then run: bunnify spotty-bunny upgrade"
