@@ -1,12 +1,8 @@
 # Bunnify
 
-[![PyPI version](https://img.shields.io/pypi/v/bunnify.svg)](https://pypi.org/project/bunnify/)
-[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://pypi.org/project/bunnify/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/the-hcma/bunnify/blob/main/LICENSE)
-[![CI](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml/badge.svg)](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/bunnify.svg)](https://pypi.org/project/bunnify/) [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://pypi.org/project/bunnify/) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/the-hcma/bunnify/blob/main/LICENSE) [![CI](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml/badge.svg)](https://github.com/the-hcma/bunnify/actions/workflows/ci.yml)
 
-A Python bookmark manager and URL shortcut system: terminal CLI, web command
-palette, Chrome OpenSearch integration, and parameterized redirects.
+A Python bookmark manager and URL shortcut system: terminal CLI, web command palette, Chrome OpenSearch integration, and parameterized redirects.
 
 ## Install
 
@@ -19,16 +15,9 @@ bunnify --version
 bunnify onboard   # print bookmarks / setup / Chrome next steps
 ```
 
-pipx installs `bunnify` and `bunnify-server` under **`~/.local/bin`** by default
-(or `$PIPX_BIN_DIR` when set). Ensure that directory is on your `PATH` before
-running either command. Prefer the pipx apps over any checkout
-`./scripts/bunnify` still on `PATH`.
+pipx installs `bunnify` and `bunnify-server` under **`~/.local/bin`** by default (or `$PIPX_BIN_DIR` when set). Ensure that directory is on your `PATH` before running either command. Prefer the pipx apps over any checkout `./scripts/bunnify` still on `PATH`.
 
-The wheel installs **`bunnify`** (CLI), **`bunnify-server`** (Django
-server), and **`spotty-bunny`** (Spotlight-style search box; PyObjC on macOS
-and pywin32 on Windows are installed automatically). No repository checkout or
-`uv` is required at runtime. The `bunnify[macos]` and `bunnify[windows]` extras
-from earlier releases still install, as empty aliases.
+The wheel installs **`bunnify`** (CLI), **`bunnify-server`** (Django server), and **`spotty-bunny`** (Spotlight-style search box; PyObjC on macOS and pywin32 on Windows are installed automatically). No repository checkout or `uv` is required at runtime. The `bunnify[macos]` and `bunnify[windows]` extras from earlier releases still install, as empty aliases.
 
 Package on PyPI: [pypi.org/project/bunnify](https://pypi.org/project/bunnify/).
 
@@ -40,8 +29,7 @@ pipx does not print package docs after install. Run:
 bunnify onboard
 ```
 
-That prints the ready-to-go checklist (bookmarks path, `bunnify setup`,
-Chrome/Edge, and upgrade). Same text:
+That prints the ready-to-go checklist (bookmarks path, `bunnify setup`, Chrome/Edge, and upgrade). Same text:
 
 ```bash
 bunnify --onboard
@@ -49,19 +37,14 @@ bunnify --onboard
 
 Summary of what it covers:
 
-1. **Bookmarks** at `~/.config/bunnify/bookmarks.json` (required before the
-   server starts) — `bunnify setup` can install the example shortcuts, or seed
-   from
-   [bunnify.json.example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
+1. **Bookmarks** at `~/.config/bunnify/bookmarks.json` (required before the server starts) — `bunnify setup` can install the example shortcuts, or seed from [bunnify.json.example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
 2. **`bunnify setup`** — local on a laptop; remote for a home/always-on host  
    [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md)
 3. **Chrome / Edge** — match `base_url` from `config.toml`  
    [CHROME_SETUP.md](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)
 4. **Try it:** `bunnify gh` or address-bar keyword (e.g. `b gh`)
-5. **macOS Spotty Bunny** (optional) — `bunnify spotty-bunny install`
-   ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
-6. **Windows Spotty Bunny** (optional) — `bunnify spotty-bunny install`
-   ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
+5. **macOS Spotty Bunny** (optional) — `bunnify spotty-bunny install` ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
+6. **Windows Spotty Bunny** (optional) — `bunnify spotty-bunny install` ([LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md))
 
 ### Upgrade
 
@@ -71,25 +54,13 @@ Preferred:
 bunnify upgrade
 ```
 
-That prints the version/commit you are running **from**, the PyPI target, then
-the pipx app version/commit **to** after `pipx upgrade`. Use this instead of
-bare `pipx upgrade bunnify` so you can see when PATH is still a git checkout.
+That prints the version/commit you are running **from**, the PyPI target, then the pipx app version/commit **to** after `pipx upgrade`. Use this instead of bare `pipx upgrade bunnify` so you can see when PATH is still a git checkout.
 
-On **macOS**, `bunnify upgrade` also refreshes installed server and Spotty Bunny
-LaunchAgents when their plists are present (or run `bunnify-server upgrade` /
-`bunnify spotty-bunny upgrade` manually). On **Windows**, `bunnify upgrade`
-also refreshes an installed Spotty Bunny Scheduled Task the same way — there
-is no Windows equivalent of the server LaunchAgent yet, so only Spotty Bunny
-is refreshed.
+On **macOS**, `bunnify upgrade` also refreshes installed server and Spotty Bunny LaunchAgents when their plists are present (or run `bunnify-server upgrade` / `bunnify spotty-bunny upgrade` manually). On **Windows**, `bunnify upgrade` also refreshes an installed Spotty Bunny Scheduled Task the same way — there is no Windows equivalent of the server LaunchAgent yet, so only Spotty Bunny is refreshed.
 
-`pipx upgrade` only updates `~/.local/bin/bunnify`. If `bunnify --version` still
-shows a checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv`.
-After `pipx ensurepath`, `command -v bunnify` should be `~/.local/bin/bunnify`.
+`pipx upgrade` only updates `~/.local/bin/bunnify`. If `bunnify --version` still shows a checkout SHA, PATH is hitting `./scripts/bunnify` or a repo `.venv`. After `pipx ensurepath`, `command -v bunnify` should be `~/.local/bin/bunnify`.
 
-Bookmarks and `~/.config/bunnify/config.toml` are user data — upgrades do not
-overwrite them. After a major server change, re-run `bunnify setup` only if
-docs or release notes say so. Setup will offer to stop a different local
-Bunnify build and start this CLI's build when the port is already in use.
+Bookmarks and `~/.config/bunnify/config.toml` are user data — upgrades do not overwrite them. After a major server change, re-run `bunnify setup` only if docs or release notes say so. Setup will offer to stop a different local Bunnify build and start this CLI's build when the port is already in use.
 
 Source and docs: [github.com/the-hcma/bunnify](https://github.com/the-hcma/bunnify).
 
@@ -97,10 +68,7 @@ Source and docs: [github.com/the-hcma/bunnify](https://github.com/the-hcma/bunni
 
 ### 1. Bookmarks file
 
-`bunnify setup` offers to install the example bookmarks when none exist yet.
-You can also create the file yourself from the
-[documented example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example)
-into XDG config:
+`bunnify setup` offers to install the example bookmarks when none exist yet. You can also create the file yourself from the [documented example](https://github.com/the-hcma/bunnify/blob/main/bunnify.json.example) into XDG config:
 
 ```bash
 mkdir -p ~/.config/bunnify
@@ -109,8 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/the-hcma/bunnify/main/bunnify.json.
 # edit ~/.config/bunnify/bookmarks.json with your shortcuts
 ```
 
-See [Configuration](https://github.com/the-hcma/bunnify/blob/main/docs/CONFIG.md)
-for overrides (`BUNNIFY_BOOKMARKS`, `XDG_CONFIG_HOME`).
+See [Configuration](https://github.com/the-hcma/bunnify/blob/main/docs/CONFIG.md) for overrides (`BUNNIFY_BOOKMARKS`, `XDG_CONFIG_HOME`).
 
 ### 2. Configure local or remote mode
 
@@ -118,23 +85,13 @@ for overrides (`BUNNIFY_BOOKMARKS`, `XDG_CONFIG_HOME`).
 bunnify setup
 ```
 
-**Laptop / daily machine:** choose **local** (default). On **macOS**, setup
-installs the **server LaunchAgent** (`com.thehcma.bunnify`), verifies
-`/health`, records the port, and saves settings to `~/.config/bunnify/config.toml`.
-Elsewhere it starts a managed background server the same way as before. Point
-Chrome or Edge at the same `base_url`
-([Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)).
+**Laptop / daily machine:** choose **local** (default). On **macOS**, setup installs the **server LaunchAgent** (`com.thehcma.bunnify`), verifies `/health`, records the port, and saves settings to `~/.config/bunnify/config.toml`. Elsewhere it starts a managed background server the same way as before. Point Chrome or Edge at the same `base_url` ([Chrome / Edge setup](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md)).
 
-**Home server / always-on host:** choose **remote** on client devices and enter
-that host’s URL. Setup probes `/health`; if the host is unreachable it warns
-and asks before saving. Prefer a centralized remote install when several
-machines share one server — not as a laptop’s only dependency if you often go
-offline.
+**Home server / always-on host:** choose **remote** on client devices and enter that host’s URL. Setup probes `/health`; if the host is unreachable it warns and asks before saving. Prefer a centralized remote install when several machines share one server — not as a laptop’s only dependency if you often go offline.
 
 One-time override without saving: `bunnify --base-url https://… shortcut`.
 
-Details:
-[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
+Details: [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ### 3. Run shortcuts
 
@@ -158,41 +115,27 @@ mkdir -p ~/.local/share/bash-completion/completions
 bunnify --completion bash > ~/.local/share/bash-completion/completions/bunnify.bash
 ```
 
-That's a [bash-completion v2](https://github.com/scop/bash-completion) user
-directory — no rc file edit, lazy-loaded on first Tab press in a new shell.
-`zsh`/`fish` aren't supported yet. The emitted script calls `bunnify --list-keys`
-at completion time, so Tab-completing shortcuts needs the server running.
+That's a [bash-completion v2](https://github.com/scop/bash-completion) user directory — no rc file edit, lazy-loaded on first Tab press in a new shell. `zsh`/`fish` aren't supported yet. The emitted script calls `bunnify --list-keys` at completion time, so Tab-completing shortcuts needs the server running.
 
 `source etc/bunnify-completion` (from a source checkout) still works too.
 
 ## Features
 
 - **CLI / REPL** — fuzzy Tab completion, fzf mode, Vim/Emacs edit keys
-- **Spotty Bunny** — configurable-chord search box (`spotty-bunny`; auto
-  Control/Option by default, `spotty-bunny hotkey` to change;
-  login LaunchAgent via `install` / `upgrade` / `uninstall`)
-- **macOS server LaunchAgent** — local setup installs `bunnify-server` under
-  launchd (`bunnify-server install|status|upgrade|uninstall`)
+- **Spotty Bunny** — configurable-chord search box (`spotty-bunny`; auto Control/Option by default, `spotty-bunny hotkey` to change; login LaunchAgent via `install` / `upgrade` / `uninstall`)
+- **macOS server LaunchAgent** — local setup installs `bunnify-server` under launchd (`bunnify-server install|status|upgrade|uninstall`)
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
-- **Chrome / Edge** — OpenSearch at `/opensearch.xml`
-  ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
+- **Chrome / Edge** — OpenSearch at `/opensearch.xml` ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
 - **Parameters** — URLs with `#{name}` placeholders and optional defaults
 - **Validation** — JSON Schema on load; reserved keys `h` / `help`
 
 ## Spotty Bunny (macOS)
 
-Optional Spotlight-style search box. Hold the left (or right) copy of the
-chord's modifier key, then tap the other copy of the *same* modifier — for
-example, hold left Control and tap right Control. By default (`auto`) the
-modifier is chosen automatically from which keyboard is attached — see below
-to pin it or change it. PyObjC is installed automatically on macOS.
+Optional Spotlight-style search box. Hold the left (or right) copy of the chord's modifier key, then tap the other copy of the *same* modifier — for example, hold left Control and tap right Control. By default (`auto`) the modifier is chosen automatically from which keyboard is attached — see below to pin it or change it. PyObjC is installed automatically on macOS.
 
 ### Hotkey chord
 
-Standard MacBook keyboards have only one physical Control key, so the
-dual-Control chord doesn't work on laptop-only setups — the default `auto`
-choice already accounts for that by using Option instead. Configure the
-chord in `~/.config/bunnify/config.toml` (`spotty_bunny_hotkey`), or via:
+Standard MacBook keyboards have only one physical Control key, so the dual-Control chord doesn't work on laptop-only setups — the default `auto` choice already accounts for that by using Option instead. Configure the chord in `~/.config/bunnify/config.toml` (`spotty_bunny_hotkey`), or via:
 
 ```bash
 bunnify spotty-bunny hotkey            # show the current choice
@@ -210,12 +153,7 @@ bunnify spotty-bunny hotkey command    # dual-Command
 | Built-in only (no external keyboard) | Option | Hold left **Option**, tap right **Option** (or the reverse) |
 | External keyboard present (USB/Bluetooth) | Control | Hold left **Control**, tap right **Control** (or the reverse) |
 
-`auto` is re-checked on every periodic tap health check, so plugging in or
-unplugging an external keyboard switches the chord without restarting Spotty
-Bunny. Pinning a choice (`control` / `option` / `command`) always uses both
-copies of that modifier, regardless of what's attached — useful on an
-external keyboard that lacks a second Option or Command key, or if you just
-prefer one chord everywhere.
+`auto` is re-checked on every periodic tap health check, so plugging in or unplugging an external keyboard switches the chord without restarting Spotty Bunny. Pinning a choice (`control` / `option` / `command`) always uses both copies of that modifier, regardless of what's attached — useful on an external keyboard that lacks a second Option or Command key, or if you just prefer one chord everywhere.
 
 ### Install
 
@@ -226,11 +164,9 @@ bunnify spotty-bunny install    # login LaunchAgent (TCC + KeepAlive)
 bunnify spotty-bunny status
 ```
 
-`install` grants Accessibility and Input Monitoring to the **interpreter
-launchd will exec** (typically the pipx venv Python), writes
-`~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist`, and bootstraps
-it. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no subcommand) still
-runs in the **foreground** for debugging.
+`install` grants Accessibility and Input Monitoring to the **interpreter launchd will exec** (typically the pipx venv Python), writes `~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist`, and bootstraps it. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no subcommand) still runs in the **foreground** for debugging.
+
+If the hotkey stops working (for example after a Homebrew Python upgrade), run `bunnify doctor`: it compares the interpreter that was authorized for Input Monitoring with the one running now and tells you exactly what to re-authorize in System Settings.
 
 ### Upgrade
 
@@ -239,9 +175,7 @@ bunnify upgrade                 # pipx package; on macOS refreshes LaunchAgents
 bunnify spotty-bunny upgrade    # manual plist bounce when needed
 ```
 
-On macOS, `bunnify upgrade` rewrites both LaunchAgents when installed. Use
-`bunnify spotty-bunny upgrade` only when you need to refresh Spotty without
-upgrading the pipx package.
+On macOS, `bunnify upgrade` rewrites both LaunchAgents when installed. Use `bunnify spotty-bunny upgrade` only when you need to refresh Spotty without upgrading the pipx package.
 
 ### Uninstall
 
@@ -249,34 +183,19 @@ upgrading the pipx package.
 bunnify spotty-bunny uninstall
 ```
 
-That boots the agent out, removes the plist, and stops a leftover overlay
-process. Bookmarks and `config.toml` are unchanged. Right-click the bunny icon
-for **Check for Updates** (forces an immediate PyPI check, skipping the daily
-cache), **Install** (when the LaunchAgent is missing), **Quit**, **Uninstall**,
-and (when installed and either a newer PyPI release is out or this running
-overlay predates what's actually installed) **Upgrade**. An up-arrow badge on
-the icon and an About line mark either case — a newer PyPI release (checked
-at most once a day) or this process simply running stale bits after a local
-upgrade; both clear once **Upgrade** restarts the overlay.
+That boots the agent out, removes the plist, and stops a leftover overlay process. Bookmarks and `config.toml` are unchanged. Right-click the bunny icon for **Check for Updates** (forces an immediate PyPI check, skipping the daily cache), **Install** (when the LaunchAgent is missing), **Quit**, **Uninstall**, and (when installed and either a newer PyPI release is out or this running overlay predates what's actually installed) **Upgrade**. An up-arrow badge on the icon and an About line mark either case — a newer PyPI release (checked at most once a day) or this process simply running stale bits after a local upgrade; both clear once **Upgrade** restarts the overlay.
 
-Left-click the bunny for About: bookmarks file, GitHub repo when that file
-lives in a GitHub checkout, and whether the CLI is talking to a local or
-remote server (with its URL).
+Left-click the bunny for About: bookmarks file, GitHub repo when that file lives in a GitHub checkout, and whether the CLI is talking to a local or remote server (with its URL).
 
-Details:
-[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
+Details: [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ## Spotty Bunny (Windows)
 
-Optional Spotlight-style search box, same overlay behavior as macOS. pywin32
-is installed automatically on Windows.
+Optional Spotlight-style search box, same overlay behavior as macOS. pywin32 is installed automatically on Windows.
 
 ### Hotkey chord
 
-Only the dual-Control chord actually works on Windows today: hold left
-Control, tap right Control (or the reverse). `auto` and `control` both
-resolve to it; `option` and `command` fall back to Control with a warning
-logged, rather than inventing an Alt or Windows-key chord.
+Only the dual-Control chord actually works on Windows today: hold left Control, tap right Control (or the reverse). `auto` and `control` both resolve to it; `option` and `command` fall back to Control with a warning logged, rather than inventing an Alt or Windows-key chord.
 
 ```powershell
 bunnify spotty-bunny hotkey            # show the current choice
@@ -292,10 +211,7 @@ bunnify spotty-bunny install    # Scheduled Task (LogonTrigger + RestartOnFailur
 bunnify spotty-bunny status
 ```
 
-There is no TCC-style permission step on Windows — `install` registers a
-Scheduled Task named "Bunnify Spotty Bunny", runs it once, and waits for the
-overlay to come up. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no
-subcommand) still runs in the **foreground** for debugging.
+There is no TCC-style permission step on Windows — `install` registers a Scheduled Task named "Bunnify Spotty Bunny", runs it once, and waits for the overlay to come up. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no subcommand) still runs in the **foreground** for debugging.
 
 ### Upgrade
 
@@ -304,12 +220,7 @@ bunnify upgrade                 # pipx package; also refreshes an installed task
 bunnify spotty-bunny upgrade    # re-register the task for the current binary
 ```
 
-`bunnify upgrade` refreshes an already-installed Scheduled Task automatically
-after the pipx package upgrade (skip this with `bunnify spotty-bunny upgrade`
-if you only need to re-register the task by itself). Either way, a failed
-upgrade restores the previous task configuration when one existed (or removes
-the non-functional registration when it didn't) rather than silently leaving
-a broken task behind.
+`bunnify upgrade` refreshes an already-installed Scheduled Task automatically after the pipx package upgrade (skip this with `bunnify spotty-bunny upgrade` if you only need to re-register the task by itself). Either way, a failed upgrade restores the previous task configuration when one existed (or removes the non-functional registration when it didn't) rather than silently leaving a broken task behind.
 
 ### Uninstall
 
@@ -317,18 +228,9 @@ a broken task behind.
 bunnify spotty-bunny uninstall
 ```
 
-That deletes the Scheduled Task and stops a leftover overlay process.
-Bookmarks and `config.toml` are unchanged. The right-click menu (Check for
-Updates, Install/Uninstall/Upgrade, Quit) and left-click-for-About behavior
-are the same as macOS's.
+That deletes the Scheduled Task and stops a leftover overlay process. Bookmarks and `config.toml` are unchanged. The right-click menu (Check for Updates, Install/Uninstall/Upgrade, Quit) and left-click-for-About behavior are the same as macOS's.
 
-`WH_KEYBOARD_LL`, the low-level keyboard hook Spotty Bunny uses to detect the
-chord, is a known heuristic trigger for antivirus software and Windows
-SmartScreen on unsigned pipx-installed binaries — the hook is listen-only
-(it always calls `CallNextHookEx`, so keystrokes are never intercepted or
-altered, only observed to detect the chord), but the first run may still show
-a SmartScreen prompt. Details:
-[Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
+`WH_KEYBOARD_LL`, the low-level keyboard hook Spotty Bunny uses to detect the chord, is a known heuristic trigger for antivirus software and Windows SmartScreen on unsigned pipx-installed binaries — the hook is listen-only (it always calls `CallNextHookEx`, so keystrokes are never intercepted or altered, only observed to detect the chord), but the first run may still show a SmartScreen prompt. Details: [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ## Server lifecycle
 
@@ -347,15 +249,13 @@ bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 curl --max-time 2 http://127.0.0.1:8000/health
 ```
 
-**Local setup:** `bunnify setup` (macOS installs the server LaunchAgent; other
-platforms start a managed background server). Stop with:
+**Local setup:** `bunnify setup` (macOS installs the server LaunchAgent; other platforms start a managed background server). Stop with:
 
 ```bash
 bunnify stop    # macOS: boot out server LaunchAgent; else stop managed server
 ```
 
-That prints the URL and runtime directory before stopping. Check the current
-mode, target URL, and reachability at any time:
+That prints the URL and runtime directory before stopping. Check the current mode, target URL, and reachability at any time:
 
 ```bash
 bunnify status
@@ -363,15 +263,9 @@ bunnify status
 
 Details: [Local and remote setup](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
-**Linux production:**
-[systemd user service](https://github.com/the-hcma/bunnify/blob/main/docs/SYSTEMD.md)
-via `setup-service` from
-[repository-helpers](https://github.com/the-hcma/repository-helpers).
+**Linux production:** [systemd user service](https://github.com/the-hcma/bunnify/blob/main/docs/SYSTEMD.md) via `setup-service` from [repository-helpers](https://github.com/the-hcma/repository-helpers).
 
-**macOS:** prefer `bunnify setup` (local) or the commands above. Manual plist
-copy is optional — see
-[LaunchAgent example](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.plist.example)
-and [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
+**macOS:** prefer `bunnify setup` (local) or the commands above. Manual plist copy is optional — see [LaunchAgent example](https://github.com/the-hcma/bunnify/blob/main/etc/launchd/com.thehcma.bunnify.plist.example) and [LOCAL.md](https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md).
 
 ## Web usage
 
@@ -401,9 +295,7 @@ With the server running (default `http://127.0.0.1:8000` after setup):
 }
 ```
 
-Required fields: `description`, `url`. Placeholders use `#{parameter_name}`.
-Reload after edits: the server watches the JSON file, or run
-`load_bookmarks` in a development checkout.
+Required fields: `description`, `url`. Placeholders use `#{parameter_name}`. Reload after edits: the server watches the JSON file, or run `load_bookmarks` in a development checkout.
 
 ## Development checkout
 
@@ -423,12 +315,9 @@ cp bunnify.json.example ~/.config/bunnify/bookmarks.json
 ./test_bunnify
 ```
 
-Full guidelines:
-[CONTRIBUTING.md](https://github.com/the-hcma/bunnify/blob/main/CONTRIBUTING.md).
-Quality gates: `./scripts/checks`.
+Full guidelines: [CONTRIBUTING.md](https://github.com/the-hcma/bunnify/blob/main/CONTRIBUTING.md). Quality gates: `./scripts/checks`.
 
-Wrappers under `./scripts/` prefer `uv run` when `uv` is on `PATH`, otherwise
-the checkout `.venv` (same entry points systemd uses on service hosts).
+Wrappers under `./scripts/` prefer `uv run` when `uv` is on `PATH`, otherwise the checkout `.venv` (same entry points systemd uses on service hosts).
 
 ## Documentation
 
@@ -472,11 +361,8 @@ bunnify-server --stop --pid-dir ~/.local/share/bunnify/run
 
 ## Releasing
 
-Maintainers:
-[docs/RELEASING.md](https://github.com/the-hcma/bunnify/blob/main/docs/RELEASING.md)
-(Release Please + PyPI).
+Maintainers: [docs/RELEASING.md](https://github.com/the-hcma/bunnify/blob/main/docs/RELEASING.md) (Release Please + PyPI).
 
 ## License
 
-MIT © 2026 Henrique Andrade ([GitHub's thehcma](https://github.com/thehcma)) — see
-[LICENSE](https://github.com/the-hcma/bunnify/blob/main/LICENSE).
+MIT © 2026 Henrique Andrade ([GitHub's thehcma](https://github.com/thehcma)) — see [LICENSE](https://github.com/the-hcma/bunnify/blob/main/LICENSE).

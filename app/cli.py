@@ -291,6 +291,46 @@ def pick_key_with_fzf(
     return selected or None
 
 
+def run_doctor(
+    *,
+    env_path: Path | None = None,
+    print_fn: Callable[[str], None] | None = None,
+    theme: Theme | None = None,
+) -> int:
+    """Comprehensive diagnostics: the server, plus Spotty Bunny when present.
+
+    On macOS, runs Spotty Bunny's own doctor (privacy-grant diagnosis with the
+    exact System Settings fix) when it is installed or running. Returns 0 when
+    nothing is wrong, 1 otherwise.
+    """
+    log = print_fn or click.echo
+    colors = theme if theme is not None else Theme(enabled=False)
+    log(colors.header(_command_banner("doctor")))
+    log("")
+    log(colors.header("Server"))
+    code = run_status(env_path=env_path, print_fn=log, theme=colors)
+    log("")
+    log(colors.header("Spotty Bunny"))
+    if sys.platform != "darwin":
+        log("Privacy-grant diagnostics are only available on macOS.")
+        return code
+    from app.spotty_bunny_agent import doctor_agent, is_agent_installed
+    from app.spotty_bunny_launch import spotty_bunny_is_running
+
+    if not (is_agent_installed() or spotty_bunny_is_running()):
+        log("Not installed. Install with: bunnify spotty-bunny install")
+        return code
+    return max(
+        code,
+        doctor_agent(
+            print_err=lambda message: log(colors.warn(message)),
+            print_fn=lambda line: log(
+                colors.warn(line) if line.startswith("problem:") else line
+            ),
+        ),
+    )
+
+
 def run_setup(
     *,
     prompt_fn: Callable[[str], str] | None = None,
@@ -2408,6 +2448,11 @@ def main(
       spotty-bunny --verbose
 
     \b
+    Diagnose a dead Spotty Bunny hotkey and get the exact System Settings
+    fix (`doctor` is a reserved shortcut name):
+      bunnify doctor
+
+    \b
     Server setup (`setup` is a reserved shortcut name):
       bunnify setup
       bunnify --setup
@@ -2476,6 +2521,10 @@ def main(
         if upgrade_requested or shortcut_args == ("upgrade",):
             run_upgrade(print_fn=click.echo, theme=theme)
             return
+        if shortcut_args == ("doctor",):
+            raise SystemExit(
+                run_doctor(env_path=env_file, print_fn=click.echo, theme=theme)
+            )
         if status_requested or shortcut_args == ("status",):
             raise SystemExit(
                 run_status(env_path=env_file, print_fn=click.echo, theme=theme)

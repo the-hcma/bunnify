@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,16 @@ from app.spotty_bunny_cli import (
     MACOS_EXTRA_HINT,
     NOT_MACOS_MESSAGE,
     _spotty_bunny_log_file,
+)
+from app.spotty_bunny_grant import (
+    describe_interpreter,
+    diagnose_grant,
+    diagnose_running_agent,
+    process_executable,
+    read_recorded_grant,
+    read_runtime_grant,
+    record_grant,
+    runtime_grant_rejection,
 )
 from app.spotty_bunny_launch import (
     clear_spotty_bunny_pid,
@@ -33,7 +44,9 @@ from app.spotty_bunny_tap_health import (
 )
 from app.version import build_version
 
-AGENT_COMMANDS = frozenset({"hotkey", "install", "status", "uninstall", "upgrade"})
+AGENT_COMMANDS = frozenset(
+    {"doctor", "hotkey", "install", "status", "uninstall", "upgrade"}
+)
 AGENT_LABEL = "com.thehcma.bunnify.spotty-bunny"
 AGENT_PLIST_NAME = f"{AGENT_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_S = 10
@@ -63,7 +76,7 @@ TCC_RECHECK_PROMPT = (
 TCC_PROBE_TIMEOUT_S = 15
 UNKNOWN_COMMAND_MESSAGE = (
     f"{COMMAND_NAME}: unknown command '{{command}}'. "
-    "Use hotkey, install, uninstall, status, or upgrade; "
+    "Use doctor, hotkey, install, uninstall, status, or upgrade; "
     "or run with no subcommand for the foreground overlay."
 )
 
@@ -102,6 +115,174 @@ def bootout_loaded_agent(
         return False
     _bootout_agent(launchctl=launchctl, uid=uid)
     return True
+
+
+def doctor_agent(
+    *,
+    home: Path | None = None,
+    platform: str | None = None,
+    print_err: Callable[[str], None] | None = None,
+    print_fn: Callable[[str], None] | None = None,
+    probe_tcc: TccFn | None = None,
+    program: Path | None = None,
+) -> int:
+    """Diagnose why the hotkey may not work; name the exact System Settings fix.
+
+    Compares the interpreter that was authorized for Input Monitoring (recorded
+    by ``install`` / ``upgrade``) with the one launchd execs now. Exit 0 when
+    nothing is wrong, 1 otherwise.
+    """
+    err = print_err or _print_err
+    out = print_fn or print
+    if not _is_darwin(platform):
+        err(NOT_MACOS_MESSAGE)
+        return 1
+    root = home if home is not None else Path.home()
+    plist = agent_plist_path(home=root)
+    if program is not None:
+        binary = program
+    elif plist.is_file():
+        plist_argv = _plist_program_arguments(plist)
+        binary = Path(plist_argv[0]) if plist_argv else spotty_bunny_program()
+    else:
+        binary = spotty_bunny_program()
+    if binary is None:
+        out("problem: could not find the spotty-bunny binary on PATH.")
+        out(f"Install it with: {COMMAND_NAME} install")
+        return 1
+    installed = plist.is_file()
+    interpreter = interpreter_for_program(binary)
+    stale_plist = False
+    missing = binary if not binary.exists() else None
+    if missing is None and not interpreter.exists():
+        missing = interpreter
+    if missing is not None:
+        what = "spotty-bunny binary" if missing == binary else "interpreter"
+        out(f"problem: {what} no longer exists: {missing}")
+        recorded = read_recorded_grant()
+        if recorded is not None:
+            out(f"authorized_interpreter: {recorded.label()}")
+        fresh = spotty_bunny_program() if program is None else None
+        fresh_interpreter = (
+            interpreter_for_program(fresh) if fresh is not None else None
+        )
+        if fresh_interpreter is None or not fresh_interpreter.exists():
+            follow_up = (
+                f"{COMMAND_NAME} upgrade" if installed else f"{COMMAND_NAME} install"
+            )
+            cause = (
+                "The installed LaunchAgent points at a removed Python or console script"
+                if installed
+                else "spotty-bunny is not installed as a LaunchAgent and its "
+                "Python or console script is missing"
+            )
+            out(
+                f"{cause} (typically after a Python upgrade or pipx reinstall). "
+                f"Reinstall spotty-bunny, then run: {follow_up}"
+            )
+            return 1
+        interpreter = fresh_interpreter
+        if installed:
+            stale_plist = True
+            out(
+                f"A replacement interpreter is available: {fresh_interpreter}. "
+                "Checking it instead; the LaunchAgent plist is stale."
+            )
+        else:
+            out(f"Checking the interpreter on PATH instead: {fresh_interpreter}.")
+    current = describe_interpreter(interpreter)
+    running_pid = _running_agent_pid()
+    running_executable = (
+        process_executable(running_pid) if running_pid is not None else None
+    )
+    stale_running = (
+        diagnose_running_agent(
+            current=current, executable=running_executable, pid=running_pid
+        )
+        if running_pid is not None
+        else ()
+    )
+    report = read_runtime_grant()
+    rejection = (
+        runtime_grant_rejection(report, pid=running_pid)
+        if running_pid is not None and not stale_running
+        else None
+    )
+    agent_report = (
+        report
+        if running_pid is not None and not stale_running and rejection is None
+        else None
+    )
+    if agent_report is not None:
+        tcc = TccStatus(
+            accessibility=agent_report.accessibility,
+            input_monitoring=agent_report.input_monitoring,
+        )
+    else:
+        try:
+            tcc = (probe_tcc or _probe_tcc)(interpreter)
+        except ImportError:
+            err(MACOS_EXTRA_HINT)
+            return 1
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            out(f"problem: could not verify TCC for {interpreter}: {exc}")
+            return 1
+    recorded = read_recorded_grant()
+    diagnosis = diagnose_grant(
+        accessibility=tcc.accessibility,
+        agent_installed=installed,
+        current=current,
+        input_monitoring=tcc.input_monitoring,
+        probed_by_agent=agent_report is not None,
+        recorded=recorded,
+    )
+    out(f"interpreter: {current.label()}")
+    if running_executable is not None:
+        out(f"running_executable: {running_executable} (pid {running_pid})")
+    if agent_report is not None:
+        age = max(0, int(time.time() - agent_report.updated_at))
+        source = f"running spotty-bunny (pid {running_pid}, reported {age}s ago)"
+    else:
+        source = "this terminal" + (f" ({rejection})" if rejection else "")
+    out(f"permissions_source: {source}")
+    out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
+    out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
+    out(
+        "authorized_interpreter: "
+        + (recorded.label() if recorded is not None else "not recorded")
+    )
+    out(f"diagnosis: {diagnosis.state}")
+    for line in diagnosis.lines:
+        out(line)
+    if agent_report is None and tcc.accessibility and tcc.input_monitoring:
+        out(
+            "note: permissions are probed from this terminal session; macOS "
+            "may attribute them to the terminal app rather than the interpreter. "
+            "If the hotkey still fails, re-authorize the interpreter above."
+        )
+    healthy = diagnosis.healthy
+    for line in stale_running:
+        healthy = False
+        out(line)
+    if healthy and recorded is None:
+        out(
+            "No authorized interpreter is on record, so a future change cannot "
+            f"be pinpointed. Run `{COMMAND_NAME} "
+            f"{'upgrade' if installed else 'install'}` to record it."
+        )
+    if stale_plist:
+        healthy = False
+        out(f"problem: the LaunchAgent plist is stale. Run: {COMMAND_NAME} upgrade")
+    health = read_spotty_bunny_health()
+    if running_pid is not None and health is not None and health.tap != TAP_STATE_OK:
+        healthy = False
+        out(
+            f"problem: event tap is {health.tap} "
+            f"(reinstall_failures: {health.reinstall_failures}) — the hotkey "
+            "will not work. Restart spotty-bunny (launchd relaunches it) and, "
+            "if it persists, re-authorize the interpreter above."
+        )
+    return 0 if healthy else 1
 
 
 def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
@@ -176,6 +357,7 @@ def install_agent(
     ):
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
+    record_grant(describe_interpreter(interpreter))
     err(f"{COMMAND_NAME}: installed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: plist {plist}")
     err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")
@@ -309,6 +491,8 @@ def run_agent_command(
             file=sys.stderr,
         )
         return 2
+    if command == "doctor":
+        return doctor_agent(**kwargs)
     if command == "install":
         return install_agent(**kwargs)
     if command == "status":
@@ -557,6 +741,7 @@ def upgrade_agent(
     ):
         err(f"{COMMAND_NAME}: launchctl bootstrap failed for {plist}.")
         return 1
+    record_grant(describe_interpreter(interpreter))
     err(f"{COMMAND_NAME}: refreshed LaunchAgent {AGENT_LABEL}")
     err(f"{COMMAND_NAME}: binary {binary}")
     err(f"{COMMAND_NAME}: interpreter {interpreter_realpath(interpreter)}")
@@ -878,6 +1063,15 @@ def _run_tcc_probe(interpreter: Path, *, prompt: bool) -> TccStatus:
         )
     except (KeyError, TypeError) as exc:
         raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
+
+
+def _running_agent_pid() -> int | None:
+    from app.spotty_bunny_launch import read_spotty_bunny_runtime
+
+    if not spotty_bunny_is_running():
+        return None
+    runtime = read_spotty_bunny_runtime()
+    return runtime[0] if runtime is not None else None
 
 
 def _probe_tcc_for_status(

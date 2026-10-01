@@ -10,9 +10,10 @@ import signal
 import sys
 import time
 from collections.abc import Callable
-from functools import partial
+from functools import cache, partial
 
 import objc
+from ApplicationServices import AXIsProcessTrusted
 from Cocoa import (
     NSAlert,
     NSAlertFirstButtonReturn,
@@ -92,6 +93,7 @@ from Quartz import (
     CGEventTapCreate,
     CGEventTapEnable,
     CGEventTapIsEnabled,
+    CGPreflightListenEventAccess,
     CGRequestListenEventAccess,
     kCFRunLoopCommonModes,
     kCGEventFlagMaskAlternate,
@@ -135,6 +137,7 @@ from app.spotty_bunny_about import (
 )
 from app.spotty_bunny_about_info import load_about_runtime_info
 from app.spotty_bunny_agent import (
+    AGENT_LABEL,
     bootout_loaded_agent,
     install_agent,
     is_agent_installed,
@@ -165,6 +168,12 @@ from app.spotty_bunny_edit import (
     is_line_start_selector,
     line_navigation_modifies_selection,
     line_navigation_selected_range,
+)
+from app.spotty_bunny_grant import (
+    RuntimeGrant,
+    process_executable,
+    runtime_grant_due,
+    write_runtime_grant,
 )
 from app.spotty_bunny_history import (
     HistoryNavigator,
@@ -254,6 +263,8 @@ FIELD_WIDTH = LOGO_LEFT - FIELD_LEFT - LOGO_GAP
 STATUS_WRAP_WIDTH = PANEL_WIDTH - 2.0 * PANEL_INSET
 
 logger = logging.getLogger(__name__)
+
+_last_runtime_grant: RuntimeGrant | None = None
 
 
 class SpottyBunnyController(NSObject):
@@ -1392,6 +1403,7 @@ def run_spotty_bunny_app() -> int:
     _resolve_configured_chord(
         controller, on_resolved=partial(_print_hotkey_banner, controller)
     )
+    _record_runtime_grant()
     _install_event_tap(controller)
     _register_wake_observer(controller)
     _schedule_tap_health_checks(controller)
@@ -1694,6 +1706,7 @@ def _apply_resolved_chord(
 
 def _check_event_tap_health(controller: SpottyBunnyController) -> None:
     """Re-enable or reinstall the tap when macOS disables it silently."""
+    _record_runtime_grant()
     _resolve_configured_chord(controller)
     tap = controller.tap
     action = decide_tap_health_check(
@@ -1875,6 +1888,24 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
     reset_reinstall_failures()
 
 
+def _record_runtime_grant(*, time_fn: Callable[[], float] = time.time) -> None:
+    """Publish this process's own grants: a terminal probe sees the terminal's."""
+    global _last_runtime_grant
+    executable = _own_executable()
+    if executable is None:
+        return
+    grant = RuntimeGrant(
+        accessibility=bool(AXIsProcessTrusted()),
+        executable=executable,
+        input_monitoring=bool(CGPreflightListenEventAccess()),
+        launchd=os.environ.get("XPC_SERVICE_NAME") == AGENT_LABEL,
+        pid=os.getpid(),
+        updated_at=time_fn(),
+    )
+    if runtime_grant_due(_last_runtime_grant, grant) and write_runtime_grant(grant):
+        _last_runtime_grant = grant
+
+
 def _record_tap_activity(*, chord: bool) -> None:
     now = time.time()
     try_write_spotty_bunny_health(
@@ -1958,6 +1989,11 @@ def _install_edit_menu() -> None:
     edit_item.setSubmenu_(edit_menu)
     main.addItem_(edit_item)
     NSApp.setMainMenu_(main)
+
+
+@cache
+def _own_executable() -> str | None:
+    return process_executable(os.getpid())
 
 
 def _post_wake_event() -> None:
