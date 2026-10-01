@@ -123,7 +123,7 @@ bunnify spotty-bunny upgrade     # rewrite plist + bounce launchd
 
 ### Diagnose a dead hotkey with `bunnify doctor`
 
-If the chord stops working (classically after a Homebrew Python upgrade or a pipx reinstall), **run `bunnify doctor` first**; it is the supported way to find out what is wrong. It reports server reachability and, when Spotty Bunny is installed or running, checks it too; `bunnify spotty-bunny doctor` runs only the Spotty Bunny part. Exit `0` means nothing is wrong.
+If the chord stops working (classically after a Homebrew Python upgrade or a pipx reinstall), **run `bunnify doctor` first**; it is the supported way to find out what is wrong. It reports server reachability and, when Spotty Bunny is installed or running, checks it too; `bunnify spotty-bunny doctor` runs only the Spotty Bunny part. Exit `0` means doctor found no problem it could verify; when `permissions_source` is the terminal, a clean result can still hide a missing grant (see below).
 
 macOS grants Input Monitoring and Accessibility to one specific executable, so when that executable's path or binary changes the old grant silently stops applying. `install` and `upgrade` record the interpreter that was authorized (real path, version, and SHA-256 of the binary); `doctor` never writes that record. Run `install` or `upgrade` once after updating bunnify to start tracking. `doctor` compares the record with the interpreter launchd starts now and reports one of:
 
