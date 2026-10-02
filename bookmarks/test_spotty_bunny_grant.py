@@ -12,6 +12,9 @@ from django.test import SimpleTestCase
 
 from app.spotty_bunny_agent import (
     AGENT_LABEL,
+    CHORD_TEST_PROMPT,
+    TCC_FIX_PROMPT,
+    TCC_PERMISSIONS,
     TccStatus,
     doctor_agent,
     format_agent_plist,
@@ -199,7 +202,6 @@ class SpottyBunnyGrantTests(SimpleTestCase):
             accessibility=True,
             current=NEW,
             input_monitoring=True,
-            probed_by_agent=True,
             recorded=OLD,
         )
         self.assertNotIn("terminal", "\n".join(result.lines))
@@ -329,28 +331,52 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
     def _run(
         self,
         *,
+        answers: tuple[str, ...] = (),
         current: InterpreterIdentity,
         fresh_program: bool = False,
         health: SpottyBunnyHealth | None = None,
+        install_plist: bool = False,
+        interactive: bool = False,
         plist_program: str | None = None,
         recorded: InterpreterIdentity | None,
         report: RuntimeGrant | None = None,
         running_executable: str | None = None,
         running_pid: int | None = None,
         tcc: TccStatus,
+        tcc_after: tuple[TccStatus, ...] = (),
     ) -> tuple[int, str]:
-        """Run doctor_agent; *plist_program* installs a plist instead of ``program``."""
+        """Run doctor_agent; *plist_program* installs a plist instead of ``program``.
+
+        *install_plist* installs a plist for the live ``program``; *tcc_after*
+        queues the probe results that follow *tcc* (the last one repeats).
+        """
         lines: list[str] = []
         probes: list[Path] = []
+        results = [tcc, *tcc_after]
+        pending = list(answers)
+        self.prompts: list[str] = []
+        self.opened: list[str] = []
 
         def probe(path: Path) -> TccStatus:
             probes.append(path)
-            return tcc
+            return results.pop(0) if len(results) > 1 else results[0]
+
+        def ask(message: str) -> str:
+            self.prompts.append(message)
+            if not pending:
+                raise AssertionError(f"unexpected prompt: {message}")
+            return pending.pop(0)
+
+        def open_settings(url: str) -> bool:
+            self.opened.append(url)
+            return True
 
         with TemporaryDirectory() as tmp:
             home = Path(tmp)
             program = home / "spotty-bunny"
             program.write_text(f"#!{sys.executable}\n", encoding="utf-8")
+            if install_plist:
+                plist_program = str(program)
             if plist_program is not None:
                 plist = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
                 plist.parent.mkdir(parents=True)
@@ -383,15 +409,25 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
                     "app.spotty_bunny_agent.spotty_bunny_program",
                     return_value=program if fresh_program else None,
                 ),
+                patch(
+                    "app.spotty_bunny_agent._is_interactive", return_value=interactive
+                ),
+                patch(
+                    "app.spotty_bunny_agent._reload_agent", return_value=True
+                ) as reload,
             ):
                 code = doctor_agent(
                     home=home,
+                    open_settings=open_settings,
                     platform="darwin",
                     print_fn=lines.append,
                     probe_tcc=probe,
                     program=None if plist_program is not None else program,
+                    prompt_fn=ask,
+                    request_tcc=lambda _p: TccStatus(False, False),
                 )
                 self.recorded_calls = record.call_count
+                self.reload_calls = reload.call_count
         self.probe_calls = len(probes)
         return code, "\n".join(lines)
 
@@ -409,7 +445,6 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertIn(
             "permissions_source: running spotty-bunny (pid 77, reported", text
         )
-        self.assertNotIn("probed from this terminal", text)
 
     def test_doctor_ignores_report_from_another_pid(self) -> None:
         code, text = self._run(
@@ -422,7 +457,7 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         )
         self.assertEqual(code, 1)
         self.assertEqual(self.probe_calls, 1)
-        self.assertIn("permissions_source: this terminal (report is from pid 76", text)
+        self.assertIn("permissions_source: launchd probe (report is from pid 76", text)
 
     def test_doctor_ignores_report_from_terminal_started_overlay(self) -> None:
         code, text = self._run(
@@ -436,7 +471,6 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.probe_calls, 1)
         self.assertIn("not started by launchd", text)
-        self.assertIn("probed from this terminal", text)
 
     def test_doctor_ignores_stale_report(self) -> None:
         code, text = self._run(
@@ -496,6 +530,66 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("event tap", text)
 
+    def test_doctor_does_not_offer_fix_when_not_interactive(self) -> None:
+        code, _text = self._run(current=NEW, recorded=NEW, tcc=TccStatus(False, False))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.prompts, [])
+        self.assertEqual(self.opened, [])
+
+    def test_doctor_fix_declined_changes_nothing(self) -> None:
+        code, _text = self._run(
+            answers=("n",),
+            current=NEW,
+            install_plist=True,
+            interactive=True,
+            recorded=NEW,
+            tcc=TccStatus(False, False),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.prompts, [TCC_FIX_PROMPT])
+        self.assertEqual(self.opened, [])
+        self.assertEqual(self.reload_calls, 0)
+        self.assertEqual(self.recorded_calls, 0)
+
+    def test_doctor_fix_opens_each_pane_restarts_and_confirms(self) -> None:
+        code, text = self._run(
+            answers=("", "", "", "", "", "y"),
+            current=NEW,
+            install_plist=True,
+            interactive=True,
+            recorded=NEW,
+            tcc=TccStatus(False, False),
+            tcc_after=(
+                TccStatus(False, False),
+                TccStatus(False, False),
+                TccStatus(True, False),
+                TccStatus(True, True),
+            ),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.opened, [TCC_PERMISSIONS[0][2], TCC_PERMISSIONS[1][2]])
+        self.assertEqual(self.prompts[0], TCC_FIX_PROMPT)
+        self.assertEqual(self.prompts[-1], CHORD_TEST_PROMPT)
+        self.assertIn("step 1/2", text)
+        self.assertIn("step 2/2", text)
+        self.assertIn("restarted spotty-bunny", text)
+        self.assertEqual(self.reload_calls, 1)
+        self.assertEqual(self.recorded_calls, 1)
+
+    def test_doctor_fix_without_agent_points_at_install(self) -> None:
+        code, text = self._run(
+            answers=("", "", ""),
+            current=NEW,
+            interactive=True,
+            recorded=NEW,
+            tcc=TccStatus(False, False),
+            tcc_after=(TccStatus(False, False), TccStatus(True, True)),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("Now run: spotty-bunny install", text)
+        self.assertEqual(self.reload_calls, 0)
+        self.assertEqual(self.recorded_calls, 1)
+
     def test_doctor_flags_agent_still_running_removed_interpreter(self) -> None:
         old_exe = "/gone/3.14.1/Python.app/Contents/MacOS/Python"
         report = _report(executable=old_exe, updated_at=time.time())
@@ -538,7 +632,7 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.recorded_calls, 0)
         self.assertIn("diagnosis: ok", text)
-        self.assertIn("probed from this terminal", text)
+        self.assertNotIn("from your terminal", text)
 
     def test_doctor_reports_missing_interpreter(self) -> None:
         lines: list[str] = []

@@ -166,7 +166,7 @@ bunnify spotty-bunny status
 
 `install` grants Accessibility and Input Monitoring to the **interpreter launchd will exec** (typically the pipx venv Python), writes `~/Library/LaunchAgents/com.thehcma.bunnify.spotty-bunny.plist`, and bootstraps it. Bare `spotty-bunny` (or `bunnify spotty-bunny` with no subcommand) still runs in the **foreground** for debugging.
 
-If the hotkey stops working (for example after a Homebrew Python upgrade), run `bunnify doctor`: it compares the interpreter that was authorized for Input Monitoring with the one running now and tells you exactly what to re-authorize in System Settings.
+If the hotkey stops working (for example after a Homebrew Python upgrade), run `bunnify doctor`: it compares the interpreter that was authorized for Input Monitoring with the one running now, tells you exactly what to re-authorize, and offers to walk you through it, opening each System Settings pane in turn and re-checking.
 
 ### Upgrade
 

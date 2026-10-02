@@ -22,6 +22,7 @@ from pathlib import Path
 
 from app.config import data_dir
 
+ACCESSIBILITY_PANE = "Accessibility (“Device Control and Data Access” on macOS 27+)"
 GRANT_FILE_NAME = ".spotty-bunny-tcc-grant"
 INTERPRETER_VERSION_TIMEOUT_S = 15
 PROCESS_EXECUTABLE_TIMEOUT_S = 5
@@ -106,7 +107,6 @@ def diagnose_grant(
     agent_installed: bool = True,
     current: InterpreterIdentity,
     input_monitoring: bool,
-    probed_by_agent: bool = False,
     recorded: InterpreterIdentity | None,
 ) -> GrantDiagnosis:
     """Explain, as specifically as the evidence allows, what to re-authorize."""
@@ -115,16 +115,10 @@ def diagnose_grant(
             f"Accessibility and Input Monitoring are granted for {current.label()}."
         ]
         if recorded is not None and recorded != current:
-            why = (
-                ""
-                if probed_by_agent
-                else " because this check runs from your terminal and may "
-                "reflect the terminal's grants"
-            )
             lines.append(
                 f"Note: the recorded authorized interpreter was {recorded.label()}; "
                 "the grants are present for the current one. The record is left "
-                f"unchanged{why}; `install` / `upgrade` refresh it."
+                "unchanged; `install` / `upgrade` refresh it."
             )
         return GrantDiagnosis(healthy=True, lines=tuple(lines), state="ok")
     if recorded is not None and recorded.path != current.path:
@@ -399,7 +393,7 @@ def _reauthorize_steps(
     bundle = app_bundle_path(current)
     steps = [
         "To re-authorize, in System Settings → Privacy & Security, for BOTH "
-        "Input Monitoring and Accessibility:",
+        f"Input Monitoring and {ACCESSIBILITY_PANE}:",
         "  1. Select any stale Python / python3 entry and remove it with the − button.",
         "  2. Click +, press ⌘⇧G, paste this path, and click Open:",
         f"       {bundle or current.path}",

@@ -14,7 +14,7 @@ from click.testing import CliRunner
 from django.test import SimpleTestCase
 
 from app.spotty_bunny_about_info import AboutRuntimeInfo
-from app.spotty_bunny_agent import TccStatus
+from app.spotty_bunny_agent import TCC_PERMISSIONS, TccStatus
 from app.spotty_bunny_cli import (
     LOG_ENV_VAR,
     SpottyBunnyEventTapError,
@@ -1331,9 +1331,11 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             ):
                 stdin.isatty.return_value = True
                 stdout.isatty.return_value = True
+                settings = _FakeSettings()
                 code = install_agent(
                     home=home,
                     launchctl=ctl,
+                    open_settings=settings,
                     platform="darwin",
                     print_err=lambda _m: None,
                     probe_tcc=tcc.probe,
@@ -1342,6 +1344,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 )
             self.assertEqual(code, 1)
             self.assertEqual(tcc.probes, 2)
+            self.assertEqual(settings.opened, [])
             self.assertFalse(
                 (home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist").exists()
             )
@@ -1365,13 +1368,14 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             with (
                 patch("app.spotty_bunny_agent.sys.stdin") as stdin,
                 patch("app.spotty_bunny_agent.sys.stdout") as stdout,
-                patch("builtins.input", side_effect=["", KeyboardInterrupt]),
+                patch("builtins.input", side_effect=["", "", KeyboardInterrupt]),
             ):
                 stdin.isatty.return_value = True
                 stdout.isatty.return_value = True
                 code = install_agent(
                     home=home,
                     launchctl=ctl,
+                    open_settings=_FakeSettings(),
                     platform="darwin",
                     print_err=stderr.write,
                     probe_tcc=tcc.probe,
@@ -1380,6 +1384,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 )
             self.assertEqual(code, 1)
             self.assertGreaterEqual(tcc.probes, 3)
+            self.assertIn("is still off for Python", stderr.getvalue())
             self.assertFalse(
                 (home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist").exists()
             )
@@ -1402,13 +1407,15 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             with (
                 patch("app.spotty_bunny_agent.sys.stdin") as stdin,
                 patch("app.spotty_bunny_agent.sys.stdout") as stdout,
-                patch("builtins.input", side_effect=["", "y"]),
+                patch("builtins.input", side_effect=["", "", "y"]),
             ):
                 stdin.isatty.return_value = True
                 stdout.isatty.return_value = True
+                settings = _FakeSettings()
                 code = install_agent(
                     home=home,
                     launchctl=ctl,
+                    open_settings=settings,
                     platform="darwin",
                     print_err=lambda _m: None,
                     probe_tcc=tcc.probe,
@@ -1418,14 +1425,17 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(code, 0)
             self.assertEqual(tcc.probes, 3)
             self.assertEqual(tcc.requests, 1)
+            self.assertEqual(settings.opened, [TCC_PERMISSIONS[0][2]])
 
     def test_install_interactive_tcc_recheck_with_prompt_fn(self) -> None:
         from unittest.mock import patch
 
         from app.spotty_bunny_agent import (
-            TCC_RECHECK_PROMPT,
+            TCC_GUIDE_DONE_PROMPT,
+            TCC_GUIDE_OPEN_PROMPT,
             install_agent,
         )
+        from app.spotty_bunny_grant import ACCESSIBILITY_PANE
 
         ctl = _FakeLaunchctl()
         tcc = _FakeTcc(
@@ -1452,6 +1462,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                 code = install_agent(
                     home=home,
                     launchctl=ctl,
+                    open_settings=_FakeSettings(),
                     platform="darwin",
                     print_err=lambda _m: None,
                     probe_tcc=tcc.probe,
@@ -1461,7 +1472,128 @@ class SpottyBunnyAgentTests(SimpleTestCase):
                     skip_chord_confirm=True,
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(prompts, [TCC_RECHECK_PROMPT])
+            self.assertEqual(
+                prompts,
+                [
+                    TCC_GUIDE_OPEN_PROMPT.format(pane=ACCESSIBILITY_PANE),
+                    TCC_GUIDE_DONE_PROMPT.format(pane=ACCESSIBILITY_PANE),
+                ],
+            )
+
+    def test_install_chord_no_rechecks_and_guides_missing_grants(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import install_agent
+
+        ctl = _FakeLaunchctl()
+        tcc = _FakeTcc(
+            TccStatus(True, True), TccStatus(False, False), TccStatus(True, True)
+        )
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            _write_executable(program, content="#!/opt/venv/bin/python\n")
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", side_effect=["n", "", "", "y"]),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                settings = _FakeSettings()
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    open_settings=settings,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(settings.opened, [TCC_PERMISSIONS[0][2]])
+            self.assertEqual(sum(1 for call in ctl.calls if call[1] == "bootstrap"), 2)
+
+    def test_install_guide_skips_opening_when_declined(self) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import install_agent
+
+        tcc = _FakeTcc(
+            TccStatus(False, False), TccStatus(False, False), TccStatus(True, True)
+        )
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            _write_executable(program, content="#!/opt/venv/bin/python\n")
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", side_effect=["n", ""]),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                settings = _FakeSettings()
+                code = install_agent(
+                    home=home,
+                    launchctl=_FakeLaunchctl(),
+                    open_settings=settings,
+                    platform="darwin",
+                    print_err=lambda _m: None,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                    skip_chord_confirm=True,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(settings.opened, [])
+
+    def test_install_guide_walks_panes_in_order_and_reports_open_failure(
+        self,
+    ) -> None:
+        from unittest.mock import patch
+
+        from app.spotty_bunny_agent import install_agent
+
+        tcc = _FakeTcc(
+            TccStatus(False, False),
+            TccStatus(False, False),
+            TccStatus(True, False),
+            TccStatus(True, True),
+        )
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            _write_executable(program, content="#!/opt/venv/bin/python\n")
+            stderr = StringIO()
+            with (
+                patch("app.spotty_bunny_agent.sys.stdin") as stdin,
+                patch("app.spotty_bunny_agent.sys.stdout") as stdout,
+                patch("builtins.input", side_effect=["", "", "", ""]),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                settings = _FakeSettings(ok=False)
+                code = install_agent(
+                    home=home,
+                    launchctl=_FakeLaunchctl(),
+                    open_settings=settings,
+                    platform="darwin",
+                    print_err=stderr.write,
+                    probe_tcc=tcc.probe,
+                    program=program,
+                    request_tcc=tcc.request,
+                    skip_chord_confirm=True,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                settings.opened, [TCC_PERMISSIONS[0][2], TCC_PERMISSIONS[1][2]]
+            )
+            text = stderr.getvalue()
+            self.assertLess(text.index("step 1/2"), text.index("step 2/2"))
+            self.assertIn("could not open System Settings", text)
+            self.assertIn("✓ Input Monitoring is on", text)
 
     def test_install_interactive_chord_retry_bounces_until_confirmed(self) -> None:
         from unittest.mock import patch
@@ -1469,7 +1601,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         from app.spotty_bunny_agent import AGENT_LABEL, install_agent
 
         ctl = _FakeLaunchctl()
-        tcc = _FakeTcc(TccStatus(True, True))
+        tcc = _FakeTcc(TccStatus(True, True), TccStatus(True, True))
         with TemporaryDirectory() as tmp:
             home = Path(tmp)
             program = home / "spotty-bunny"
@@ -1521,6 +1653,49 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertEqual(code, 0)
             self.assertEqual(tcc.requests, 1)
             self.assertEqual(tcc.probes, 2)
+
+    def test_tcc_probe_runs_as_launchd_job_and_boots_out(self) -> None:
+        from app.spotty_bunny_agent import TCC_PROBE_LABEL, _run_tcc_probe
+
+        ctl = _ProbeLaunchctl('{"accessibility": true, "input_monitoring": false}')
+        status = _run_tcc_probe(Path("/opt/py/python"), launchctl=ctl, prompt=True)
+        self.assertEqual(status, TccStatus(True, False))
+        verbs = [call[1] for call in ctl.calls]
+        self.assertEqual(verbs, ["bootout", "bootstrap", "bootout"])
+        self.assertTrue(ctl.calls[-1][2].endswith(f"/{TCC_PROBE_LABEL}"))
+        assert ctl.program is not None
+        self.assertEqual(ctl.program[0], "/opt/py/python")
+        self.assertEqual(ctl.program[3], "1")
+
+    def test_tcc_probe_raises_import_error_without_pyobjc(self) -> None:
+        from app.spotty_bunny_agent import _run_tcc_probe
+
+        ctl = _ProbeLaunchctl('{"error": "pyobjc"}')
+        with self.assertRaises(ImportError):
+            _run_tcc_probe(Path("/opt/py/python"), launchctl=ctl, prompt=False)
+
+    def test_tcc_probe_raises_when_launchctl_cannot_start_it(self) -> None:
+        from app.spotty_bunny_agent import _run_tcc_probe
+
+        ctl = _ProbeLaunchctl(None, bootstrap_code=5)
+        with self.assertRaisesRegex(OSError, "could not start the TCC probe"):
+            _run_tcc_probe(Path("/opt/py/python"), launchctl=ctl, prompt=False)
+
+    def test_tcc_probe_times_out_and_still_boots_out(self) -> None:
+        from app.spotty_bunny_agent import _run_tcc_probe
+
+        ctl = _ProbeLaunchctl(None)
+        clock = iter([0.0, 0.0, 99.0])
+        with self.assertRaisesRegex(OSError, "did not report within 1s"):
+            _run_tcc_probe(
+                Path("/opt/py/python"),
+                launchctl=ctl,
+                monotonic=lambda: next(clock),
+                prompt=False,
+                sleep=lambda _s: None,
+                timeout_s=1,
+            )
+        self.assertEqual([call[1] for call in ctl.calls][-1], "bootout")
 
     def test_install_not_macos(self) -> None:
         from app.spotty_bunny_agent import install_agent
@@ -2166,6 +2341,16 @@ class _FakeLaunchctl:
         return subprocess.CompletedProcess(argv, 0, "", "")
 
 
+class _FakeSettings:
+    def __init__(self, *, ok: bool = True) -> None:
+        self.ok = ok
+        self.opened: list[str] = []
+
+    def __call__(self, url: str) -> bool:
+        self.opened.append(url)
+        return self.ok
+
+
 class _FakeTcc:
     def __init__(self, *results: TccStatus) -> None:
         self._results = list(results)
@@ -2181,6 +2366,32 @@ class _FakeTcc:
     def request(self, _interpreter: Path) -> TccStatus:
         self.requests += 1
         return TccStatus(False, False)
+
+
+class _ProbeLaunchctl:
+    """Plays the probe job: on bootstrap, writes *payload* to its output path."""
+
+    def __init__(self, payload: str | None, *, bootstrap_code: int = 0) -> None:
+        self.bootstrap_code = bootstrap_code
+        self.calls: list[list[str]] = []
+        self.payload = payload
+        self.program: list[str] | None = None
+
+    def __call__(
+        self, argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        import plistlib
+
+        self.calls.append(list(argv))
+        if argv[1] != "bootstrap":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if self.bootstrap_code != 0:
+            return subprocess.CompletedProcess(argv, self.bootstrap_code, "", "")
+        with Path(argv[3]).open("rb") as handle:
+            self.program = list(plistlib.load(handle)["ProgramArguments"])
+        if self.payload is not None:
+            Path(self.program[-1]).write_text(self.payload, encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
 
 class SpottyBunnyCompleteTests(SimpleTestCase):
