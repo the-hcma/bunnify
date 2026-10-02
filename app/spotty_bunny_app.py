@@ -531,7 +531,7 @@ class SpottyBunnyController(NSObject):
     def workspaceDidWake_(self, _notification) -> None:
         """Reinstall the event tap after sleep/wake."""
         logger.info("system wake; reinstalling event tap")
-        _reinstall_event_tap(self)
+        _reinstall_event_tap(self, count_failure=False)
 
     def _apply_line_navigation(self, text_view, selector: str) -> None:
         """Move or extend the caret for Home/End (and Cocoa document aliases)."""
@@ -1761,7 +1761,9 @@ def _create_event_tap_callback(
                 if _event_tap_enabled(tap):
                     try_write_spotty_bunny_health(tap=TAP_STATE_OK)
                 else:
-                    _run_on_main(lambda: _reinstall_event_tap(controller))
+                    _run_on_main(
+                        lambda: _reinstall_event_tap(controller, count_failure=False)
+                    )
             else:
                 try_write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
             return event
@@ -1949,7 +1951,12 @@ def _register_wake_observer(controller: SpottyBunnyController) -> None:
 def _reinstall_event_tap(
     controller: SpottyBunnyController, *, count_failure: bool = True
 ) -> None:
-    """Rebuild the tap; *count_failure* is False when the caller already counted."""
+    """Rebuild the tap; a failure counts toward the exit budget if *count_failure*.
+
+    The budget counts failed health checks, so only a health check that has not
+    already counted passes True. Event-driven rebuilds (tap callback, wake) pass
+    False: a failure there leaves the tap disabled for the next check to count.
+    """
     try_write_spotty_bunny_health(tap=TAP_STATE_REINSTALLING)
     try:
         _teardown_event_tap(controller)

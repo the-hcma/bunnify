@@ -4435,6 +4435,24 @@ class SpottyBunnyTapHealthCheckTests(SimpleTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    def test_callback_rebuilds_do_not_spend_the_health_check_budget(self) -> None:
+        from app import spotty_bunny_app
+
+        tap_holder: dict[str, object] = {"tap": self.controller.tap}
+        callback = spotty_bunny_app._create_event_tap_callback(
+            self.controller, tap_holder=tap_holder
+        )
+        with (
+            patch.object(spotty_bunny_app, "_install_event_tap", return_value=False),
+            patch.object(spotty_bunny_app, "_run_on_main", side_effect=lambda f: f()),
+        ):
+            for _ in range(3):
+                callback(
+                    None, spotty_bunny_app.kCGEventTapDisabledByTimeout, None, None
+                )
+        self.assertEqual(self.exits, [])
+        self.assertEqual(self._check(enabled=False).reinstall_failures, 1)
+
     def test_counts_each_failed_heal_and_exits_at_the_threshold(self) -> None:
         self.assertEqual(self._check(enabled=False).reinstall_failures, 1)
         self.assertEqual(self._check(enabled=False).reinstall_failures, 2)
