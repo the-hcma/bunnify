@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -654,6 +655,14 @@ def status_agent(
         err=err,
         probe_tcc=probe_tcc,
     )
+    accessibility, input_monitoring = (
+        ("unknown", "unknown")
+        if tcc is None
+        else (
+            "yes" if tcc.accessibility else "no",
+            "yes" if tcc.input_monitoring else "no",
+        )
+    )
     stdout_path, stderr_path = _launchd_log_paths(plist)
     app_log = _spotty_bunny_log_file(None)
     out(f"running: {'yes' if running else 'no'}")
@@ -678,8 +687,8 @@ def status_agent(
     out(f"launchd_stdout: {stdout_path or 'none'}")
     out(f"launchd_stderr: {stderr_path or 'none'}")
     out(f"version: {build_version()}")
-    out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
-    out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
+    out(f"accessibility: {accessibility}")
+    out(f"input_monitoring: {input_monitoring}")
     health = read_spotty_bunny_health()
     if health is None:
         out("tap: unknown")
@@ -1268,11 +1277,12 @@ def _run_tcc_probe(
     process, so probing it directly reports the terminal's grants. A launchd
     job is its own responsible process, exactly like the LaunchAgent.
     """
+    label = f"{TCC_PROBE_LABEL}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="spotty-bunny-tcc-") as tmp:
         directory = Path(tmp)
         output = directory / "probe.json"
         errors = directory / "probe.err"
-        plist = directory / f"{TCC_PROBE_LABEL}.plist"
+        plist = directory / f"{label}.plist"
         plist.write_text(
             _PROBE_PLIST_TEMPLATE.replace(
                 "__PROGRAM_ARGUMENTS__",
@@ -1287,19 +1297,18 @@ def _run_tcc_probe(
                     )
                 ),
             )
-            .replace("__LABEL__", TCC_PROBE_LABEL)
+            .replace("__LABEL__", label)
             .replace("__STDERR__", escape(str(errors))),
             encoding="utf-8",
         )
-        target = f"{_gui_domain()}/{TCC_PROBE_LABEL}"
-        _launchctl(["bootout", target], launchctl=launchctl)
-        started = _launchctl(
-            ["bootstrap", _gui_domain(), str(plist)], launchctl=launchctl
-        )
+        domain = _gui_domain()
+        target = f"{domain}/{label}"
+        started = _launchctl(["bootstrap", domain, str(plist)], launchctl=launchctl)
         if started.returncode != 0:
             raise OSError(
-                "launchctl could not start the TCC probe: "
-                + (started.stderr.strip() or f"exit {started.returncode}")
+                f"launchctl could not start the TCC probe in {domain}; run this "
+                "from a terminal in your logged-in macOS desktop session (not "
+                "over SSH): " + (started.stderr.strip() or f"exit {started.returncode}")
             )
         try:
             deadline = monotonic() + timeout_s
@@ -1350,7 +1359,8 @@ def _probe_tcc_for_status(
     *,
     err: Callable[[str], None],
     probe_tcc: TccFn | None,
-) -> TccStatus:
+) -> TccStatus | None:
+    """Grants for *interpreter*, or None when they could not be determined."""
     if interpreter is None:
         return TccStatus(False, False)
     try:
@@ -1358,8 +1368,9 @@ def _probe_tcc_for_status(
     except ImportError:
         err(MACOS_EXTRA_HINT)
         return TccStatus(False, False)
-    except OSError, subprocess.SubprocessError, ValueError:
-        return TccStatus(False, False)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
+        return None
 
 
 def _shell_exec_python_from_wrapper(raw: str) -> Path | None:

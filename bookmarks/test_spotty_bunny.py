@@ -1214,6 +1214,34 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             self.assertIn("macos", stderr.getvalue().lower())
             self.assertIn("accessibility: no", stdout.getvalue())
 
+    def test_status_reports_unknown_grants_when_probe_fails(self) -> None:
+        from app.spotty_bunny_agent import status_agent
+
+        def _no_gui(_program: Path) -> TccStatus:
+            raise OSError("no GUI session")
+
+        stderr = StringIO()
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            program = Path(tmp) / "spotty-bunny"
+            _write_executable(program)
+            with patch(
+                "app.spotty_bunny_agent.spotty_bunny_is_running",
+                return_value=False,
+            ):
+                status_agent(
+                    home=Path(tmp),
+                    launchctl=_FakeLaunchctl(),
+                    platform="darwin",
+                    print_err=stderr.write,
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=_no_gui,
+                    program=program,
+                )
+        self.assertIn("accessibility: unknown", stdout.getvalue())
+        self.assertIn("input_monitoring: unknown", stdout.getvalue())
+        self.assertIn("no GUI session", stderr.getvalue())
+
     def test_install_bootstraps_when_tcc_is_current(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, install_agent
 
@@ -1661,8 +1689,8 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         status = _run_tcc_probe(Path("/opt/py/python"), launchctl=ctl, prompt=True)
         self.assertEqual(status, TccStatus(True, False))
         verbs = [call[1] for call in ctl.calls]
-        self.assertEqual(verbs, ["bootout", "bootstrap", "bootout"])
-        self.assertTrue(ctl.calls[-1][2].endswith(f"/{TCC_PROBE_LABEL}"))
+        self.assertEqual(verbs, ["bootstrap", "bootout"])
+        self.assertIn(f"/{TCC_PROBE_LABEL}.", ctl.calls[-1][2])
         assert ctl.program is not None
         self.assertEqual(ctl.program[0], str(Path("/opt/py/python")))
         self.assertEqual(ctl.program[3], "1")
@@ -1680,6 +1708,17 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             )
         self.assertEqual([call[1] for call in ctl.calls][-1], "bootout")
 
+    def test_tcc_probe_labels_are_unique_per_call(self) -> None:
+        from app.spotty_bunny_agent import _run_tcc_probe
+
+        payload = '{"accessibility": true, "input_monitoring": true}'
+        targets = []
+        for _ in range(2):
+            ctl = _ProbeLaunchctl(payload)
+            _run_tcc_probe(Path("/opt/py/python"), launchctl=ctl, prompt=False)
+            targets.append(ctl.calls[-1][2])
+        self.assertNotEqual(targets[0], targets[1])
+
     def test_tcc_probe_raises_import_error_without_pyobjc(self) -> None:
         from app.spotty_bunny_agent import _run_tcc_probe
 
@@ -1691,7 +1730,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         from app.spotty_bunny_agent import _run_tcc_probe
 
         ctl = _ProbeLaunchctl(None, bootstrap_code=5)
-        with self.assertRaisesRegex(OSError, "could not start the TCC probe"):
+        with self.assertRaisesRegex(OSError, "logged-in macOS desktop session"):
             _run_tcc_probe(Path("/opt/py/python"), launchctl=ctl, prompt=False)
 
     def test_tcc_probe_times_out_and_still_boots_out(self) -> None:
