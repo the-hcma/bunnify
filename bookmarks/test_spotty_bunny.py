@@ -1667,6 +1667,19 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         self.assertEqual(ctl.program[0], str(Path("/opt/py/python")))
         self.assertEqual(ctl.program[3], "1")
 
+    def test_tcc_probe_fails_fast_when_job_exits_without_reporting(self) -> None:
+        from app.spotty_bunny_agent import _run_tcc_probe
+
+        ctl = _ProbeLaunchctl(None, exit_code=1)
+        with self.assertRaisesRegex(OSError, "exited with code 1 without reporting"):
+            _run_tcc_probe(
+                Path("/opt/py/python"),
+                launchctl=ctl,
+                prompt=False,
+                sleep=lambda _s: self.fail("should not wait for the timeout"),
+            )
+        self.assertEqual([call[1] for call in ctl.calls][-1], "bootout")
+
     def test_tcc_probe_raises_import_error_without_pyobjc(self) -> None:
         from app.spotty_bunny_agent import _run_tcc_probe
 
@@ -2371,9 +2384,16 @@ class _FakeTcc:
 class _ProbeLaunchctl:
     """Plays the probe job: on bootstrap, writes *payload* to its output path."""
 
-    def __init__(self, payload: str | None, *, bootstrap_code: int = 0) -> None:
+    def __init__(
+        self,
+        payload: str | None,
+        *,
+        bootstrap_code: int = 0,
+        exit_code: int | None = None,
+    ) -> None:
         self.bootstrap_code = bootstrap_code
         self.calls: list[list[str]] = []
+        self.exit_code = exit_code
         self.payload = payload
         self.program: list[str] | None = None
 
@@ -2383,6 +2403,11 @@ class _ProbeLaunchctl:
         import plistlib
 
         self.calls.append(list(argv))
+        if argv[1] == "print":
+            state = "(never exited)" if self.exit_code is None else self.exit_code
+            return subprocess.CompletedProcess(
+                argv, 0, f"\tlast exit code = {state}\n", ""
+            )
         if argv[1] != "bootstrap":
             return subprocess.CompletedProcess(argv, 0, "", "")
         if self.bootstrap_code != 0:

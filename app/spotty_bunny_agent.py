@@ -1173,6 +1173,15 @@ def _open_settings(url: str) -> bool:
     return completed.returncode == 0
 
 
+def _probe_exit_code(target: str, *, launchctl: LaunchctlFn | None) -> int | None:
+    """The probe job's exit code once launchd reports it has exited, else None."""
+    completed = _launchctl(["print", target], launchctl=launchctl)
+    if completed.returncode != 0:
+        return None
+    match = re.search(r"last exit code = (-?\d+)", completed.stdout)
+    return int(match.group(1)) if match else None
+
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -1295,6 +1304,13 @@ def _run_tcc_probe(
         try:
             deadline = monotonic() + timeout_s
             while not output.is_file():
+                exit_code = _probe_exit_code(target, launchctl=launchctl)
+                if exit_code is not None and not output.is_file():
+                    detail = _read_text(errors).strip()
+                    raise OSError(
+                        f"tcc probe exited with code {exit_code} without reporting"
+                        + (f": {detail}" if detail else "")
+                    )
                 if monotonic() >= deadline:
                     detail = _read_text(errors).strip()
                     raise OSError(
