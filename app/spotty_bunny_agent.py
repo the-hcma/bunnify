@@ -8,7 +8,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +24,9 @@ from app.spotty_bunny_cli import (
     _spotty_bunny_log_file,
 )
 from app.spotty_bunny_grant import (
+    ACCESSIBILITY_PANE,
+    InterpreterIdentity,
+    app_bundle_path,
     describe_interpreter,
     diagnose_grant,
     diagnose_running_agent,
@@ -61,18 +66,34 @@ POST_INSTALL_HINT = (
     "side to test the overlay (auto by default; `spotty-bunny hotkey` "
     "shows/changes the choice)."
 )
-TCC_INSTRUCTIONS = f"""\
-{COMMAND_NAME}: Accessibility and Input Monitoring must be granted to the
-Python interpreter launchd will exec (the pipx/venv interpreter behind
-spotty-bunny), not only Terminal.app.
-
-System Settings → Privacy & Security → Accessibility
-System Settings → Privacy & Security → Input Monitoring
-"""
-TCC_RECHECK_PROMPT = (
-    "Press Enter after granting Accessibility/Input Monitoring to re-check "
-    "(or Ctrl-C to cancel)."
+SETTINGS_OPEN_TIMEOUT_S = 10
+TCC_FIX_PROMPT = "Walk through fixing the missing permissions now? [Y/n]: "
+TCC_GUIDE_DONE_PROMPT = (
+    "Press Enter once “Python” is switched on under {pane} to re-check "
+    "(Ctrl-C to cancel): "
 )
+TCC_GUIDE_OPEN_PROMPT = "Open System Settings at {pane} now? [Y/n]: "
+TCC_INSTRUCTIONS = f"""\
+{COMMAND_NAME}: Spotty Bunny needs two macOS permissions for the Python that
+launchd runs (not for your terminal app), both under
+System Settings → Privacy & Security:
+  - {ACCESSIBILITY_PANE}
+  - Input Monitoring
+"""
+TCC_PERMISSIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "accessibility",
+        ACCESSIBILITY_PANE,
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    ),
+    (
+        "input_monitoring",
+        "Input Monitoring",
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+    ),
+)
+TCC_PROBE_LABEL = f"{AGENT_LABEL}.tcc-probe"
+TCC_PROBE_POLL_S = 0.1
 TCC_PROBE_TIMEOUT_S = 15
 UNKNOWN_COMMAND_MESSAGE = (
     f"{COMMAND_NAME}: unknown command '{{command}}'. "
@@ -81,6 +102,7 @@ UNKNOWN_COMMAND_MESSAGE = (
 )
 
 LaunchctlFn = Callable[..., subprocess.CompletedProcess[str]]
+OpenSettingsFn = Callable[[str], bool]
 TccFn = Callable[[Path], "TccStatus"]
 
 
@@ -120,17 +142,23 @@ def bootout_loaded_agent(
 def doctor_agent(
     *,
     home: Path | None = None,
+    launchctl: LaunchctlFn | None = None,
+    open_settings: OpenSettingsFn | None = None,
+    pid_dir: Path | None = None,
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
     print_fn: Callable[[str], None] | None = None,
     probe_tcc: TccFn | None = None,
     program: Path | None = None,
+    prompt_fn: Callable[[str], str] | None = None,
+    request_tcc: TccFn | None = None,
 ) -> int:
-    """Diagnose why the hotkey may not work; name the exact System Settings fix.
+    """Diagnose why the hotkey may not work; offer to walk through the fix.
 
     Compares the interpreter that was authorized for Input Monitoring (recorded
-    by ``install`` / ``upgrade``) with the one launchd execs now. Exit 0 when
-    nothing is wrong, 1 otherwise.
+    by ``install`` / ``upgrade``) with the one launchd execs now. In a terminal,
+    missing grants are fixed pane by pane, then the agent is restarted and the
+    chord confirmed. Exit 0 when nothing is (or remains) wrong, 1 otherwise.
     """
     err = print_err or _print_err
     out = print_fn or print
@@ -233,7 +261,6 @@ def doctor_agent(
         agent_installed=installed,
         current=current,
         input_monitoring=tcc.input_monitoring,
-        probed_by_agent=agent_report is not None,
         recorded=recorded,
     )
     out(f"interpreter: {current.label()}")
@@ -243,7 +270,7 @@ def doctor_agent(
         age = max(0, int(time.time() - agent_report.updated_at))
         source = f"running spotty-bunny (pid {running_pid}, reported {age}s ago)"
     else:
-        source = "this terminal" + (f" ({rejection})" if rejection else "")
+        source = "launchd probe" + (f" ({rejection})" if rejection else "")
     out(f"permissions_source: {source}")
     out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
     out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
@@ -254,12 +281,6 @@ def doctor_agent(
     out(f"diagnosis: {diagnosis.state}")
     for line in diagnosis.lines:
         out(line)
-    if agent_report is None and tcc.accessibility and tcc.input_monitoring:
-        out(
-            "note: permissions are probed from this terminal session; macOS "
-            "may attribute them to the terminal app rather than the interpreter. "
-            "If the hotkey still fails, re-authorize the interpreter above."
-        )
     healthy = diagnosis.healthy
     for line in stale_running:
         healthy = False
@@ -282,7 +303,22 @@ def doctor_agent(
             "will not work. Restart spotty-bunny (launchd relaunches it) and, "
             "if it persists, re-authorize the interpreter above."
         )
-    return 0 if healthy else 1
+    if tcc.ok or not _is_interactive():
+        return 0 if healthy else 1
+    return _fix_tcc_from_doctor(
+        interpreter,
+        current=current,
+        installed=installed,
+        launchctl=launchctl,
+        open_settings=open_settings,
+        out=out,
+        pid_dir=pid_dir,
+        plist=plist,
+        probe_tcc=probe_tcc,
+        prompt_fn=prompt_fn,
+        request_tcc=request_tcc,
+        stale_plist=stale_plist,
+    )
 
 
 def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
@@ -306,6 +342,7 @@ def install_agent(
     *,
     home: Path | None = None,
     launchctl: LaunchctlFn | None = None,
+    open_settings: OpenSettingsFn | None = None,
     pid_dir: Path | None = None,
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
@@ -341,6 +378,7 @@ def install_agent(
     status = _require_current_tcc(
         interpreter,
         err=err,
+        open_settings=open_settings,
         probe_tcc=probe_tcc,
         prompt_fn=prompt_fn,
         request_tcc=request_tcc,
@@ -364,8 +402,11 @@ def install_agent(
     if skip_chord_confirm or _confirm_chord_works(
         plist,
         err=err,
+        interpreter=interpreter,
         launchctl=launchctl,
+        open_settings=open_settings,
         pid_dir=pid_dir,
+        probe_tcc=probe_tcc,
         prompt_fn=prompt_fn,
     ):
         return 0
@@ -614,6 +655,14 @@ def status_agent(
         err=err,
         probe_tcc=probe_tcc,
     )
+    accessibility, input_monitoring = (
+        ("unknown", "unknown")
+        if tcc is None
+        else (
+            "yes" if tcc.accessibility else "no",
+            "yes" if tcc.input_monitoring else "no",
+        )
+    )
     stdout_path, stderr_path = _launchd_log_paths(plist)
     app_log = _spotty_bunny_log_file(None)
     out(f"running: {'yes' if running else 'no'}")
@@ -638,8 +687,8 @@ def status_agent(
     out(f"launchd_stdout: {stdout_path or 'none'}")
     out(f"launchd_stderr: {stderr_path or 'none'}")
     out(f"version: {build_version()}")
-    out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
-    out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
+    out(f"accessibility: {accessibility}")
+    out(f"input_monitoring: {input_monitoring}")
     health = read_spotty_bunny_health()
     if health is None:
         out("tap: unknown")
@@ -685,6 +734,7 @@ def upgrade_agent(
     *,
     home: Path | None = None,
     launchctl: LaunchctlFn | None = None,
+    open_settings: OpenSettingsFn | None = None,
     pid_dir: Path | None = None,
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
@@ -727,9 +777,11 @@ def upgrade_agent(
     status = _require_current_tcc(
         interpreter,
         err=err,
+        open_settings=open_settings,
         probe_tcc=probe_tcc,
         prompt_fn=prompt_fn,
         request_tcc=request_tcc,
+        rerun_command="upgrade",
     )
     if status is None:
         return 1
@@ -748,8 +800,11 @@ def upgrade_agent(
     if skip_chord_confirm or _confirm_chord_works(
         plist,
         err=err,
+        interpreter=interpreter,
         launchctl=launchctl,
+        open_settings=open_settings,
         pid_dir=pid_dir,
+        probe_tcc=probe_tcc,
         prompt_fn=prompt_fn,
     ):
         return 0
@@ -899,9 +954,9 @@ def _prepare_program_launch(
                     f"({old_interp} → {new_interp})."
                 )
                 err(
-                    f"{COMMAND_NAME}: re-grant Accessibility and Input Monitoring "
-                    f"to {new_interp} in System Settings → Privacy & Security, "
-                    f"then re-run: {COMMAND_NAME} upgrade"
+                    f"{COMMAND_NAME}: {new_interp} needs its own "
+                    f"{ACCESSIBILITY_PANE} and Input Monitoring grants; they are "
+                    "checked next."
                 )
     return program_argv, binary, interpreter
 
@@ -935,13 +990,17 @@ def _confirm_chord_works(
     plist: Path,
     *,
     err: Callable[[str], None],
+    interpreter: Path,
     launchctl: LaunchctlFn | None,
+    open_settings: OpenSettingsFn | None,
     pid_dir: Path | None,
+    probe_tcc: TccFn | None,
     prompt_fn: Callable[[str], str] | None,
 ) -> bool:
-    """Prompt until the user confirms the Control chord works, bouncing on retry."""
+    """Prompt until the user confirms the chord works, re-checking TCC on a no."""
     ask = prompt_fn or input
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+    probe = probe_tcc or _probe_tcc
+    if not _is_interactive():
         err(POST_INSTALL_HINT)
         return True
     while True:
@@ -952,6 +1011,28 @@ def _confirm_chord_works(
             return False
         if answer.strip().lower() in {"y", "yes"}:
             return True
+        try:
+            status = probe(interpreter)
+        except ImportError:
+            err(MACOS_EXTRA_HINT)
+            return False
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
+            return False
+        if not status.ok:
+            err(TCC_INSTRUCTIONS)
+            if (
+                _guide_tcc(
+                    interpreter,
+                    status,
+                    err=err,
+                    open_settings=open_settings,
+                    probe=probe,
+                    prompt_fn=prompt_fn,
+                )
+                is None
+            ):
+                return False
         err(CHORD_RETRY_HINT)
         if not _reload_agent(plist, launchctl=launchctl, pid_dir=pid_dir):
             err(f"{COMMAND_NAME}: could not restart the LaunchAgent.")
@@ -966,13 +1047,166 @@ def _request_tcc(interpreter: Path) -> TccStatus:
     return _run_tcc_probe(interpreter, prompt=True)
 
 
+def _fix_tcc_from_doctor(
+    interpreter: Path,
+    *,
+    current: InterpreterIdentity,
+    installed: bool,
+    launchctl: LaunchctlFn | None,
+    open_settings: OpenSettingsFn | None,
+    out: Callable[[str], None],
+    pid_dir: Path | None,
+    plist: Path,
+    probe_tcc: TccFn | None,
+    prompt_fn: Callable[[str], str] | None,
+    request_tcc: TccFn | None,
+    stale_plist: bool,
+) -> int:
+    ask = prompt_fn or input
+    out("")
+    try:
+        answer = ask(TCC_FIX_PROMPT)
+    except EOFError, KeyboardInterrupt:
+        return 1
+    if answer.strip().lower() in {"n", "no"}:
+        return 1
+    follow_up = "upgrade" if installed else "install"
+    if (
+        _require_current_tcc(
+            interpreter,
+            err=out,
+            open_settings=open_settings,
+            probe_tcc=probe_tcc,
+            prompt_fn=prompt_fn,
+            request_tcc=request_tcc,
+            rerun_command=follow_up,
+        )
+        is None
+    ):
+        return 1
+    record_grant(current)
+    if not installed or stale_plist:
+        out(
+            f"{COMMAND_NAME}: ✓ permissions granted. "
+            f"Now run: {COMMAND_NAME} {follow_up}"
+        )
+        return 1
+    if not _reload_agent(plist, launchctl=launchctl, pid_dir=pid_dir):
+        out(f"problem: could not restart the LaunchAgent {AGENT_LABEL}.")
+        return 1
+    out(f"{COMMAND_NAME}: ✓ permissions granted; restarted spotty-bunny.")
+    return (
+        0
+        if _confirm_chord_works(
+            plist,
+            err=out,
+            interpreter=interpreter,
+            launchctl=launchctl,
+            open_settings=open_settings,
+            pid_dir=pid_dir,
+            probe_tcc=probe_tcc,
+            prompt_fn=prompt_fn,
+        )
+        else 1
+    )
+
+
+def _guide_tcc(
+    interpreter: Path,
+    status: TccStatus,
+    *,
+    err: Callable[[str], None],
+    open_settings: OpenSettingsFn | None,
+    probe: TccFn,
+    prompt_fn: Callable[[str], str] | None,
+) -> TccStatus | None:
+    """Open each missing permission's pane in turn and re-check until granted."""
+    ask = prompt_fn or input
+    opener = open_settings or _open_settings
+    bundle = app_bundle_path(describe_interpreter(interpreter)) or str(interpreter)
+    total = len(TCC_PERMISSIONS)
+    while not status.ok:
+        step, (attribute, pane, url) = next(
+            (index, permission)
+            for index, permission in enumerate(TCC_PERMISSIONS, start=1)
+            if not getattr(status, permission[0])
+        )
+        err(f"{COMMAND_NAME}: step {step}/{total}: switch on “Python” under {pane}.")
+        err(
+            "  If an old “Python” entry is already on, remove it with − first: "
+            "after a Python upgrade it no longer matches."
+        )
+        err("  If “Python” is not listed, click +, press ⌘⇧G, paste this path,")
+        err(f"  and click Open: {bundle}")
+        try:
+            if ask(TCC_GUIDE_OPEN_PROMPT.format(pane=pane)).strip().lower() not in {
+                "n",
+                "no",
+            } and not opener(url):
+                err(
+                    f"{COMMAND_NAME}: could not open System Settings; open "
+                    f"Privacy & Security → {pane} manually."
+                )
+            ask(TCC_GUIDE_DONE_PROMPT.format(pane=pane))
+        except EOFError, KeyboardInterrupt:
+            return None
+        try:
+            status = probe(interpreter)
+        except ImportError:
+            err(MACOS_EXTRA_HINT)
+            return None
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
+            return None
+        if getattr(status, attribute):
+            err(f"{COMMAND_NAME}: ✓ {pane} is on.")
+        else:
+            err(f"{COMMAND_NAME}: {pane} is still off for Python; let's retry.")
+    return status
+
+
+def _is_interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _open_settings(url: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["open", url],
+            capture_output=True,
+            check=False,
+            timeout=SETTINGS_OPEN_TIMEOUT_S,
+        )
+    except OSError, subprocess.SubprocessError:
+        return False
+    return completed.returncode == 0
+
+
+def _probe_exit_code(target: str, *, launchctl: LaunchctlFn | None) -> int | None:
+    """The probe job's exit code once launchd reports it has exited, else None."""
+    completed = _launchctl(["print", target], launchctl=launchctl)
+    if completed.returncode != 0:
+        return None
+    match = re.search(r"last exit code = (-?\d+)", completed.stdout)
+    return int(match.group(1)) if match else None
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def _require_current_tcc(
     interpreter: Path,
     *,
     err: Callable[[str], None],
+    open_settings: OpenSettingsFn | None = None,
     probe_tcc: TccFn | None,
     prompt_fn: Callable[[str], str] | None = None,
     request_tcc: TccFn | None,
+    rerun_command: str = "install",
 ) -> TccStatus | None:
     probe = probe_tcc or _probe_tcc
     request = request_tcc or _request_tcc
@@ -987,39 +1221,29 @@ def _require_current_tcc(
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
         return None
-    if not status.ok:
-        err(TCC_INSTRUCTIONS)
-        err(f"{COMMAND_NAME}: interpreter {interpreter}")
-        err(
-            f"{COMMAND_NAME}: accessibility="
-            f"{'yes' if status.accessibility else 'no'} "
-            f"input_monitoring={'yes' if status.input_monitoring else 'no'}"
-        )
-        if not (sys.stdin.isatty() and sys.stdout.isatty()):
-            err(f"Then re-run: {COMMAND_NAME} install")
-            return None
-        while not status.ok:
-            try:
-                (prompt_fn or input)(TCC_RECHECK_PROMPT)
-            except EOFError, KeyboardInterrupt:
-                return None
-            try:
-                status = probe(interpreter)
-            except ImportError:
-                err(MACOS_EXTRA_HINT)
-                return None
-            except (OSError, subprocess.SubprocessError, ValueError) as exc:
-                err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
-                return None
-            if status.ok:
-                return status
-            err(
-                f"{COMMAND_NAME}: accessibility="
-                f"{'yes' if status.accessibility else 'no'} "
-                f"input_monitoring={'yes' if status.input_monitoring else 'no'}"
-            )
+    if status.ok:
         return status
-    return status
+    err(TCC_INSTRUCTIONS)
+    err(f"{COMMAND_NAME}: interpreter {interpreter}")
+    err(
+        f"{COMMAND_NAME}: accessibility="
+        f"{'yes' if status.accessibility else 'no'} "
+        f"input_monitoring={'yes' if status.input_monitoring else 'no'}"
+    )
+    if not _is_interactive():
+        err(
+            f"Switch “Python” on in both panes, then re-run: "
+            f"{COMMAND_NAME} {rerun_command}"
+        )
+        return None
+    return _guide_tcc(
+        interpreter,
+        status,
+        err=err,
+        open_settings=open_settings,
+        probe=probe,
+        prompt_fn=prompt_fn,
+    )
 
 
 def _reload_agent(
@@ -1038,24 +1262,80 @@ def _reload_agent(
     return _bootstrap_agent(plist, launchctl=launchctl)
 
 
-def _run_tcc_probe(interpreter: Path, *, prompt: bool) -> TccStatus:
-    completed = subprocess.run(
-        [str(interpreter), "-c", _TCC_PROBE, "1" if prompt else "0"],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=TCC_PROBE_TIMEOUT_S,
-    )
-    if completed.returncode == 2:
-        raise ImportError("PyObjC is required to probe TCC")
-    if completed.returncode != 0:
-        raise OSError(
-            completed.stderr.strip() or completed.stdout.strip() or "tcc probe failed"
+def _run_tcc_probe(
+    interpreter: Path,
+    *,
+    launchctl: LaunchctlFn | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    prompt: bool,
+    sleep: Callable[[float], None] = time.sleep,
+    timeout_s: float = TCC_PROBE_TIMEOUT_S,
+) -> TccStatus:
+    """Probe (or request) the grants of *interpreter* as launchd would run it.
+
+    A child of the terminal inherits the terminal app as its TCC responsible
+    process, so probing it directly reports the terminal's grants. A launchd
+    job is its own responsible process, exactly like the LaunchAgent.
+    """
+    label = f"{TCC_PROBE_LABEL}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+    with tempfile.TemporaryDirectory(prefix="spotty-bunny-tcc-") as tmp:
+        directory = Path(tmp)
+        output = directory / "probe.json"
+        errors = directory / "probe.err"
+        plist = directory / f"{label}.plist"
+        plist.write_text(
+            _PROBE_PLIST_TEMPLATE.replace(
+                "__PROGRAM_ARGUMENTS__",
+                "\n".join(
+                    f"    <string>{escape(arg)}</string>"
+                    for arg in (
+                        str(interpreter),
+                        "-c",
+                        _TCC_PROBE,
+                        "1" if prompt else "0",
+                        str(output),
+                    )
+                ),
+            )
+            .replace("__LABEL__", label)
+            .replace("__STDERR__", escape(str(errors))),
+            encoding="utf-8",
         )
+        domain = _gui_domain()
+        target = f"{domain}/{label}"
+        started = _launchctl(["bootstrap", domain, str(plist)], launchctl=launchctl)
+        if started.returncode != 0:
+            raise OSError(
+                f"launchctl could not start the TCC probe in {domain}; run this "
+                "from a terminal in your logged-in macOS desktop session (not "
+                "over SSH): " + (started.stderr.strip() or f"exit {started.returncode}")
+            )
+        try:
+            deadline = monotonic() + timeout_s
+            while not output.is_file():
+                exit_code = _probe_exit_code(target, launchctl=launchctl)
+                if exit_code is not None and not output.is_file():
+                    detail = _read_text(errors).strip()
+                    raise OSError(
+                        f"tcc probe exited with code {exit_code} without reporting"
+                        + (f": {detail}" if detail else "")
+                    )
+                if monotonic() >= deadline:
+                    detail = _read_text(errors).strip()
+                    raise OSError(
+                        f"tcc probe did not report within {timeout_s:g}s"
+                        + (f": {detail}" if detail else "")
+                    )
+                sleep(TCC_PROBE_POLL_S)
+            raw = _read_text(output)
+        finally:
+            _launchctl(["bootout", target], launchctl=launchctl)
     try:
-        payload = json.loads(completed.stdout)
+        payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
+    if isinstance(payload, dict) and payload.get("error") == "pyobjc":
+        raise ImportError("PyObjC is required to probe TCC")
     try:
         return TccStatus(
             accessibility=bool(payload["accessibility"]),
@@ -1079,7 +1359,8 @@ def _probe_tcc_for_status(
     *,
     err: Callable[[str], None],
     probe_tcc: TccFn | None,
-) -> TccStatus:
+) -> TccStatus | None:
+    """Grants for *interpreter*, or None when they could not be determined."""
     if interpreter is None:
         return TccStatus(False, False)
     try:
@@ -1087,8 +1368,9 @@ def _probe_tcc_for_status(
     except ImportError:
         err(MACOS_EXTRA_HINT)
         return TccStatus(False, False)
-    except OSError, subprocess.SubprocessError, ValueError:
-        return TccStatus(False, False)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        err(f"{COMMAND_NAME}: could not verify TCC for {interpreter}: {exc}")
+        return None
 
 
 def _shell_exec_python_from_wrapper(raw: str) -> Path | None:
@@ -1175,15 +1457,48 @@ __PROGRAM_ARGUMENTS__
 </plist>
 """
 
+_PROBE_PLIST_TEMPLATE = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+__PROGRAM_ARGUMENTS__
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardErrorPath</key>
+  <string>__STDERR__</string>
+</dict>
+</plist>
+"""
+
 _TCC_PROBE = r"""
 import json
+import os
 import sys
+
+
+def report(payload):
+    temp = sys.argv[2] + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    os.replace(temp, sys.argv[2])
+
 
 try:
     from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions
     from Foundation import NSDictionary
     from Quartz import CGPreflightListenEventAccess, CGRequestListenEventAccess
 except ImportError:
+    report({"error": "pyobjc"})
     raise SystemExit(2)
 
 if sys.argv[1] == "1":
@@ -1191,12 +1506,10 @@ if sys.argv[1] == "1":
         NSDictionary.dictionaryWithObject_forKey_(True, "AXTrustedCheckOptionPrompt")
     )
     CGRequestListenEventAccess()
-print(
-    json.dumps(
-        {
-            "accessibility": bool(AXIsProcessTrusted()),
-            "input_monitoring": bool(CGPreflightListenEventAccess()),
-        }
-    )
+report(
+    {
+        "accessibility": bool(AXIsProcessTrusted()),
+        "input_monitoring": bool(CGPreflightListenEventAccess()),
+    }
 )
 """

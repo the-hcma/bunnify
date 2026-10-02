@@ -295,6 +295,7 @@ def run_doctor(
     *,
     env_path: Path | None = None,
     print_fn: Callable[[str], None] | None = None,
+    prompt_fn: Callable[[str], str] | None = None,
     theme: Theme | None = None,
 ) -> int:
     """Comprehensive diagnostics: the server, plus Spotty Bunny when present.
@@ -327,6 +328,7 @@ def run_doctor(
             print_fn=lambda line: log(
                 colors.warn(line) if line.startswith("problem:") else line
             ),
+            prompt_fn=prompt_fn,
         ),
     )
 
@@ -2523,7 +2525,12 @@ def main(
             return
         if shortcut_args == ("doctor",):
             raise SystemExit(
-                run_doctor(env_path=env_file, print_fn=click.echo, theme=theme)
+                run_doctor(
+                    env_path=env_file,
+                    print_fn=click.echo,
+                    prompt_fn=prompt_fn,
+                    theme=theme,
+                )
             )
         if status_requested or shortcut_args == ("status",):
             raise SystemExit(
