@@ -1664,7 +1664,7 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         self.assertEqual(verbs, ["bootout", "bootstrap", "bootout"])
         self.assertTrue(ctl.calls[-1][2].endswith(f"/{TCC_PROBE_LABEL}"))
         assert ctl.program is not None
-        self.assertEqual(ctl.program[0], "/opt/py/python")
+        self.assertEqual(ctl.program[0], str(Path("/opt/py/python")))
         self.assertEqual(ctl.program[3], "1")
 
     def test_tcc_probe_raises_import_error_without_pyobjc(self) -> None:
