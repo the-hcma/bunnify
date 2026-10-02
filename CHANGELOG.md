@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/the-hcma/bunnify/compare/bunnify-v1.1.0...bunnify-v1.1.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **spotty-bunny:** count event taps macOS keeps disabling instead of reporting ok ([#560](https://github.com/the-hcma/bunnify/issues/560)) ([b6d7ca5](https://github.com/the-hcma/bunnify/commit/b6d7ca5f89dd60bed9d810f01a2c60bd28fe6a7c))
+* **spotty-bunny:** probe grants via launchd and guide through each pane ([#559](https://github.com/the-hcma/bunnify/issues/559)) ([9e18494](https://github.com/the-hcma/bunnify/commit/9e1849493c3c1bb435ef2a8c69f9e8274fe9ea27))
+
 ## [1.1.0](https://github.com/the-hcma/bunnify/compare/bunnify-v1.0.0...bunnify-v1.1.0) (2026-10-01)
 
 
