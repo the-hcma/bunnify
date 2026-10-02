@@ -43,9 +43,9 @@ from app.spotty_bunny_launch import (
     stop_spotty_bunny,
 )
 from app.spotty_bunny_tap_health import (
-    TAP_STATE_OK,
     format_activity_timestamp,
     read_spotty_bunny_health,
+    tap_problem,
 )
 from app.version import build_version
 
@@ -294,14 +294,12 @@ def doctor_agent(
     if stale_plist:
         healthy = False
         out(f"problem: the LaunchAgent plist is stale. Run: {COMMAND_NAME} upgrade")
-    health = read_spotty_bunny_health()
-    if running_pid is not None and health is not None and health.tap != TAP_STATE_OK:
+    problem = tap_problem(read_spotty_bunny_health())
+    if running_pid is not None and problem is not None:
         healthy = False
         out(
-            f"problem: event tap is {health.tap} "
-            f"(reinstall_failures: {health.reinstall_failures}) — the hotkey "
-            "will not work. Restart spotty-bunny (launchd relaunches it) and, "
-            "if it persists, re-authorize the interpreter above."
+            f"problem: {problem}. Restart spotty-bunny (launchd relaunches it) "
+            "and, if it persists, re-authorize the interpreter above."
         )
     if tcc.ok or not _is_interactive():
         return 0 if healthy else 1
@@ -695,9 +693,15 @@ def status_agent(
         out("last_chord: unknown")
     else:
         out(f"tap: {health.tap}")
+        out(f"reinstall_failures: {health.reinstall_failures}")
         out(f"last_chord: {format_activity_timestamp(health.last_chord_at)}")
-    tap_ok = health is not None and health.tap == TAP_STATE_OK
-    if running and not tap_ok:
+    problem = tap_problem(health) if health is not None else "tap state unknown"
+    if running and health is not None and problem is not None:
+        out(
+            f"hint: {problem}. Run `bunnify doctor` to check Accessibility and "
+            "Input Monitoring for the interpreter above and walk through the fix."
+        )
+    if running and problem is not None:
         healthy = False
     else:
         healthy = installed and loaded and running and binary_ok

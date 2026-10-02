@@ -57,6 +57,8 @@ from app.spotty_bunny_quit import (
     post_application_wake_event,
     quit_ns_app,
 )
+from app.spotty_bunny_tap_health import SpottyBunnyHealth
+from bookmarks.macos_test_support import macos_only, pyobjc_available
 
 
 class SpottyBunnyCliTests(SimpleTestCase):
@@ -1174,6 +1176,38 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         self.assertIn("<string>/usr/bin/python3</string>", text)
         self.assertIn("<string>-m</string>", text)
         self.assertIn("<string>app.spotty_bunny_cli</string>", text)
+
+    def test_status_hints_when_tap_keeps_getting_disabled(self) -> None:
+        from app.spotty_bunny_agent import status_agent
+        from app.spotty_bunny_tap_health import SpottyBunnyHealth
+
+        stdout = StringIO()
+        with TemporaryDirectory() as tmp:
+            program = Path(tmp) / "spotty-bunny"
+            _write_executable(program)
+            with (
+                patch(
+                    "app.spotty_bunny_agent.spotty_bunny_is_running",
+                    return_value=True,
+                ),
+                patch(
+                    "app.spotty_bunny_agent.read_spotty_bunny_health",
+                    return_value=SpottyBunnyHealth(None, None, 2, "ok", 1.0),
+                ),
+            ):
+                code = status_agent(
+                    home=Path(tmp),
+                    launchctl=_FakeLaunchctl(),
+                    platform="darwin",
+                    print_fn=lambda line: stdout.write(line + "\n"),
+                    probe_tcc=lambda _p: TccStatus(False, False),
+                    program=program,
+                )
+        text = stdout.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("reinstall_failures: 2", text)
+        self.assertIn("hint: event tap keeps getting disabled", text)
+        self.assertIn("bunnify doctor", text)
 
     def test_status_handles_missing_macos_extra(self) -> None:
         from app.spotty_bunny_agent import AGENT_LABEL, format_agent_plist, status_agent
@@ -4358,6 +4392,97 @@ class SpottyBunnyLaunchTests(SimpleTestCase):
         )
 
 
+@macos_only(pyobjc_available(), "needs macOS with PyObjC")
+class SpottyBunnyTapHealthCheckTests(SimpleTestCase):
+    """_check_event_tap_health counts taps macOS keeps disabling (issue #553).
+
+    CoreGraphics is patched out: the "rebuilt" tap always comes back enabled,
+    and macOS disables it again before the next check.
+    """
+
+    def setUp(self) -> None:
+        from app import spotty_bunny_app, spotty_bunny_tap_health
+
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.health_dir = Path(tmp.name)
+        self.enabled = False
+        self.exits: list[int] = []
+        self.controller = MagicMock(tap=object())
+        patchers = (
+            patch.object(spotty_bunny_app, "CGEventTapEnable"),
+            patch.object(
+                spotty_bunny_app,
+                "_event_tap_enabled",
+                side_effect=lambda _tap: self.enabled,
+            ),
+            patch.object(
+                spotty_bunny_app,
+                "_exit_after_tap_failure",
+                side_effect=self.exits.append,
+            ),
+            patch.object(spotty_bunny_app, "_install_event_tap", return_value=True),
+            patch.object(spotty_bunny_app, "_record_runtime_grant"),
+            patch.object(spotty_bunny_app, "_resolve_configured_chord"),
+            patch.object(spotty_bunny_app, "_teardown_event_tap"),
+            patch.object(spotty_bunny_tap_health, "_health_cache", None),
+            patch.object(spotty_bunny_tap_health, "_reinstall_failures_in_memory", 0),
+            patch.object(
+                spotty_bunny_tap_health, "data_dir", return_value=self.health_dir
+            ),
+        )
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_callback_rebuilds_do_not_spend_the_health_check_budget(self) -> None:
+        from app import spotty_bunny_app
+
+        tap_holder: dict[str, object] = {"tap": self.controller.tap}
+        callback = spotty_bunny_app._create_event_tap_callback(
+            self.controller, tap_holder=tap_holder
+        )
+        with (
+            patch.object(spotty_bunny_app, "_install_event_tap", return_value=False),
+            patch.object(spotty_bunny_app, "_run_on_main", side_effect=lambda f: f()),
+        ):
+            for _ in range(3):
+                callback(
+                    None, spotty_bunny_app.kCGEventTapDisabledByTimeout, None, None
+                )
+        self.assertEqual(self.exits, [])
+        self.assertEqual(self._check(enabled=False).reinstall_failures, 1)
+
+    def test_counts_each_failed_heal_and_exits_at_the_threshold(self) -> None:
+        self.assertEqual(self._check(enabled=False).reinstall_failures, 1)
+        self.assertEqual(self._check(enabled=False).reinstall_failures, 2)
+        self.assertEqual(self.exits, [])
+        self.assertEqual(self._check(enabled=False).reinstall_failures, 3)
+        self.assertEqual(self.exits, [3])
+
+    def test_rebuilt_tap_reports_ok_but_keeps_the_count(self) -> None:
+        health = self._check(enabled=False)
+        self.assertEqual(health.tap, "ok")
+        self.assertEqual(health.reinstall_failures, 1)
+
+    def test_resets_only_after_a_tap_stays_enabled_for_a_full_check(self) -> None:
+        self._check(enabled=False)
+        self._check(enabled=False)
+        self.assertEqual(self._check(enabled=True).reinstall_failures, 0)
+        self.assertEqual(self._check(enabled=False).reinstall_failures, 1)
+        self.assertEqual(self.exits, [])
+
+    def _check(self, *, enabled: bool) -> SpottyBunnyHealth:
+        from app import spotty_bunny_app
+        from app.spotty_bunny_tap_health import read_spotty_bunny_health
+
+        self.enabled = enabled
+        spotty_bunny_app._check_event_tap_health(self.controller)
+        health = read_spotty_bunny_health(health_dir=self.health_dir)
+        assert health is not None
+        return health
+
+
 class SpottyBunnyWin32ProcessTests(SimpleTestCase):
     """_win32_process_alive/_win32_terminate_pid/_process_exists (issue #431/#426).
 
@@ -5227,6 +5352,25 @@ class SpottyBunnyTapHealthTests(SimpleTestCase):
         self.assertEqual(record_reinstall_failure(stale), 1)
         self.assertEqual(record_reinstall_failure(stale), 2)
         self.assertEqual(record_reinstall_failure(stale), 3)
+
+    def test_tap_problem_flags_disabled_and_flapping_taps(self) -> None:
+        from app.spotty_bunny_tap_health import SpottyBunnyHealth, tap_problem
+
+        def health(tap: str, failures: int) -> SpottyBunnyHealth:
+            return SpottyBunnyHealth(None, None, failures, tap, 1.0)
+
+        self.assertIsNone(tap_problem(None))
+        self.assertIsNone(tap_problem(health("ok", 0)))
+        disabled = tap_problem(health("disabled", 2))
+        assert disabled is not None
+        self.assertIn("event tap is disabled (reinstall_failures: 2)", disabled)
+        self.assertIn("will not work", disabled)
+        one = tap_problem(health("ok", 1))
+        assert one is not None
+        self.assertIn("1 consecutive failed health check)", one)
+        two = tap_problem(health("ok", 2))
+        assert two is not None
+        self.assertIn("2 consecutive failed health checks)", two)
 
     def test_should_exit_after_reinstall_failures(self) -> None:
         from app.spotty_bunny_tap_health import (

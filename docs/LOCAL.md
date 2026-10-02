@@ -136,6 +136,8 @@ Each comes with System Settings steps and the path to add. For framework Pythons
 
 `doctor` also flags a running overlay whose executable (`running_executable`) differs from what launchd would start now, typically the old, already deleted Python after `brew upgrade`. The hotkey keeps working until the overlay restarts (log out, reboot, `upgrade`), then dies, so re-authorize before that. If the interpreter launchd would start was removed outright, `doctor` says so and names the stale plist.
 
+Event tap health: the overlay checks its keyboard event tap every 60 seconds. When macOS has disabled it and re-enabling fails, the overlay rebuilds it, and the failure counter (`reinstall_failures` in `status`) only resets once a later check finds the tap still enabled, so a tap that macOS keeps disabling is counted rather than reported as `ok`. After 3 consecutive failed checks the overlay logs one `ERROR` line ("event tap stuck disabled…") and exits so launchd starts a fresh process. `status` prints a `hint:` line and `doctor` a `problem:` line whenever the tap is not `ok` or the counter is non-zero; missing grants are the usual cause, and `doctor` offers the walkthrough above.
+
 How permissions are checked (`permissions_source`): a launchd-started overlay records its own Accessibility and Input Monitoring status, and `doctor` uses that report when it comes from the live process and is recent. Otherwise, for example when the overlay is not running or was started from a terminal, `doctor` runs the interpreter as a short-lived launchd job (`launchd probe`), so the result reflects the interpreter's own grants rather than your terminal app's.
 
 ### Uninstall
