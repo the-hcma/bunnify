@@ -1404,7 +1404,11 @@ def run_spotty_bunny_app() -> int:
         controller, on_resolved=partial(_print_hotkey_banner, controller)
     )
     _record_runtime_grant()
-    _install_event_tap(controller)
+    if _install_event_tap(controller):
+        try_write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
+    else:
+        try_write_spotty_bunny_health(tap=TAP_STATE_DISABLED, reinstall_failures=0)
+    reset_reinstall_failures()
     _register_wake_observer(controller)
     _schedule_tap_health_checks(controller)
     logger.info("event loop starting (MachSignals SIGINT → NSApp.stop_)")
@@ -1718,7 +1722,10 @@ def _check_event_tap_health(controller: SpottyBunnyController) -> None:
         _reinstall_event_tap(controller)
         return
     if action == "ok":
-        try_write_spotty_bunny_health(tap=TAP_STATE_OK)
+        # Only a tap still enabled a full interval after the last heal counts
+        # as recovered; a reinstall that macOS disables again must keep counting.
+        try_write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
+        reset_reinstall_failures()
         return
     logger.warning("event tap health check: tap disabled; re-enabling")
     assert tap is not None
@@ -1726,9 +1733,12 @@ def _check_event_tap_health(controller: SpottyBunnyController) -> None:
     if _event_tap_enabled(tap):
         try_write_spotty_bunny_health(tap=TAP_STATE_OK)
         return
-    try_write_spotty_bunny_health(tap=TAP_STATE_DISABLED)
+    failures, should_exit = process_reinstall_failure(read_spotty_bunny_health())
+    try_write_spotty_bunny_health(tap=TAP_STATE_DISABLED, reinstall_failures=failures)
+    if should_exit:
+        _exit_after_tap_failure(failures)
     logger.warning("event tap health check: re-enable failed; reinstalling")
-    _reinstall_event_tap(controller)
+    _reinstall_event_tap(controller, count_failure=False)
 
 
 def _create_event_tap_callback(
@@ -1832,24 +1842,33 @@ def _event_tap_enabled(tap: object) -> bool:
 
 def _exit_after_tap_failure(failures: int) -> None:
     logger.error(
-        "event tap reinstall failed %s times; exiting for KeepAlive restart",
+        "event tap stuck disabled after %s consecutive failed heals; the hotkey "
+        "is not working; exiting so launchd (KeepAlive) restarts spotty-bunny. "
+        "If this repeats, run `bunnify doctor` to check Accessibility and "
+        "Input Monitoring.",
         failures,
     )
     os._exit(1)
 
 
-def _handle_reinstall_failure() -> None:
-    prior = read_spotty_bunny_health()
-    failures, should_exit = process_reinstall_failure(prior)
-    try_write_spotty_bunny_health(
-        tap=TAP_STATE_MISSING,
-        reinstall_failures=failures,
-    )
+def _handle_reinstall_failure(
+    *, count: bool = True, tap: str = TAP_STATE_MISSING
+) -> None:
+    if not count:
+        try_write_spotty_bunny_health(tap=tap)
+        return
+    failures, should_exit = process_reinstall_failure(read_spotty_bunny_health())
+    try_write_spotty_bunny_health(tap=tap, reinstall_failures=failures)
     if should_exit:
         _exit_after_tap_failure(failures)
 
 
-def _install_event_tap(controller: SpottyBunnyController) -> None:
+def _install_event_tap(controller: SpottyBunnyController) -> bool:
+    """Create, register, and enable the tap; return whether it is enabled.
+
+    Raises SpottyBunnyEventTapError when no tap can be created at all. A tap
+    that is created but stays disabled (typically missing grants) returns False.
+    """
     tap_holder: dict[str, object] = {}
     callback = _create_event_tap_callback(controller, tap_holder=tap_holder)
     CGRequestListenEventAccess()
@@ -1884,8 +1903,10 @@ def _install_event_tap(controller: SpottyBunnyController) -> None:
     controller.callback = callback
     controller.source = source
     controller.tap = tap
-    try_write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
-    reset_reinstall_failures()
+    if _event_tap_enabled(tap):
+        return True
+    logger.warning("listen-only %s event tap installed but not enabled", tap_kind)
+    return False
 
 
 def _record_runtime_grant(*, time_fn: Callable[[], float] = time.time) -> None:
@@ -1925,20 +1946,25 @@ def _register_wake_observer(controller: SpottyBunnyController) -> None:
     )
 
 
-def _reinstall_event_tap(controller: SpottyBunnyController) -> None:
+def _reinstall_event_tap(
+    controller: SpottyBunnyController, *, count_failure: bool = True
+) -> None:
+    """Rebuild the tap; *count_failure* is False when the caller already counted."""
     try_write_spotty_bunny_health(tap=TAP_STATE_REINSTALLING)
     try:
         _teardown_event_tap(controller)
-        _install_event_tap(controller)
+        enabled = _install_event_tap(controller)
     except SpottyBunnyEventTapError:
-        _handle_reinstall_failure()
+        _handle_reinstall_failure(count=count_failure)
         return
     except Exception:
         logger.exception("event tap reinstall failed unexpectedly")
-        _handle_reinstall_failure()
+        _handle_reinstall_failure(count=count_failure)
         return
-    try_write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
-    reset_reinstall_failures()
+    if not enabled:
+        _handle_reinstall_failure(count=count_failure, tap=TAP_STATE_DISABLED)
+        return
+    try_write_spotty_bunny_health(tap=TAP_STATE_OK)
 
 
 def _schedule_tap_health_checks(controller: SpottyBunnyController) -> None:

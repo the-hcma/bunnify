@@ -114,6 +114,27 @@ def spotty_bunny_health_path(*, health_dir: Path | None = None) -> Path:
     return directory / HEALTH_FILE_NAME
 
 
+def tap_problem(health: SpottyBunnyHealth | None) -> str | None:
+    """Describe a tap that is not reliably delivering events, or None when fine.
+
+    A tap reported ``ok`` with a non-zero failure count was rebuilt but has not
+    yet stayed enabled for a full health-check interval.
+    """
+    if health is None or (health.tap == TAP_STATE_OK and not health.reinstall_failures):
+        return None
+    if health.tap != TAP_STATE_OK:
+        return (
+            f"event tap is {health.tap} (reinstall_failures: "
+            f"{health.reinstall_failures}); the hotkey will not work"
+        )
+    checks = "check" if health.reinstall_failures == 1 else "checks"
+    return (
+        "event tap keeps getting disabled by macOS "
+        f"({health.reinstall_failures} consecutive failed health {checks}); "
+        "the hotkey may not respond"
+    )
+
+
 def try_write_spotty_bunny_health(
     *,
     health_dir: Path | None = None,

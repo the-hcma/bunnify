@@ -522,6 +522,24 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertEqual(code, 1)
         self.assertIn("problem: event tap is disabled (reinstall_failures: 2)", text)
 
+    def test_doctor_flags_tap_that_keeps_getting_disabled(self) -> None:
+        health = SpottyBunnyHealth(None, None, 2, "ok", time.time())
+        code, text = self._run(
+            current=NEW,
+            health=health,
+            recorded=NEW,
+            report=_report(executable=NEW.path, updated_at=time.time()),
+            running_executable=NEW.path,
+            running_pid=77,
+            tcc=TccStatus(False, False),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "problem: event tap keeps getting disabled by macOS "
+            "(2 consecutive failed health checks)",
+            text,
+        )
+
     def test_doctor_skips_tap_health_when_overlay_not_running(self) -> None:
         health = SpottyBunnyHealth(None, None, 0, "disabled", 1.0)
         code, text = self._run(
