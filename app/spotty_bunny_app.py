@@ -1404,10 +1404,10 @@ def run_spotty_bunny_app() -> int:
         controller, on_resolved=partial(_print_hotkey_banner, controller)
     )
     _record_runtime_grant()
-    if _install_event_tap(controller):
-        try_write_spotty_bunny_health(tap=TAP_STATE_OK, reinstall_failures=0)
-    else:
-        try_write_spotty_bunny_health(tap=TAP_STATE_DISABLED, reinstall_failures=0)
+    # A tap that starts disabled is not counted here: the first health check
+    # tries to heal it and counts the failure if that does not work.
+    tap_state = TAP_STATE_OK if _install_event_tap(controller) else TAP_STATE_DISABLED
+    try_write_spotty_bunny_health(tap=tap_state, reinstall_failures=0)
     reset_reinstall_failures()
     _register_wake_observer(controller)
     _schedule_tap_health_checks(controller)
