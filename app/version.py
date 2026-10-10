@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
@@ -40,6 +41,82 @@ def format_cli_version_line(*, prog: str) -> str:
 def get_build_info() -> tuple[str, str]:
     """Return ``(package_version, commit_short_or_unknown)`` once per process."""
     return (package_version(), git_commit())
+
+
+@lru_cache(maxsize=1)
+def get_commit_timestamp() -> str:
+    """Return the build commit's committer time (ISO 8601), or "" if unknown."""
+    return git_commit_timestamp()
+
+
+def git_commit_timestamp(
+    *,
+    environ: Mapping[str, str] | None = None,
+    repository: Path | None = None,
+) -> str:
+    """Return the committer timestamp of the build commit, or "" if unknown.
+
+    Resolved like :func:`git_commit`: ``BUNNIFY_GIT_TIMESTAMP``, then the
+    embedded release stamp, then ``git`` in a source checkout. Only
+    well-formed ISO 8601 values are returned, so callers can compare them.
+    """
+    environment = os.environ if environ is None else environ
+    configured = environment.get("BUNNIFY_GIT_TIMESTAMP", "").strip()
+    if configured:
+        return normalize_commit_timestamp(configured)
+    # Only report a time for the commit :func:`git_commit` reports: when that
+    # commit came from an env override or an embedded stamp without a matching
+    # timestamp, a timestamp from elsewhere could describe a different commit.
+    if any(
+        environment.get(key, "").strip() for key in ("BUNNIFY_GIT_SHA", "GITHUB_SHA")
+    ):
+        return ""
+
+    embedded = getattr(_build_metadata, "EMBEDDED_COMMIT_TIMESTAMP", "")
+    if isinstance(embedded, str) and embedded.strip():
+        return normalize_commit_timestamp(embedded)
+    embedded_commit = getattr(_build_metadata, "EMBEDDED_COMMIT", "")
+    if isinstance(embedded_commit, str) and embedded_commit.strip():
+        return ""
+
+    checkout = repository or Path(__file__).resolve().parents[1]
+    if not (checkout / ".git").exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(checkout), "show", "-s", "--format=%cI", "HEAD"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=2,
+        )
+    except OSError, subprocess.SubprocessError:
+        return ""
+    return normalize_commit_timestamp(result.stdout)
+
+
+def normalize_commit_timestamp(raw: str) -> str:
+    """Return *raw* as a UTC ISO 8601 string, or "" when it is not a timestamp."""
+    try:
+        moment = datetime.fromisoformat(raw.strip())
+    except ValueError:
+        return ""
+    if moment.tzinfo is None:
+        return ""
+    return moment.astimezone(UTC).isoformat()
+
+
+def format_commit_timestamp(timestamp: str | None) -> str:
+    """Render a normalized timestamp as ``2026-10-08 14:32 UTC`` ("" if unset)."""
+    if not timestamp:
+        return ""
+    try:
+        moment = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return ""
+    if moment.tzinfo is None:
+        return ""
+    return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def git_commit(

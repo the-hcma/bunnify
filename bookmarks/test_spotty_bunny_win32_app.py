@@ -198,12 +198,51 @@ class CheckForUpdatesTests(SimpleTestCase):
                 "app.spotty_bunny_win32_app.refresh_update_status",
                 return_value=status,
             ),
+            patch(
+                "app.spotty_bunny_win32_app.load_about_runtime_info",
+                return_value=MagicMock(server_skew="match"),
+            ),
             patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
             patch("app.spotty_bunny_win32_app.summarize_update_check", return_value=""),
         ):
             controller.check_for_updates()
         self.assertEqual(calls, [True])
         self.assertTrue(controller._outdated)
+
+    def _check_with_skew(self, skew: str) -> tuple[bool, list[str]]:
+        from app.spotty_bunny_update import UpdateStatus
+
+        controller = _make_controller()
+        controller._io = ImmediateIo()
+        controller._outdated = False
+        icon_calls: list[bool] = []
+        controller.set_icon_outdated = icon_calls.append
+        statuses: list[str] = []
+        controller.set_status_text = statuses.append
+        status = UpdateStatus(
+            checked_at=1.0, current="0.13.0", latest="0.13.0", outdated=False
+        )
+        with (
+            patch(
+                "app.spotty_bunny_win32_app.refresh_update_status",
+                return_value=status,
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.load_about_runtime_info",
+                return_value=MagicMock(server_skew=skew),
+            ),
+        ):
+            controller.check_for_updates()
+        return controller._outdated, statuses
+
+    def test_server_behind_raises_badge(self) -> None:
+        outdated, _statuses = self._check_with_skew("server_behind")
+        self.assertTrue(outdated)
+
+    def test_server_ahead_does_not_raise_badge_and_says_so(self) -> None:
+        outdated, statuses = self._check_with_skew("server_ahead")
+        self.assertFalse(outdated)
+        self.assertIn("no upgrade is available", statuses[-1])
 
     def test_unchanged_outdated_state_does_not_re_render_icon(self) -> None:
         controller = _make_controller()
@@ -216,6 +255,10 @@ class CheckForUpdatesTests(SimpleTestCase):
             patch(
                 "app.spotty_bunny_win32_app.refresh_update_status",
                 return_value=status,
+            ),
+            patch(
+                "app.spotty_bunny_win32_app.load_about_runtime_info",
+                return_value=MagicMock(server_skew="match"),
             ),
             patch("app.spotty_bunny_win32_app.badge_should_show", return_value=False),
             patch("app.spotty_bunny_win32_app.summarize_update_check", return_value=""),
@@ -307,6 +350,10 @@ class StartupUpdateStatusTests(SimpleTestCase):
                 "app.spotty_bunny_win32_app.refresh_update_status",
                 return_value=status,
             ),
+            patch(
+                "app.spotty_bunny_win32_app.load_about_runtime_info",
+                return_value=MagicMock(server_skew="match"),
+            ),
             patch("app.spotty_bunny_win32_app.badge_should_show", return_value=True),
         ):
             controller._refresh_update_status(force=False, announce=False)
@@ -356,7 +403,12 @@ class StartupUpdateStatusTests(SimpleTestCase):
         # The in-flight (quiet) job's own possibly-stale result resolves...
         _work, on_done = controller._io.jobs[0]
         on_done(
-            UpdateStatus(checked_at=1.0, current="1.0.0", latest=None, outdated=False)
+            (
+                UpdateStatus(
+                    checked_at=1.0, current="1.0.0", latest=None, outdated=False
+                ),
+                "match",
+            )
         )
 
         # ...and the requeued manual check fires immediately afterwards
