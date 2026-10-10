@@ -28,11 +28,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from app.cli import open_url
 from app.client import fetch_key_entries
+from app.coherence import ServerSkew
 from app.config import load_spotty_bunny_hotkey, resolve_base_url
+from app.spotty_bunny_about_info import load_about_runtime_info
 from app.spotty_bunny_about_win32 import build_about_window
 from app.spotty_bunny_cli import SpottyBunnyHookError
 from app.spotty_bunny_complete import (
@@ -83,6 +85,7 @@ from app.spotty_bunny_tap_health import (
     try_write_spotty_bunny_health,
 )
 from app.spotty_bunny_update import (
+    UpdateStatus,
     badge_should_show,
     cache_is_stale,
     read_cached_update_status,
@@ -631,8 +634,11 @@ class SpottyBunnyWin32Controller:
             return
         self._update_check_pending = True
 
-        def work() -> object:
-            return refresh_update_status(force=force)
+        def work() -> tuple[UpdateStatus, ServerSkew]:
+            # Skew is read here, off the UI thread, alongside the PyPI check
+            # (same cadence as the macOS overlay's _check_update_and_skew).
+            status = refresh_update_status(force=force)
+            return status, load_about_runtime_info().server_skew
 
         def on_done(result: object) -> None:
             self._update_check_pending = False
@@ -643,14 +649,26 @@ class SpottyBunnyWin32Controller:
                 if announce:
                     self.set_status_text("Could not check for updates.")
             else:
-                self._update_status = result
-                outdated = bool(badge_should_show(result, self_stale=False))
+                status, server_skew = cast(tuple[UpdateStatus, ServerSkew], result)
+                self._update_status = status
+                outdated = bool(
+                    badge_should_show(
+                        status,
+                        self_stale=False,
+                        server_skewed=server_skew == "server_behind",
+                    )
+                )
                 if outdated != self._outdated:
                     self._outdated = outdated
                     self.set_icon_outdated(outdated)
                 if announce:
                     self.set_status_text(
-                        summarize_update_check(result, self_stale=False)
+                        summarize_update_check(
+                            status,
+                            self_stale=False,
+                            server_skewed=server_skew == "server_behind",
+                            server_ahead=server_skew == "server_ahead",
+                        )
                     )
             if requeue:
                 self.set_status_text(CHECK_FOR_UPDATES_STATUS)
