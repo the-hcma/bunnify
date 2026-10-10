@@ -64,10 +64,20 @@ def git_commit_timestamp(
     configured = environment.get("BUNNIFY_GIT_TIMESTAMP", "").strip()
     if configured:
         return normalize_commit_timestamp(configured)
+    # Only report a time for the commit :func:`git_commit` reports: when that
+    # commit came from an env override or an embedded stamp without a matching
+    # timestamp, a timestamp from elsewhere could describe a different commit.
+    if any(
+        environment.get(key, "").strip() for key in ("BUNNIFY_GIT_SHA", "GITHUB_SHA")
+    ):
+        return ""
 
     embedded = getattr(_build_metadata, "EMBEDDED_COMMIT_TIMESTAMP", "")
     if isinstance(embedded, str) and embedded.strip():
         return normalize_commit_timestamp(embedded)
+    embedded_commit = getattr(_build_metadata, "EMBEDDED_COMMIT", "")
+    if isinstance(embedded_commit, str) and embedded_commit.strip():
+        return ""
 
     checkout = repository or Path(__file__).resolve().parents[1]
     if not (checkout / ".git").exists():

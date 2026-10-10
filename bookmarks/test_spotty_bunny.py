@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -900,14 +901,26 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             self.assertNotIn("bunnify-server", message)
             self.assertNotIn("Run:", message)
 
-    def test_server_skew_message_none_when_order_unknown(self) -> None:
+    def test_server_skew_message_unknown_order_is_advisory_without_upgrade(
+        self,
+    ) -> None:
         from app.spotty_bunny_about_info import server_skew_message
 
-        self.assertIsNone(
-            server_skew_message(
-                _about_runtime(server_mode="local", server_skew="unknown")
-            )
+        message = server_skew_message(
+            _about_runtime(server_mode="local", server_skew="unknown")
         )
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertIn("can't be determined", message)
+        self.assertIn("No upgrade is suggested", message)
+        self.assertNotIn("Run:", message)
+
+    def test_server_skew_message_none_when_server_unreachable(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        runtime = _about_runtime(server_mode="local", server_skew="unknown")
+        unreachable = replace(runtime, server_build_label=None)
+        self.assertIsNone(server_skew_message(unreachable))
 
     def test_server_skew_message_remote_is_advisory(self) -> None:
         from app.spotty_bunny_about_info import server_skew_message
@@ -5896,6 +5909,52 @@ class CommitTimestampTests(SimpleTestCase):
             ),
             "2026-10-08T14:32:00+00:00",
         )
+
+    def test_timestamp_not_mixed_with_env_sha_override(self) -> None:
+        from app.version import git_commit_timestamp
+
+        # The reported commit comes from the env, so a git/embedded time of
+        # some other commit must not be attached to it.
+        self.assertEqual(
+            git_commit_timestamp(environ={"GITHUB_SHA": "abcdef1234567890"}), ""
+        )
+        self.assertEqual(
+            git_commit_timestamp(environ={"BUNNIFY_GIT_SHA": "abcdef1234567890"}), ""
+        )
+
+    def test_timestamp_not_taken_from_git_when_commit_is_embedded(self) -> None:
+        from unittest.mock import patch
+
+        from app.version import git_commit_timestamp
+
+        with patch("app.version._build_metadata") as metadata:
+            metadata.EMBEDDED_COMMIT = "abcdef123456"
+            metadata.EMBEDDED_COMMIT_TIMESTAMP = ""
+            self.assertEqual(git_commit_timestamp(environ={}), "")
+            metadata.EMBEDDED_COMMIT_TIMESTAMP = "2026-10-08T14:32:00+00:00"
+            self.assertEqual(
+                git_commit_timestamp(environ={}), "2026-10-08T14:32:00+00:00"
+            )
+
+    def test_embed_script_with_only_timestamp_writes_valid_module(self) -> None:
+        script = Path(__file__).resolve().parent.parent / "scripts/embed_build_metadata"
+        # exec the source rather than importing it: importing writes bytecode
+        # into scripts/, which the shellcheck gate then trips over.
+        module: dict[str, object] = {"__name__": "embed_build_metadata"}
+        exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), module)
+        write_metadata_file = module["_write_metadata_file"]
+        assert callable(write_metadata_file)
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app").mkdir()
+            write_metadata_file(root, "", "", "2026-10-08T14:32:00+00:00")
+            body = (root / "app" / "_build_metadata.py").read_text(encoding="utf-8")
+        namespace: dict[str, object] = {}
+        exec(compile(body, "_build_metadata.py", "exec"), namespace)
+        self.assertEqual(
+            namespace["EMBEDDED_COMMIT_TIMESTAMP"], "2026-10-08T14:32:00+00:00"
+        )
+        self.assertEqual(namespace["EMBEDDED_COMMIT"], "")
 
     def test_build_label_includes_timestamp_only_when_known(self) -> None:
         from app.coherence import build_label

@@ -327,10 +327,18 @@ def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
             "installed. Restart it: choose Upgrade from the 🐰 menu (or run "
             "bunnify spotty-bunny upgrade)."
         )
-    if runtime.server_skew in ("match", "unknown"):
+    if runtime.server_skew == "match":
+        return None
+    if runtime.server_skew == "unknown" and runtime.server_build_label is None:
+        # Server unreachable: there is no build to compare.
         return None
     server_build = f"Server build {runtime.server_build_label or 'unknown build'}"
     local_build = f"this install's {runtime.local_build_label}"
+    if runtime.server_skew == "unknown":
+        return (
+            f"{server_build} ({runtime.server_mode}) differs from {local_build}, "
+            "but which is newer can't be determined. No upgrade is suggested."
+        )
     if runtime.server_skew == "server_ahead":
         # Warning only: nothing on this machine can be upgraded to match.
         return (

@@ -31,6 +31,7 @@ from app.client import (
 from app.coherence import (
     assess_local_coherence,
     builds_match,
+    classify_server_skew,
     cli_is_newer_than,
     ensure_local_spotty_aligned,
     format_build_label,
@@ -982,7 +983,11 @@ def _report_post_upgrade_coherence(
     upgraded_build: str | None = None,
 ) -> None:
     """Verify local server and Spotty match the upgraded pipx build."""
-    from app.coherence import builds_match_values, parse_build_label
+    from app.coherence import (
+        builds_match_values,
+        classify_server_skew_values,
+        parse_build_label,
+    )
 
     parsed = parse_build_label(upgraded_build) if upgraded_build else None
     if parsed is None:
@@ -1012,12 +1017,26 @@ def _report_post_upgrade_coherence(
                     f"this install is {local_label}."
                 )
             )
-            print_fn(
-                theme.dim(
-                    "Upgrade or redeploy the remote host to match, or continue "
-                    "with client/server version skew."
-                )
+            skew = classify_server_skew_values(
+                health,
+                local_commit=local_commit,
+                local_commit_timestamp="",
+                local_version=local_version,
             )
+            if skew == "server_behind":
+                print_fn(
+                    theme.dim(
+                        "Upgrade or redeploy the remote host to match, or continue "
+                        "with client/server version skew."
+                    )
+                )
+            elif skew == "server_ahead":
+                print_fn(
+                    theme.dim(
+                        "The remote server is newer than this install; no upgrade "
+                        "is available here."
+                    )
+                )
         return
 
     if preferences is not None and preferences.base_url:
@@ -1041,7 +1060,18 @@ def _report_post_upgrade_coherence(
                 f"this CLI is {local_label}."
             )
         )
-        print_fn(theme.dim("Run: bunnify-server upgrade"))
+        # The upgraded build's commit time isn't known here, so ordering is
+        # version-level only: never suggest an upgrade unless server is older.
+        if (
+            classify_server_skew_values(
+                server,
+                local_commit=local_commit,
+                local_commit_timestamp="",
+                local_version=local_version,
+            )
+            == "server_behind"
+        ):
+            print_fn(theme.dim("Run: bunnify-server upgrade"))
     if sys.platform != "darwin":
         return
     if refresh_launch_agents is not True:
@@ -1403,6 +1433,12 @@ def _offer_restart_mismatched_server(
     elif cli_is_newer_than(health):
         print_fn(theme.warn(f"That server is older than this CLI ({local_label})."))
         prompt = f"Stop {running_label} and start {local_label} on port {port}? [y/N]: "
+    elif classify_server_skew(health) == "server_ahead":
+        print_fn(theme.warn(f"That server is newer than this CLI ({local_label})."))
+        prompt = (
+            f"Replace {running_label} with the older {local_label} on port {port}? "
+            "[y/N]: "
+        )
     else:
         print_fn(theme.warn(f"Running build differs from this CLI ({local_label})."))
         prompt = f"Restart with this CLI ({local_label}) on port {port}? [y/N]: "

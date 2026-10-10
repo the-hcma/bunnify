@@ -4933,6 +4933,48 @@ class ConfigUnitTests(TestCase):
         )
         self.assertIn("Spotty Bunny restarted", joined)
 
+    def _post_upgrade_local_output(self, server_version: str) -> str:
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.client import HealthStatus
+        from app.coherence import LocalCoherenceReport
+        from app.theme import Theme
+
+        report = LocalCoherenceReport(
+            local_commit="oldoldoldold",
+            local_version="0.9.0",
+            server=HealthStatus(ok=True, version=server_version, commit="srvsrvsrvsrv"),
+            spotty_commit="newnewnewnew",
+            spotty_running=False,
+        )
+        messages: list[str] = []
+        with (
+            patch("app.cli.sys.platform", "linux"),
+            patch("app.cli.load_preferences", return_value=None),
+            patch("app.cli.resolve_base_url", return_value="http://127.0.0.1:8000"),
+            patch("app.cli.assess_local_coherence", return_value=report),
+        ):
+            _report_post_upgrade_coherence(
+                print_fn=messages.append,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=False,
+                upgraded_build="0.10.0 (newnewnewnew)",
+            )
+        return "\n".join(messages)
+
+    def test_post_upgrade_coherence_suggests_server_upgrade_only_when_behind(
+        self,
+    ) -> None:
+        self.assertIn(
+            "bunnify-server upgrade", self._post_upgrade_local_output("0.9.0")
+        )
+
+    def test_post_upgrade_coherence_no_upgrade_hint_when_server_ahead(self) -> None:
+        output = self._post_upgrade_local_output("0.11.0")
+        self.assertIn("Local server is", output)
+        self.assertNotIn("bunnify-server upgrade", output)
+
     def test_report_post_upgrade_coherence_skips_when_build_unreadable(self) -> None:
         from unittest.mock import patch
 
