@@ -14,13 +14,19 @@ from typing import Literal
 from urllib.parse import unquote, urlparse
 
 from app.client import DEFAULT_BASE_URL, fetch_health
-from app.coherence import builds_match, format_build_label, spotty_self_stale
+from app.coherence import (
+    ServerSkew,
+    build_label,
+    classify_server_skew,
+    format_build_label,
+    spotty_self_stale,
+)
 from app.config import (
     default_bookmarks_path,
     load_preferences,
     resolve_base_url,
 )
-from app.version import get_build_info
+from app.version import get_build_info, get_commit_timestamp
 
 ABOUT_LICENSE = "MIT License"
 ABOUT_LICENSE_URL = "https://github.com/the-hcma/bunnify/blob/main/LICENSE"
@@ -45,7 +51,7 @@ class AboutRuntimeInfo:
     server_build_label: str | None
     server_display: str
     server_mode: Literal["local", "remote"]
-    server_skewed: bool
+    server_skew: ServerSkew
     server_url: str
 
 
@@ -231,12 +237,7 @@ def load_about_runtime_info(
     label = "Local server" if mode == "local" else "Remote server"
     health = fetch_health(base_url)
     server_build_label = format_build_label(health) if health.ok else None
-    server_skewed = bool(
-        health.ok
-        and health.version is not None
-        and health.commit is not None
-        and not builds_match(health)
-    )
+    server_skew: ServerSkew = classify_server_skew(health) if health.ok else "unknown"
     return AboutRuntimeInfo(
         bookmarks_display=display_user_path(path),
         bookmarks_uri=bookmarks_uri,
@@ -248,7 +249,7 @@ def load_about_runtime_info(
         server_build_label=server_build_label,
         server_display=f"{label} · {base_url}",
         server_mode=mode,
-        server_skewed=server_skewed,
+        server_skew=server_skew,
         server_url=base_url,
     )
 
@@ -310,7 +311,7 @@ def path_from_file_uri(uri: str) -> Path | None:
 
 
 def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
-    """Return the About-panel build-skew warning, or None when aligned.
+    """Return the About-panel build-skew warning, or None when aligned/unknowable.
 
     Self-staleness (this running overlay predates what's now installed)
     takes priority: it explains a skew this process itself would otherwise
@@ -326,10 +327,16 @@ def server_skew_message(runtime: AboutRuntimeInfo) -> str | None:
             "installed. Restart it: choose Upgrade from the 🐰 menu (or run "
             "bunnify spotty-bunny upgrade)."
         )
-    if not runtime.server_skewed:
+    if runtime.server_skew in ("match", "unknown"):
         return None
     server_build = f"Server build {runtime.server_build_label or 'unknown build'}"
     local_build = f"this install's {runtime.local_build_label}"
+    if runtime.server_skew == "server_ahead":
+        # Warning only: nothing on this machine can be upgraded to match.
+        return (
+            f"{server_build} ({runtime.server_mode}) is newer than {local_build}. "
+            "No upgrade is available for this install."
+        )
     if runtime.server_mode == "remote":
         return (
             f"{server_build} (remote) differs from {local_build}. Upgrading here "
@@ -373,7 +380,7 @@ def _is_loopback_url(url: str) -> bool:
 
 def _local_build_label() -> str:
     version, commit = get_build_info()
-    return f"{version} ({commit})"
+    return build_label(version, commit, get_commit_timestamp())
 
 
 def _server_agent_installed() -> bool:

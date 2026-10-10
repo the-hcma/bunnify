@@ -116,7 +116,7 @@ from Quartz import (
 
 from app.cli import open_url
 from app.client import fetch_key_entries, fetch_suggestions
-from app.coherence import spotty_self_stale
+from app.coherence import ServerSkew, spotty_self_stale
 from app.config import load_spotty_bunny_hotkey, resolve_base_url
 from app.github_complete import (
     bootstrap_github_completion_cache,
@@ -1270,7 +1270,8 @@ class SpottyBunnyController(NSObject):
                 if announce:
                     self._set_status("Could not check for updates.")
             elif isinstance(result, tuple) and isinstance(result[0], UpdateStatus):
-                status, server_skewed, self_stale = result
+                status, server_skew, self_stale = result
+                server_skewed = server_skew == "server_behind"
                 self._update_status = status
                 self._server_skewed = server_skewed
                 self._self_stale = self_stale
@@ -1281,6 +1282,7 @@ class SpottyBunnyController(NSObject):
                             status,
                             self_stale=self_stale,
                             server_skewed=server_skewed,
+                            server_ahead=server_skew == "server_ahead",
                         )
                     )
             if requeue:
@@ -1551,7 +1553,7 @@ def _confirm_install_gh() -> bool:
     return int(alert.runModal()) == int(NSAlertFirstButtonReturn)
 
 
-def _check_update_and_skew(*, force: bool) -> tuple[UpdateStatus, bool, bool]:
+def _check_update_and_skew(*, force: bool) -> tuple[UpdateStatus, ServerSkew, bool]:
     """Background-thread work for the daily/manual update check.
 
     Bundles the PyPI lookup with a fresh server-skew read and self-staleness
@@ -1563,9 +1565,9 @@ def _check_update_and_skew(*, force: bool) -> tuple[UpdateStatus, bool, bool]:
     result via ``_outdated_badge()``.
     """
     status = refresh_update_status(force=force)
-    server_skewed = load_about_runtime_info().server_skewed
+    server_skew = load_about_runtime_info().server_skew
     self_stale = spotty_self_stale()
-    return status, server_skewed, self_stale
+    return status, server_skew, self_stale
 
 
 def _confirm_uninstall() -> bool:

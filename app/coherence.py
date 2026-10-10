@@ -5,18 +5,27 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal
 
 from packaging.version import InvalidVersion, Version
 
 from app.client import HealthStatus, fetch_health
 from app.theme import Theme
 from app.version import (
+    format_commit_timestamp,
     get_build_info,
+    get_commit_timestamp,
     installed_package_commit,
     installed_package_version,
 )
 
 RestartFn = Callable[[str | None, str], bool]
+
+# How a server build relates to this install. Only ``server_behind`` is
+# something an upgrade/restart on this machine can fix; ``server_ahead`` is
+# advisory and ``unknown`` (undeterminable order) must never nag.
+ServerSkew = Literal["match", "server_ahead", "server_behind", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -84,6 +93,52 @@ def parse_build_label(label: str) -> tuple[str, str] | None:
     if not version or not commit:
         return None
     return version, commit
+
+
+def classify_server_skew(health: HealthStatus) -> ServerSkew:
+    """Return how *health*'s build is ordered relative to this install."""
+    local_version, local_commit = get_build_info()
+    return classify_server_skew_values(
+        health,
+        local_commit=local_commit,
+        local_commit_timestamp=get_commit_timestamp(),
+        local_version=local_version,
+    )
+
+
+def classify_server_skew_values(
+    health: HealthStatus,
+    *,
+    local_commit: str,
+    local_commit_timestamp: str,
+    local_version: str,
+) -> ServerSkew:
+    """Order the server build against explicit local build values.
+
+    Package versions decide first. For the same version, the commit
+    timestamps decide; if either side lacks one (an older server, an
+    unstamped build) or they tie, the order is ``unknown`` rather than a guess.
+    """
+    if health.version is None or health.commit is None:
+        return "unknown"
+    if health.version == local_version and health.commit == local_commit:
+        return "match"
+    try:
+        server_version, local = Version(health.version), Version(local_version)
+    except InvalidVersion:
+        return "unknown"
+    if server_version != local:
+        return "server_ahead" if server_version > local else "server_behind"
+    try:
+        server_moment = datetime.fromisoformat(health.commit_timestamp or "")
+        local_moment = datetime.fromisoformat(local_commit_timestamp)
+    except ValueError:
+        return "unknown"
+    if server_moment.tzinfo is None or local_moment.tzinfo is None:
+        return "unknown"
+    if server_moment == local_moment:
+        return "unknown"
+    return "server_ahead" if server_moment > local_moment else "server_behind"
 
 
 def cli_is_newer_than(health: HealthStatus) -> bool:
@@ -171,10 +226,16 @@ def ensure_local_spotty_aligned(
     )
 
 
+def build_label(version: str, commit: str, commit_timestamp: str | None) -> str:
+    """``0.10.0 (abc1234, 2026-10-08 14:32 UTC)``; timestamp omitted if unknown."""
+    stamp = format_commit_timestamp(commit_timestamp)
+    return f"{version} ({commit}, {stamp})" if stamp else f"{version} ({commit})"
+
+
 def format_build_label(health: HealthStatus) -> str:
     """Human-readable version/commit from a health probe."""
     if health.version and health.commit:
-        return f"{health.version} ({health.commit})"
+        return build_label(health.version, health.commit, health.commit_timestamp)
     if health.version:
         return health.version
     if health.commit:
@@ -194,7 +255,7 @@ def offer_remote_build_mismatch(
     if not health.ok or builds_match(health):
         return True
     local_version, local_commit = get_build_info()
-    local_label = f"{local_version} ({local_commit})"
+    local_label = build_label(local_version, local_commit, get_commit_timestamp())
     if health.version is None or health.commit is None:
         remote_label = "unknown build"
         print_fn(
@@ -217,7 +278,15 @@ def offer_remote_build_mismatch(
                 f"this install is {local_label}."
             )
         )
-        if cli_is_newer_than(health):
+        skew = classify_server_skew(health)
+        if skew == "server_ahead":
+            print_fn(
+                theme.dim(
+                    "The remote server is newer than this install; no upgrade "
+                    "is available here."
+                )
+            )
+        elif skew == "server_behind":
             print_fn(
                 theme.dim(
                     "Upgrade the remote host (merge latest release, redeploy, or "
@@ -227,8 +296,8 @@ def offer_remote_build_mismatch(
         else:
             print_fn(
                 theme.dim(
-                    "Upgrade this install with `bunnify upgrade` or align the remote "
-                    "host to the same release."
+                    "Could not tell which build is newer (commit timestamps "
+                    "unavailable); nothing to upgrade automatically."
                 )
             )
     return _confirm_explicit_yes(

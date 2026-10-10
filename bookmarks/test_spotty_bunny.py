@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 from django.test import SimpleTestCase
 
+from app.coherence import ServerSkew
 from app.spotty_bunny_about_info import AboutRuntimeInfo
 from app.spotty_bunny_agent import TCC_PERMISSIONS, TccStatus
 from app.spotty_bunny_cli import (
@@ -579,6 +580,10 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     "app.coherence.get_build_info",
                     return_value=("0.10.0", "newnewnewnew"),
                 ),
+                patch("app.coherence.get_commit_timestamp", return_value=""),
+                patch(
+                    "app.spotty_bunny_about_info.get_commit_timestamp", return_value=""
+                ),
                 patch(
                     "app.spotty_bunny_about_info.spotty_self_stale",
                     return_value=False,
@@ -588,7 +593,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     environ=env,
                     origin_url_for=lambda _workdir: None,
                 )
-            self.assertTrue(info.server_skewed)
+            self.assertEqual(info.server_skew, "server_behind")
             self.assertFalse(info.self_stale)
             self.assertEqual(info.local_build_label, "0.10.0 (newnewnewnew)")
             self.assertEqual(info.server_mode, "local")
@@ -618,6 +623,10 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     "app.coherence.get_build_info",
                     return_value=("0.10.0", "newnewnewnew"),
                 ),
+                patch("app.coherence.get_commit_timestamp", return_value=""),
+                patch(
+                    "app.spotty_bunny_about_info.get_commit_timestamp", return_value=""
+                ),
                 patch(
                     "app.spotty_bunny_about_info.spotty_self_stale",
                     return_value=True,
@@ -627,7 +636,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
                     environ=env,
                     origin_url_for=lambda _workdir: None,
                 )
-            self.assertFalse(info.server_skewed)
+            self.assertEqual(info.server_skew, "match")
             self.assertTrue(info.self_stale)
 
     def test_load_about_runtime_info_remote_server_and_github(self) -> None:
@@ -703,7 +712,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             server_build_label="0.10.0 (abc123456789)",
             server_display="Local server · http://127.0.0.1:8000",
             server_mode="local",
-            server_skewed=False,
+            server_skew="match",
             server_url="http://127.0.0.1:8000",
         )
         text, links = about_details_text_and_links(runtime)
@@ -847,7 +856,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         from app.spotty_bunny_about_info import server_skew_message
 
         message = server_skew_message(
-            _about_runtime(server_mode="local", server_skewed=True)
+            _about_runtime(server_mode="local", server_skew="server_behind")
         )
         self.assertIsNotNone(message)
         assert message is not None
@@ -862,7 +871,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             _about_runtime(
                 server_agent_installed=True,
                 server_mode="local",
-                server_skewed=True,
+                server_skew="server_behind",
             )
         )
         self.assertEqual(
@@ -877,11 +886,34 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         self.assertIsNone(server_skew_message(_about_runtime(server_mode="local")))
         self.assertIsNone(server_skew_message(_about_runtime(server_mode="remote")))
 
+    def test_server_skew_message_server_ahead_is_warning_only(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        for mode in ("local", "remote"):
+            message = server_skew_message(
+                _about_runtime(server_mode=mode, server_skew="server_ahead")
+            )
+            self.assertIsNotNone(message)
+            assert message is not None
+            self.assertIn("is newer than", message)
+            self.assertIn("No upgrade is available", message)
+            self.assertNotIn("bunnify-server", message)
+            self.assertNotIn("Run:", message)
+
+    def test_server_skew_message_none_when_order_unknown(self) -> None:
+        from app.spotty_bunny_about_info import server_skew_message
+
+        self.assertIsNone(
+            server_skew_message(
+                _about_runtime(server_mode="local", server_skew="unknown")
+            )
+        )
+
     def test_server_skew_message_remote_is_advisory(self) -> None:
         from app.spotty_bunny_about_info import server_skew_message
 
         message = server_skew_message(
-            _about_runtime(server_mode="remote", server_skewed=True)
+            _about_runtime(server_mode="remote", server_skew="server_behind")
         )
         self.assertIsNotNone(message)
         assert message is not None
@@ -897,7 +929,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
             _about_runtime(
                 self_stale=True,
                 server_mode="remote",
-                server_skewed=True,
+                server_skew="server_behind",
             )
         )
         self.assertIsNotNone(message)
@@ -911,7 +943,7 @@ class SpottyBunnyAboutInfoTests(SimpleTestCase):
         from app.spotty_bunny_about_info import server_skew_message
 
         message = server_skew_message(
-            _about_runtime(self_stale=True, server_mode="local", server_skewed=False)
+            _about_runtime(self_stale=True, server_mode="local", server_skew="match")
         )
         self.assertIsNotNone(message)
         assert message is not None
@@ -5449,10 +5481,44 @@ class SpottyBunnyUpdateTests(SimpleTestCase):
             checked_at=1.0, current="0.13.0", latest="0.13.0", outdated=False
         )
         self.assertIn(
-            "Server build differs",
+            "Server build is behind",
             summarize_update_check(
                 current_status, self_stale=False, server_skewed=True
             ),
+        )
+
+    def test_server_ahead_never_suggests_an_upgrade(self) -> None:
+        from app.spotty_bunny_update import (
+            UpdateStatus,
+            badge_should_show,
+            summarize_update_check,
+        )
+
+        current_status = UpdateStatus(
+            checked_at=1.0, current="0.13.0", latest="0.13.0", outdated=False
+        )
+        # A server ahead of this install is advisory: the app passes
+        # server_skewed=False for it, so no badge is raised.
+        self.assertFalse(
+            badge_should_show(current_status, self_stale=False, server_skewed=False)
+        )
+        message = summarize_update_check(
+            current_status, self_stale=False, server_ahead=True
+        )
+        self.assertIn("newer build", message)
+        self.assertIn("no upgrade is available", message)
+
+    def test_summarize_update_check_pypi_release_beats_server_ahead(self) -> None:
+        from app.spotty_bunny_update import UpdateStatus, summarize_update_check
+
+        outdated_status = UpdateStatus(
+            checked_at=1.0, current="0.12.0", latest="0.13.0", outdated=True
+        )
+        self.assertEqual(
+            summarize_update_check(
+                outdated_status, self_stale=False, server_ahead=True
+            ),
+            "Update available: 0.13.0",
         )
 
     def test_summarize_update_check_reports_pypi_release(self) -> None:
@@ -5700,7 +5766,7 @@ def _about_runtime(
     self_stale: bool = False,
     server_agent_installed: bool = False,
     server_mode: Literal["local", "remote"],
-    server_skewed: bool = False,
+    server_skew: ServerSkew = "match",
 ) -> AboutRuntimeInfo:
     return AboutRuntimeInfo(
         bookmarks_display="~/.config/bunnify/bookmarks.json",
@@ -5713,6 +5779,129 @@ def _about_runtime(
         server_build_label="0.9.0 (oldoldoldold)",
         server_display="Local server · http://127.0.0.1:8000",
         server_mode=server_mode,
-        server_skewed=server_skewed,
+        server_skew=server_skew,
         server_url="http://127.0.0.1:8000",
     )
+
+
+class ServerSkewClassificationTests(SimpleTestCase):
+    def _classify(
+        self,
+        *,
+        server_version: str | None = "0.10.0",
+        server_commit: str | None = "bbbbbbbbbbbb",
+        server_timestamp: str | None = None,
+        local_timestamp: str = "",
+    ) -> str:
+        from app.client import HealthStatus
+        from app.coherence import classify_server_skew_values
+
+        return classify_server_skew_values(
+            HealthStatus(
+                ok=True,
+                commit=server_commit,
+                commit_timestamp=server_timestamp,
+                version=server_version,
+            ),
+            local_commit="aaaaaaaaaaaa",
+            local_commit_timestamp=local_timestamp,
+            local_version="0.10.0",
+        )
+
+    def test_identical_build_matches(self) -> None:
+        self.assertEqual(self._classify(server_commit="aaaaaaaaaaaa"), "match")
+
+    def test_newer_server_version_is_ahead(self) -> None:
+        self.assertEqual(self._classify(server_version="0.11.0"), "server_ahead")
+
+    def test_older_server_version_is_behind(self) -> None:
+        self.assertEqual(self._classify(server_version="0.9.0"), "server_behind")
+
+    def test_same_version_newer_server_commit_is_ahead(self) -> None:
+        self.assertEqual(
+            self._classify(
+                server_timestamp="2026-10-09T10:00:00+00:00",
+                local_timestamp="2026-10-08T10:00:00+00:00",
+            ),
+            "server_ahead",
+        )
+
+    def test_same_version_older_server_commit_is_behind(self) -> None:
+        self.assertEqual(
+            self._classify(
+                server_timestamp="2026-10-07T10:00:00+00:00",
+                local_timestamp="2026-10-08T10:00:00+00:00",
+            ),
+            "server_behind",
+        )
+
+    def test_timestamps_compare_across_utc_offsets(self) -> None:
+        self.assertEqual(
+            self._classify(
+                server_timestamp="2026-10-08T12:00:00-07:00",
+                local_timestamp="2026-10-08T15:00:00+00:00",
+            ),
+            "server_ahead",
+        )
+
+    def test_same_version_without_timestamps_is_unknown(self) -> None:
+        self.assertEqual(self._classify(), "unknown")
+        self.assertEqual(
+            self._classify(local_timestamp="2026-10-08T10:00:00+00:00"), "unknown"
+        )
+        self.assertEqual(
+            self._classify(server_timestamp="2026-10-08T10:00:00+00:00"), "unknown"
+        )
+
+    def test_tied_timestamps_are_unknown(self) -> None:
+        stamp = "2026-10-08T10:00:00+00:00"
+        self.assertEqual(
+            self._classify(server_timestamp=stamp, local_timestamp=stamp), "unknown"
+        )
+
+    def test_missing_server_build_or_bad_version_is_unknown(self) -> None:
+        self.assertEqual(self._classify(server_version=None), "unknown")
+        self.assertEqual(self._classify(server_commit=None), "unknown")
+        self.assertEqual(self._classify(server_version="not-a-version"), "unknown")
+
+
+class CommitTimestampTests(SimpleTestCase):
+    def test_normalize_converts_to_utc_and_rejects_garbage(self) -> None:
+        from app.version import normalize_commit_timestamp
+
+        self.assertEqual(
+            normalize_commit_timestamp("2026-10-08T07:32:00-07:00\n"),
+            "2026-10-08T14:32:00+00:00",
+        )
+        self.assertEqual(normalize_commit_timestamp("yesterday"), "")
+        # No offset: ordering against other timestamps would be a guess.
+        self.assertEqual(normalize_commit_timestamp("2026-10-08T07:32:00"), "")
+
+    def test_format_renders_utc_label(self) -> None:
+        from app.version import format_commit_timestamp
+
+        self.assertEqual(
+            format_commit_timestamp("2026-10-08T14:32:00+00:00"),
+            "2026-10-08 14:32 UTC",
+        )
+        self.assertEqual(format_commit_timestamp(None), "")
+        self.assertEqual(format_commit_timestamp("garbage"), "")
+
+    def test_env_override_wins(self) -> None:
+        from app.version import git_commit_timestamp
+
+        self.assertEqual(
+            git_commit_timestamp(
+                environ={"BUNNIFY_GIT_TIMESTAMP": "2026-10-08T14:32:00+00:00"}
+            ),
+            "2026-10-08T14:32:00+00:00",
+        )
+
+    def test_build_label_includes_timestamp_only_when_known(self) -> None:
+        from app.coherence import build_label
+
+        self.assertEqual(
+            build_label("0.10.0", "abc123", "2026-10-08T14:32:00+00:00"),
+            "0.10.0 (abc123, 2026-10-08 14:32 UTC)",
+        )
+        self.assertEqual(build_label("0.10.0", "abc123", None), "0.10.0 (abc123)")

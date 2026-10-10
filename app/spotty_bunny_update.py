@@ -45,14 +45,20 @@ def badge_should_show(
     Any of three signals: PyPI has a newer release than what's installed,
     this running process's own build predates what is now installed
     (self-staleness — fixable by Upgrade alone, no PyPI release required),
-    or the server's build genuinely differs from a freshly resolved local
-    build (the About panel's #377 skew message).
+    or the server's build is genuinely *behind* a freshly resolved local
+    build (the About panel's #377 skew message). A server that is ahead of
+    this install is advisory only: ``server_skewed`` must be False for it,
+    since no upgrade here can resolve it.
     """
     return status.outdated or self_stale or server_skewed
 
 
 def summarize_update_check(
-    status: UpdateStatus, *, self_stale: bool, server_skewed: bool = False
+    status: UpdateStatus,
+    *,
+    self_stale: bool,
+    server_skewed: bool = False,
+    server_ahead: bool = False,
 ) -> str:
     """One-line result for a user-initiated "Check for Updates"."""
     if self_stale:
@@ -61,9 +67,14 @@ def summarize_update_check(
             "Choose Upgrade to restart it."
         )
     if server_skewed:
-        return "Server build differs from this install's — see About for details."
+        return "Server build is behind this install's — see About for details."
     if status.outdated and status.latest:
         return f"Update available: {status.latest}"
+    if server_ahead:
+        return (
+            "Server is running a newer build than this install; "
+            "no upgrade is available — see About."
+        )
     if status.latest is None:
         # No successful PyPI lookup has ever completed (offline, unreachable,
         # or a transient failure) — that's not the same as confirmed current.
