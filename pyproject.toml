@@ -80,7 +80,7 @@ packages = ["app", "bookmarks"]
 [dependency-groups]
 dev = [
     "pyright>=1.1.414",
-    "ruff>=0.16.9",
+    "ruff>=0.16.10",
     "types-pywin32>=312.0.0.20260928",
 ]
 
