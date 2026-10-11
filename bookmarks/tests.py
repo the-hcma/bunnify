@@ -283,6 +283,19 @@ class SmokeTests(TestCase):
         self.assertEqual(payload["version"], package)
         self.assertEqual(payload["commit"], commit)
 
+    def test_health_check_json_includes_commit_timestamp(self):
+        """JSON health reports the build commit's timestamp (may be empty)."""
+        from unittest.mock import patch
+
+        with patch(
+            "bookmarks.views.get_commit_timestamp",
+            return_value="2026-10-08T14:32:00+00:00",
+        ):
+            response = self.client.get("/health", HTTP_ACCEPT="application/json")
+        self.assertEqual(
+            response.json()["commit_timestamp"], "2026-10-08T14:32:00+00:00"
+        )
+
     def test_same_placeholder_path_and_query_encoding(self):
         """Same placeholder in path vs query uses per-occurrence encoding."""
         Bookmark.objects.create(

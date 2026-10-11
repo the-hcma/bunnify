@@ -29,6 +29,7 @@ restore_build_metadata() {
     (
         cd "${repo_root}"
         env -u BUNNIFY_EMBED_VERSION -u BUNNIFY_EMBED_COMMIT \
+            -u BUNNIFY_EMBED_COMMIT_TIMESTAMP \
             uv run python "${embed_build_metadata}"
     ) >/dev/null 2>&1 || true
 }
@@ -41,6 +42,8 @@ version="$(
 commit="$(git rev-parse HEAD)"
 export BUNNIFY_EMBED_VERSION="${version}"
 export BUNNIFY_EMBED_COMMIT="${commit}"
+BUNNIFY_EMBED_COMMIT_TIMESTAMP="$(git show --no-patch --format=%cI "${commit}")"
+export BUNNIFY_EMBED_COMMIT_TIMESTAMP
 uv run python "${embed_build_metadata}"
 
 echo "📦 Building sdist + wheel (same path as Publish PyPI)..."

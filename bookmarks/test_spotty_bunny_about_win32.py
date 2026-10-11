@@ -39,7 +39,7 @@ def _about_runtime(**overrides: object) -> AboutRuntimeInfo:
         "server_build_label": "0.10.0 (abc123456789)",
         "server_display": "Local server · http://127.0.0.1:8000",
         "server_mode": "local",
-        "server_skewed": False,
+        "server_skew": "match",
         "server_url": "http://127.0.0.1:8000",
     }
     defaults.update(overrides)

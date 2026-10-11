@@ -15,7 +15,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
-from app.version import get_build_info
+from app.version import get_build_info, get_commit_timestamp
 
 from .keys_catalog import catalog_payload
 from .models import Bookmark
@@ -390,6 +390,7 @@ def health_check(request: HttpRequest) -> HttpResponse:
         return JsonResponse(
             {
                 "commit": commit,
+                "commit_timestamp": get_commit_timestamp(),
                 "status": "ok",
                 "version": package,
             }

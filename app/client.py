@@ -26,6 +26,7 @@ class HealthStatus:
 
     ok: bool
     commit: str | None = None
+    commit_timestamp: str | None = None
     version: str | None = None
 
 
@@ -96,8 +97,14 @@ def fetch_health(base_url: str, *, timeout: float = 2.0) -> HealthStatus:
             return HealthStatus(ok=False)
         version = payload.get("version")
         commit = payload.get("commit")
+        commit_timestamp = payload.get("commit_timestamp")
         return HealthStatus(
             ok=True,
+            commit_timestamp=(
+                commit_timestamp
+                if isinstance(commit_timestamp, str) and commit_timestamp
+                else None
+            ),
             version=version if isinstance(version, str) else None,
             commit=commit if isinstance(commit, str) else None,
         )

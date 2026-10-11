@@ -10,4 +10,5 @@ absent (for example after ``pipx install`` from PyPI). Empty strings mean
 from __future__ import annotations
 
 EMBEDDED_COMMIT: str = ""
+EMBEDDED_COMMIT_TIMESTAMP: str = ""
 EMBEDDED_VERSION: str = ""
