@@ -1,6 +1,6 @@
 [project]
 name = "bunnify"
-version = "1.1.1"
+version = "1.1.2"
 description = "Smart bookmark manager and URL shortcut system"
 readme = "README.md"
 license = "MIT"
