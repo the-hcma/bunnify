@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/the-hcma/bunnify/compare/bunnify-v1.1.1...bunnify-v1.1.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **spotty-bunny:** only suggest upgrades when one is possible; show commit timestamps ([#572](https://github.com/the-hcma/bunnify/issues/572)) ([dad0887](https://github.com/the-hcma/bunnify/commit/dad0887558ac29d39b07d0a859146c59519a50ed))
+
 ## [1.1.1](https://github.com/the-hcma/bunnify/compare/bunnify-v1.1.0...bunnify-v1.1.1) (2026-10-02)
 
 
