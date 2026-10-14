@@ -30,7 +30,7 @@ dependencies = [
     "pyobjc-framework-Cocoa>=12.2.2; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=12.2.2; sys_platform == 'darwin'",
     "pywin32>=312; sys_platform == 'win32'",
-    "rpds-py>=2026.6.3",
+    "rpds-py>=2026.9.1",
     "sqlparse>=0.6.0",
     "tomlkit>=0.15.1",
     "typing-extensions==4.16.0",
