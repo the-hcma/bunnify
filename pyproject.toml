@@ -16,7 +16,7 @@ classifiers = [
 dependencies = [
     "asgiref==3.12.1",
     "click>=8.5.0",
-    "django>=6.1.1",
+    "django>=6.1.2",
     "jsonschema>=4.26.0",
     "packaging>=26.3",
     "pathspec==1.1.1",
@@ -81,7 +81,7 @@ packages = ["app", "bookmarks"]
 dev = [
     "pyright>=1.1.414",
     "ruff>=0.16.10",
-    "types-pywin32>=312.0.0.20260928",
+    "types-pywin32>=312.0.0.20261006",
 ]
 
 [tool.pyright]
