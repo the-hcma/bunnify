@@ -20,7 +20,7 @@ dependencies = [
     "jsonschema>=4.26.0",
     "packaging>=26.3",
     "pathspec==1.1.1",
-    "platformdirs>=4.13.0",
+    "platformdirs>=4.13.3",
     "prompt-toolkit>=3.0.53",
     # Platform dependencies for spotty-bunny: installed automatically on the
     # platform that needs them (environment markers), so a plain
@@ -32,7 +32,7 @@ dependencies = [
     "pywin32>=312; sys_platform == 'win32'",
     "rpds-py>=2026.9.1",
     "sqlparse>=0.6.0",
-    "tomlkit>=0.15.1",
+    "tomlkit>=0.15.2",
     "typing-extensions==4.16.0",
 ]
 
@@ -80,7 +80,7 @@ packages = ["app", "bookmarks"]
 [dependency-groups]
 dev = [
     "pyright>=1.1.414",
-    "ruff>=0.17.0",
+    "ruff>=0.17.1",
     "types-pywin32>=312.0.0.20261006",
 ]
 
