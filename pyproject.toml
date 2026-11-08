@@ -25,10 +25,10 @@ dependencies = [
     # Platform dependencies for spotty-bunny: installed automatically on the
     # platform that needs them (environment markers), so a plain
     # `pipx install bunnify` gives a working spotty-bunny.
-    "pyobjc-core>=12.2.2; sys_platform == 'darwin'",
-    "pyobjc-framework-ApplicationServices>=12.2.2; sys_platform == 'darwin'",
-    "pyobjc-framework-Cocoa>=12.2.2; sys_platform == 'darwin'",
-    "pyobjc-framework-Quartz>=12.2.2; sys_platform == 'darwin'",
+    "pyobjc-core>=13.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=13.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=13.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=13.0; sys_platform == 'darwin'",
     "pywin32>=312; sys_platform == 'win32'",
     "rpds-py>=2026.9.1",
     "sqlparse>=0.6.0",
