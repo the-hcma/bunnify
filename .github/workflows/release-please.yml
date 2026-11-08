@@ -158,6 +158,14 @@ jobs:
         with:
           version: latest
 
+      - uses: the-hcma/repository-helpers/actions/setup-tmp-layout@bfee0e1f2d682e83c6207a0d6a0f7feefa576fd8
+
+      - name: Use the temp layout for uv
+        run: |
+          layout="$REPOSITORY_HELPERS_DIR/scripts/dev/with-tmp-layout"
+          # Later steps run uv directly: keep them on the same layout cache.
+          "$layout" uv -- bash -c "printf 'UV_CACHE_DIR=%s\\n' \"\$UV_CACHE_DIR\" >> \"\$GITHUB_ENV\""
+
       - name: Python lint and format checks
         run: bash .github/ci/python-static
 
@@ -220,6 +228,14 @@ jobs:
 
       - name: Set up Python 3.14
         run: uv python install 3.14
+
+      - uses: the-hcma/repository-helpers/actions/setup-tmp-layout@bfee0e1f2d682e83c6207a0d6a0f7feefa576fd8
+
+      - name: Use the temp layout for uv
+        run: |
+          layout="$REPOSITORY_HELPERS_DIR/scripts/dev/with-tmp-layout"
+          # Later steps run uv directly: keep them on the same layout cache.
+          "$layout" uv -- bash -c "printf 'UV_CACHE_DIR=%s\\n' \"\$UV_CACHE_DIR\" >> \"\$GITHUB_ENV\""
 
       - name: Install dependencies
         run: uv sync --all-groups

@@ -104,6 +104,8 @@ jobs:
       with:
         version: "latest"
 
+    - uses: the-hcma/repository-helpers/actions/setup-tmp-layout@bfee0e1f2d682e83c6207a0d6a0f7feefa576fd8
+
     - name: Python lint & format checks
       run: bash .github/ci/python-static
 
@@ -153,6 +155,14 @@ jobs:
     - name: Set up Python 3.14
       run: uv python install 3.14
 
+    - uses: the-hcma/repository-helpers/actions/setup-tmp-layout@bfee0e1f2d682e83c6207a0d6a0f7feefa576fd8
+
+    - name: Use the temp layout for uv
+      run: |
+        layout="$REPOSITORY_HELPERS_DIR/scripts/dev/with-tmp-layout"
+        # Later steps run uv directly: keep them on the same layout cache.
+        "$layout" uv -- bash -c "printf 'UV_CACHE_DIR=%s\\n' \"\$UV_CACHE_DIR\" >> \"\$GITHUB_ENV\""
+
     - name: Install dependencies
       run: uv sync --all-groups
 
@@ -185,6 +195,8 @@ jobs:
       run: |
         chmod +x ./test_packaging
         ./test_packaging
+  # Not on the temp layout (repository-helpers#832): with-tmp-layout needs GNU userland (flock, timeout),
+  # which Windows runners lack by default; only the Linux jobs use it.
   test-windows:
     name: Tests (Windows)
     needs: guard
@@ -215,6 +227,8 @@ jobs:
       shell: bash
       run: ./test_bunnify
 
+  # Not on the temp layout (repository-helpers#832): with-tmp-layout needs GNU userland (flock, timeout),
+  # which macOS runners lack by default; only the Linux jobs use it.
   test-macos:
     name: Tests (macOS)
     needs: guard
