@@ -195,6 +195,8 @@ jobs:
       run: |
         chmod +x ./test_packaging
         ./test_packaging
+  # Not on the temp layout (repository-helpers#832): with-tmp-layout needs GNU userland (flock, timeout),
+  # which Windows runners lack by default; only the Linux jobs use it.
   test-windows:
     name: Tests (Windows)
     needs: guard
@@ -225,6 +227,8 @@ jobs:
       shell: bash
       run: ./test_bunnify
 
+  # Not on the temp layout (repository-helpers#832): with-tmp-layout needs GNU userland (flock, timeout),
+  # which macOS runners lack by default; only the Linux jobs use it.
   test-macos:
     name: Tests (macOS)
     needs: guard
