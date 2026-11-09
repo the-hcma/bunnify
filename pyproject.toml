@@ -81,7 +81,7 @@ packages = ["app", "bookmarks"]
 dev = [
     "pyright>=1.1.414",
     "ruff>=0.17.3",
-    "types-pywin32>=312.0.0.20261024",
+    "types-pywin32>=312.0.0.20261031",
 ]
 
 [tool.pyright]
