@@ -114,9 +114,11 @@ class _LaunchctlGuardedPopen(subprocess.Popen):  # pyright: ignore[reportMissing
             # Materialize once and pass the same list on: a generator must be
             # inspected without being exhausted before the real Popen sees it.
             try:
-                args = list(args)
+                iterator = iter(args)
             except TypeError:
                 pass  # not iterable (None, int): let Popen raise its own error
+            else:
+                args = list(iterator)  # errors while iterating propagate
         reject_real_launchctl(args, executable)
         super().__init__(args, *popenargs, **kwargs)
 

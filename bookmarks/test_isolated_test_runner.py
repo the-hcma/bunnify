@@ -134,6 +134,31 @@ class RejectRealLaunchctlTests(SimpleTestCase):
         )
         self.assertEqual(completed.stdout.strip(), "ok")
 
+    def test_errors_while_materializing_arguments_propagate(self) -> None:
+        class Flaky:
+            """Raises TypeError on first iteration, then would yield launchctl."""
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def __iter__(self) -> "Flaky":
+                return self
+
+            def __next__(self) -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    raise TypeError("transient")
+                return "launchctl"
+
+        flaky = Flaky()
+        with self.assertRaises(TypeError):
+            subprocess.run(flaky, check=False)
+        self.assertEqual(flaky.calls, 1)  # never retried, never passed onward
+
+    def test_non_iterable_arguments_still_reach_popen_which_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            subprocess.run(None, check=False)  # type: ignore[arg-type]
+
     def test_rejects_wrapper_and_list_shell_forms(self) -> None:
         for args in (
             ["launchctl list"],
