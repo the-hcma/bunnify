@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import tempfile
 from collections.abc import Mapping
@@ -22,24 +23,38 @@ class RealLaunchctlBlockedError(RuntimeError):
     """A test tried to run the real ``launchctl`` against the developer's launchd."""
 
 
-def _program_name(args: object) -> str:
-    """Return the basename of the program ``args`` would start (``""`` if unknown)."""
-    first: object
+def _invoked_programs(args: object, executable: object = None) -> list[str]:
+    """Return basenames of every program ``args``/``executable`` could start.
+
+    A list/tuple runs its first element; a string is a shell command, so every
+    word is considered (``cd x && "/bin/launchctl" list`` must not slip through).
+    An ``executable=`` override is checked too, since it replaces argv[0].
+    """
+    names: list[str] = []
+
+    def add(value: object) -> None:
+        if isinstance(value, (str, bytes, os.PathLike)):
+            names.append(os.path.basename(os.fsdecode(value)))
+
+    add(executable)
     if isinstance(args, (str, bytes, os.PathLike)):
-        text = os.fsdecode(args).strip()
-        first = text.split(maxsplit=1)[0] if text else ""
+        text = os.fsdecode(args)
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        try:
+            words = list(lexer)
+        except ValueError:  # unbalanced quotes: fall back to a naive split
+            words = text.split()
+        for word in words:
+            add(word)
     elif isinstance(args, (list, tuple)) and args:
-        first = args[0]
-    else:
-        return ""
-    if not isinstance(first, (str, bytes, os.PathLike)):
-        return ""
-    return os.path.basename(os.fsdecode(first))
+        add(args[0])
+    return names
 
 
-def reject_real_launchctl(args: object) -> None:
-    """Raise :class:`RealLaunchctlBlockedError` when ``args`` runs ``launchctl``."""
-    if _program_name(args) in _BLOCKED_PROGRAMS:
+def reject_real_launchctl(args: object, executable: object = None) -> None:
+    """Raise :class:`RealLaunchctlBlockedError` when this would run ``launchctl``."""
+    if _BLOCKED_PROGRAMS.intersection(_invoked_programs(args, executable)):
         raise RealLaunchctlBlockedError(
             f"a test tried to run the real launchctl: {args!r}. That unloads the "
             "developer's production LaunchAgent (#602). Patch "
@@ -57,7 +72,11 @@ class _LaunchctlGuardedPopen(subprocess.Popen):  # pyright: ignore[reportMissing
     """
 
     def __init__(self, args: Any, *popenargs: Any, **kwargs: Any) -> None:
-        reject_real_launchctl(args)
+        # Popen(args, bufsize, executable, ...): executable may be positional.
+        executable = kwargs.get("executable")
+        if executable is None and len(popenargs) > 1:
+            executable = popenargs[1]
+        reject_real_launchctl(args, executable)
         super().__init__(args, *popenargs, **kwargs)
 
 

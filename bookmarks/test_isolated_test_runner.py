@@ -70,6 +70,26 @@ class RejectRealLaunchctlTests(SimpleTestCase):
             with self.assertRaises(RealLaunchctlBlockedError, msg=repr(args)):
                 reject_real_launchctl(args)
 
+    def test_rejects_shell_and_executable_bypasses(self) -> None:
+        for args in (
+            '"/bin/launchctl" bootout x',
+            "'launchctl' list",
+            "cd /tmp && launchctl list",
+            "true; /bin/launchctl list",
+            'launchctl "unbalanced',
+        ):
+            with self.assertRaises(RealLaunchctlBlockedError, msg=repr(args)):
+                reject_real_launchctl(args)
+        with self.assertRaises(RealLaunchctlBlockedError):
+            reject_real_launchctl(["true", "x"], executable="/bin/launchctl")
+        with self.assertRaises(RealLaunchctlBlockedError):
+            subprocess.run(["true"], executable="/bin/launchctl", check=False)
+        with self.assertRaises(RealLaunchctlBlockedError):
+            subprocess.run('"/bin/launchctl" list', shell=True, check=False)
+        with self.assertRaises(RealLaunchctlBlockedError):
+            # executable passed positionally: Popen(args, bufsize, executable)
+            subprocess.Popen(["true"], -1, "/bin/launchctl")
+
     def test_allows_everything_else(self) -> None:
         for args in (
             ["git", "status"],
