@@ -15,6 +15,8 @@ import click
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
+from app.browser_launch import launch, plan_launch
+from app.browser_spec import BrowserSpec
 from app.client import (
     DEFAULT_BASE_URL,
     ClientError,
@@ -246,8 +248,20 @@ def format_browser_setup_text(base_url: str) -> str:
     )
 
 
-def open_url(url: str, *, opener: Callable[[str], bool] | None = None) -> None:
-    """Open ``url`` in the platform default browser."""
+def open_url(
+    url: str,
+    *,
+    opener: Callable[[str], bool] | None = None,
+    browser: BrowserSpec | None = None,
+) -> None:
+    """Open ``url`` in the platform default browser.
+
+    When ``browser`` is given, open it in that browser/profile instead and
+    raise :class:`BrowserLaunchError` (opening nothing) if it is unavailable.
+    """
+    if browser is not None:
+        launch(plan_launch(url, browser))
+        return
     open_fn = opener or webbrowser.open
     opened = open_fn(url)
     if opened is False:
@@ -1874,8 +1888,12 @@ def _handle_resolved(
     resolved = resolve_shortcut(query, base_url=base_url, strict=True)
     if print_url:
         click.echo(resolved.url)
+    if resolved.browser is not None and not open_browser:
+        # Validate (and report) the pin without launching anything.
+        plan = plan_launch(resolved.url, resolved.browser)
+        click.echo(f"{theme.meta('browser:')} {plan.describe()}", err=True)
     if open_browser:
-        open_url(resolved.url, opener=opener)
+        open_url(resolved.url, opener=opener, browser=resolved.browser)
         kind = resolved.kind or "url"
         key = resolved.key or ""
         meta = f"{kind}" + (f":{key}" if key else "")

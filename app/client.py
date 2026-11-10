@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from app.browser_spec import BrowserSpec, parse_browser_spec
 from app.completion_spec import ParamCompleteSpec, parse_complete_map
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
@@ -49,6 +50,7 @@ class ResolvedShortcut:
     url: str
     kind: str | None
     key: str | None
+    browser: BrowserSpec | None = None
 
 
 def check_health(base_url: str, *, timeout: float = 2.0) -> bool:
@@ -177,6 +179,7 @@ def resolve_shortcut(
         url=url,
         kind=payload.get("kind") if isinstance(payload.get("kind"), str) else None,
         key=payload.get("key") if isinstance(payload.get("key"), str) else None,
+        browser=parse_browser_spec(payload.get("browser")),
     )
 
 

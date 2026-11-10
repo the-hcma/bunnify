@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
+from app.client import ResolvedShortcut
 from app.spotty_bunny_complete import CompletionRow
 from app.spotty_bunny_icon_win32 import _rgb
 from app.spotty_bunny_io import ImmediateIo
@@ -568,9 +569,9 @@ class HandleEditKeydownTests(SimpleTestCase):
         submitted: list[str] = []
         controller._io = ImmediateIo()
 
-        def fake_lookup(query: str, **_kwargs: object) -> str:
+        def fake_lookup(query: str, **_kwargs: object) -> ResolvedShortcut:
             submitted.append(query)
-            return "https://github.com"
+            return ResolvedShortcut("https://github.com", None, None)
 
         open_url_fn = MagicMock()
         append_history_fn = MagicMock()
@@ -578,7 +579,7 @@ class HandleEditKeydownTests(SimpleTestCase):
         controller._append_history_fn = append_history_fn
         with (
             patch(
-                "app.spotty_bunny_win32_app.lookup_resolved_url",
+                "app.spotty_bunny_win32_app.lookup_resolved",
                 side_effect=fake_lookup,
             ),
             patch("app.spotty_bunny_win32_app.resolve_base_url", return_value="u"),
@@ -602,13 +603,13 @@ class HandleEditKeydownTests(SimpleTestCase):
         controller.set_field_text("")
         submitted: list[str] = []
 
-        def fake_lookup(query: str, **_kwargs: object) -> str:
+        def fake_lookup(query: str, **_kwargs: object) -> ResolvedShortcut:
             submitted.append(query)
-            return "https://calendar.google.com"
+            return ResolvedShortcut("https://calendar.google.com", None, None)
 
         with (
             patch(
-                "app.spotty_bunny_win32_app.lookup_resolved_url",
+                "app.spotty_bunny_win32_app.lookup_resolved",
                 side_effect=fake_lookup,
             ),
             patch("app.spotty_bunny_win32_app.resolve_base_url", return_value="u"),
@@ -759,7 +760,7 @@ class SubmitQueryCancellationTests(SimpleTestCase):
         # No existing test reaches this branch without either a non-empty
         # field or a selected completion row -- without it, deleting the
         # `if not query: self.hide(); return` guard would send an empty
-        # query through lookup_resolved_url's non-strict fallback instead.
+        # query through lookup_resolved's non-strict fallback instead.
         controller = _make_controller()
         controller.show()
         controller.set_field_text("")
@@ -784,8 +785,8 @@ class SubmitQueryCancellationTests(SimpleTestCase):
         controller._append_history_fn = append_history_fn
         with (
             patch(
-                "app.spotty_bunny_win32_app.lookup_resolved_url",
-                return_value="https://github.com",
+                "app.spotty_bunny_win32_app.lookup_resolved",
+                return_value=ResolvedShortcut("https://github.com", None, None),
             ),
             patch("app.spotty_bunny_win32_app.resolve_base_url", return_value="u"),
         ):
@@ -806,8 +807,8 @@ class SubmitQueryCancellationTests(SimpleTestCase):
         controller._io = io
         with (
             patch(
-                "app.spotty_bunny_win32_app.lookup_resolved_url",
-                return_value="https://github.com",
+                "app.spotty_bunny_win32_app.lookup_resolved",
+                return_value=ResolvedShortcut("https://github.com", None, None),
             ),
             patch("app.spotty_bunny_win32_app.resolve_base_url", return_value="u"),
         ):

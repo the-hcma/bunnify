@@ -210,7 +210,11 @@ from app.spotty_bunny_quit import (
     post_application_wake_event,
     quit_ns_app,
 )
-from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
+from app.spotty_bunny_resolve import (
+    lookup_resolved,
+    open_resolved,
+    resolve_still_current,
+)
 from app.spotty_bunny_status import (
     SHORTCUTS_LOAD_FAILED,
     canned_spotty_bunny_status_lines,
@@ -1251,12 +1255,12 @@ class SpottyBunnyController(NSObject):
             base_url = cached_base or resolve_base_url(
                 persist=False, allow_prompt=False
             )
-            url = lookup_resolved_url(query, base_url=base_url)
+            resolved = lookup_resolved(query, base_url=base_url)
             if not resolve_still_current(expected_seq=seq, seq=self._resolve_seq):
-                return url
-            open_url(url)
+                return resolved.url
+            open_resolved(resolved, open_fn=open_url)
             append_history_line(query)
-            return url
+            return resolved.url
 
         self._io.submit(work, lambda result: self._resolve_ready(result, seq=seq))
 

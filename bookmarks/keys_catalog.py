@@ -62,6 +62,8 @@ def build_key_catalog() -> list[dict[str, Any]]:
         complete_payload = _complete_payload(complete)
         if complete_payload:
             entry["complete"] = complete_payload
+        if isinstance(bookmark.browser, dict) and bookmark.browser:
+            entry["browser"] = dict(bookmark.browser)
         entries.append(entry)
     return entries
 

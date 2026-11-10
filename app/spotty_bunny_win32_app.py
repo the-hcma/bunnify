@@ -76,7 +76,11 @@ from app.spotty_bunny_menu import (
     UPGRADE_STATUS,
     logo_menu_specs,
 )
-from app.spotty_bunny_resolve import lookup_resolved_url, resolve_still_current
+from app.spotty_bunny_resolve import (
+    lookup_resolved,
+    open_resolved,
+    resolve_still_current,
+)
 from app.spotty_bunny_status import SHORTCUTS_LOAD_FAILED, format_spotty_bunny_status
 from app.spotty_bunny_tap_health import (
     TAP_HEALTH_CHECK_INTERVAL_S,
@@ -253,7 +257,7 @@ class SpottyBunnyWin32Controller:
         self._update_check_pending = False
         self._update_check_requeue = False
         self._agent_installed = False
-        self._open_url_fn: Callable[[str], None] = open_url
+        self._open_url_fn: Callable[..., None] = open_url
         self._append_history_fn: Callable[[str], None] = append_history_line
 
         # Real Windows handles, set by run_spotty_bunny_win32_app(); left
@@ -538,12 +542,12 @@ class SpottyBunnyWin32Controller:
             base_url = cached_base or resolve_base_url(
                 persist=False, allow_prompt=False
             )
-            url = lookup_resolved_url(query, base_url=base_url)
+            resolved = lookup_resolved(query, base_url=base_url)
             if not resolve_still_current(expected_seq=seq, seq=self._resolve_seq):
-                return url
-            opener(url)
+                return resolved.url
+            open_resolved(resolved, open_fn=opener)
             appender(query)
-            return url
+            return resolved.url
 
         def on_done(result: object) -> None:
             self._pending_resolves[seq] = result
