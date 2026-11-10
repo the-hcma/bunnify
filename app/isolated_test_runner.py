@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Mapping
 from typing import Any
 
-from django.test.runner import DiscoverRunner
+from django.test.runner import DiscoverRunner, ParallelTestSuite
 
 from app.config import DATA_DIR_ENV_VAR
 
@@ -98,6 +98,30 @@ class _LaunchctlGuardedPopen(subprocess.Popen):  # pyright: ignore[reportMissing
         super().__init__(args, *popenargs, **kwargs)
 
 
+def install_launchctl_guard() -> type[subprocess.Popen]:
+    """Install the guard on ``subprocess.Popen``; return the class it replaced."""
+    previous = subprocess.Popen
+    subprocess.Popen = _LaunchctlGuardedPopen  # type: ignore[misc]
+    return previous
+
+
+def _parallel_worker_setup(*_args: Any) -> None:
+    """Install the guard in a ``--parallel`` worker.
+
+    Spawned workers (the macOS default) start a fresh interpreter, so the
+    runner's own ``setup_test_environment`` never ran there. ``HOME`` is
+    inherited through the environment; the ``Popen`` guard is not.
+    """
+    install_launchctl_guard()
+
+
+class _GuardedParallelTestSuite(ParallelTestSuite):
+    """Parallel suite whose worker processes install the launchctl guard."""
+
+    process_setup = _parallel_worker_setup
+    process_setup_args = ()
+
+
 class IsolatedStateRunner(DiscoverRunner):
     """Run the tests without touching the developer's real machine state.
 
@@ -117,6 +141,8 @@ class IsolatedStateRunner(DiscoverRunner):
     patch fails the test instead of unloading the production agent (#602).
     """
 
+    parallel_test_suite = _GuardedParallelTestSuite
+
     def setup_test_environment(self, **kwargs: Any) -> None:
         super().setup_test_environment(**kwargs)
         self._state_dir = tempfile.TemporaryDirectory(prefix="bunnify-test-data-")
@@ -128,8 +154,7 @@ class IsolatedStateRunner(DiscoverRunner):
         os.environ[XDG_DATA_HOME_ENV_VAR] = self._state_dir.name
         for name in _HOME_VARS:
             os.environ[name] = self._home_dir.name
-        self._previous_popen = subprocess.Popen
-        subprocess.Popen = _LaunchctlGuardedPopen  # type: ignore[misc]
+        self._previous_popen = install_launchctl_guard()
 
     def teardown_test_environment(self, **kwargs: Any) -> None:
         subprocess.Popen = self._previous_popen  # type: ignore[misc]

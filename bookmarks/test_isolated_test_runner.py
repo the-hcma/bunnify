@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
+from django.test.runner import ParallelTestSuite
 
 from app.isolated_test_runner import (
     IsolatedStateRunner,
@@ -156,3 +157,43 @@ class RunnerTeardownTests(SimpleTestCase):
             self.assertIs(subprocess.Popen, real_popen)
         self.assertEqual({k: os.environ.get(k) for k in before_env}, before_env)
         self.assertFalse(Path(inner_home).exists())
+
+
+class ParallelWorkerTests(SimpleTestCase):
+    def test_runner_wires_the_guard_into_parallel_workers(self) -> None:
+        suite = IsolatedStateRunner.parallel_test_suite
+        self.assertTrue(issubclass(suite, ParallelTestSuite))
+        # Django calls ``process_setup.__func__(*process_setup_args)`` in each
+        # spawned worker, so it must be a plain module-level function.
+        self.assertEqual(suite.process_setup.__module__, "app.isolated_test_runner")
+        self.assertEqual(suite.process_setup_args, ())
+
+    def test_fresh_interpreter_is_guarded_after_worker_setup(self) -> None:
+        # Simulates a spawned worker: new interpreter, no runner setup, only the
+        # worker hook. The program name comes from the environment so this test's
+        # own arguments never contain the blocked word.
+        code = (
+            "import os, subprocess\n"
+            "from app.isolated_test_runner import (\n"
+            "    RealLaunchctlBlockedError, _parallel_worker_setup)\n"
+            "_parallel_worker_setup()\n"
+            "try:\n"
+            "    subprocess.run([os.environ['GUARDED_PROGRAM'], 'help'], check=False)\n"
+            "except RealLaunchctlBlockedError:\n"
+            "    print('BLOCKED')\n"
+        )
+        project_root = str(Path(__file__).resolve().parent.parent)
+        completed = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+            cwd=project_root,
+            env={
+                **os.environ,
+                "GUARDED_PROGRAM": "launch" + "ctl",
+                "PYTHONPATH": project_root,
+            },
+        )
+        self.assertEqual(completed.stdout.strip(), "BLOCKED", msg=completed.stderr)
