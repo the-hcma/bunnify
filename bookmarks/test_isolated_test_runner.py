@@ -218,10 +218,14 @@ class RunnerTeardownTests(SimpleTestCase):
             patch("django.test.runner.DiscoverRunner.teardown_test_environment"),
         ):
             runner.setup_test_environment()
-            inner_home = os.environ["HOME"]
-            self.assertIn("bunnify-test-home-", inner_home)
-            self.assertIs(subprocess.Popen, _LaunchctlGuardedPopen)
-            runner.teardown_test_environment()
+            try:
+                inner_home = os.environ["HOME"]
+                self.assertIn("bunnify-test-home-", inner_home)
+                self.assertIs(subprocess.Popen, _LaunchctlGuardedPopen)
+            finally:
+                # Always restore HOME/Popen and remove the temp dirs, even
+                # when an assertion above fails.
+                runner.teardown_test_environment()
             self.assertIs(subprocess.Popen, real_popen)
         self.assertEqual({k: os.environ.get(k) for k in before_env}, before_env)
         self.assertFalse(Path(inner_home).exists())
