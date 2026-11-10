@@ -206,12 +206,31 @@ class ProfileLookupTests(SimpleTestCase):
                         "..": {"name": "Parent"},
                         "sub/../Profile 1": {"name": "Traversal"},
                         "sub\\x": {"name": "Backslash"},
+                        "D:Profile 1": {"name": "DriveRelative"},
+                        "Profile 1:stream": {"name": "Stream"},
                         "Profile 1": {"name": "Real"},
                     }
                 }
             }
             (root / "Local State").write_text(json.dumps(state))
             self.assertEqual(list_profiles(root), {"Profile 1": "Real"})
+
+    def test_corrupt_launch_services_plist_means_unknown_default_browser(self) -> None:
+        for payload in (
+            b"<?xml version='1.0'?><plist><dict><key>LSHandlers</key>",  # truncated
+            b"<plist><dict></plist>",  # mismatched tags
+            b"bplist00\x00\x01garbage",  # corrupt binary plist
+            b"",
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                plist = browser_launch._mac_launch_services_plist(home)
+                plist.parent.mkdir(parents=True)
+                plist.write_bytes(payload)
+                self.assertIsNone(
+                    detect_default_browser_id(platform="darwin", home=home),
+                    msg=repr(payload),
+                )
 
     def test_non_list_ls_handlers_means_unknown_default_browser(self) -> None:
         for handlers in ("x", {"a": 1}, 7, True):  # plists have no null type

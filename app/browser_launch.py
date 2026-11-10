@@ -16,6 +16,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 from app.browser_spec import BrowserSpec
 from app.client import ClientError
@@ -102,7 +103,7 @@ def detect_default_browser_id(
         try:
             with path.open("rb") as handle:
                 data = plistlib.load(handle)
-        except OSError, plistlib.InvalidFileException, ValueError:
+        except OSError, plistlib.InvalidFileException, ValueError, ExpatError:
             return None
         handlers = data.get("LSHandlers") if isinstance(data, dict) else None
         if not isinstance(handlers, list):
@@ -188,11 +189,12 @@ def user_data_dir(
 
 
 def _is_profile_dir_name(name: object) -> bool:
-    """True for a plain single-component directory name (no ``""``, ``..``, paths)."""
+    """True for a plain single-component directory name (no paths, drives, ``..``)."""
     return (
         isinstance(name, str)
         and name not in ("", ".", "..")
         and "/" not in name
+        and ":" not in name  # drive-relative (D:Profile 1) / NTFS stream names
         and "\\" not in name
         and "\x00" not in name
     )
