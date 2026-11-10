@@ -104,7 +104,9 @@ def detect_default_browser_id(
                 data = plistlib.load(handle)
         except OSError, plistlib.InvalidFileException, ValueError:
             return None
-        handlers = data.get("LSHandlers", []) if isinstance(data, dict) else []
+        handlers = data.get("LSHandlers") if isinstance(data, dict) else None
+        if not isinstance(handlers, list):
+            return None
         for handler in handlers:
             if not isinstance(handler, dict):
                 continue
@@ -185,6 +187,17 @@ def user_data_dir(
     return None
 
 
+def _is_profile_dir_name(name: object) -> bool:
+    """True for a plain single-component directory name (no ``""``, ``..``, paths)."""
+    return (
+        isinstance(name, str)
+        and name not in ("", ".", "..")
+        and "/" not in name
+        and "\\" not in name
+        and "\x00" not in name
+    )
+
+
 def list_profiles(user_data: Path) -> dict[str, str]:
     """Map profile directory name to display name from ``Local State``.
 
@@ -208,8 +221,12 @@ def list_profiles(user_data: Path) -> dict[str, str]:
     profiles: dict[str, str] = {}
     for directory, info in cache.items():
         name = info.get("name") if isinstance(info, dict) else None
-        if isinstance(name, str) and (user_data / str(directory)).is_dir():
-            profiles[str(directory)] = name
+        if (
+            isinstance(name, str)
+            and _is_profile_dir_name(directory)
+            and (user_data / directory).is_dir()
+        ):
+            profiles[directory] = name
     return profiles
 
 

@@ -193,6 +193,44 @@ class ProfileLookupTests(SimpleTestCase):
             resolve_profile_dir("edge", "Ghost", profiles)
         self.assertIn("no profile named", str(ctx.exception))
 
+    def test_path_like_profile_keys_are_not_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Profile 1").mkdir()
+            (root / "sub").mkdir()
+            state = {
+                "profile": {
+                    "info_cache": {
+                        "": {"name": "Empty"},
+                        ".": {"name": "Dot"},
+                        "..": {"name": "Parent"},
+                        "sub/../Profile 1": {"name": "Traversal"},
+                        "sub\\x": {"name": "Backslash"},
+                        "Profile 1": {"name": "Real"},
+                    }
+                }
+            }
+            (root / "Local State").write_text(json.dumps(state))
+            self.assertEqual(list_profiles(root), {"Profile 1": "Real"})
+
+    def test_non_list_ls_handlers_means_unknown_default_browser(self) -> None:
+        for handlers in ("x", {"a": 1}, 7, True):  # plists have no null type
+            with tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                plist = browser_launch._mac_launch_services_plist(home)
+                plist.parent.mkdir(parents=True)
+                plist.write_bytes(plistlib.dumps({"LSHandlers": handlers}))
+                self.assertIsNone(
+                    detect_default_browser_id(platform="darwin", home=home),
+                    msg=repr(handlers),
+                )
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            plist = browser_launch._mac_launch_services_plist(home)
+            plist.parent.mkdir(parents=True)
+            plist.write_bytes(plistlib.dumps(["not", "a", "dict"]))
+            self.assertIsNone(detect_default_browser_id(platform="darwin", home=home))
+
     def test_malformed_local_state_raises_launch_error(self) -> None:
         for bad in (
             {"profile": None},
