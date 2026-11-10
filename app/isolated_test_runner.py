@@ -26,7 +26,9 @@ class RealLaunchctlBlockedError(RuntimeError):
     """A test tried to run the real ``launchctl`` against the developer's launchd."""
 
 
-def _invoked_programs(args: object, executable: object = None) -> list[str]:
+def _invoked_programs(
+    args: object, executable: object = None, sep: str = os.sep
+) -> list[str]:
     """Return basenames of every word in ``args`` (plus ``executable``).
 
     This is a backstop against *accidental* calls, not a sandbox, so it is
@@ -39,12 +41,18 @@ def _invoked_programs(args: object, executable: object = None) -> list[str]:
 
     def add(value: object) -> None:
         if isinstance(value, (str, bytes, os.PathLike)):
-            names.append(os.path.basename(os.fsdecode(value)))
+            text = os.fsdecode(value)
+            if sep == "\\":
+                text = text.replace("\\", "/")
+            names.append(os.path.basename(text))
 
     def add_words(value: object, depth: int = 0) -> None:
         if not isinstance(value, (str, bytes, os.PathLike)):
             return
         text = os.fsdecode(value)
+        if sep == "\\":
+            # Windows paths: POSIX-mode shlex would eat the backslashes.
+            text = text.replace("\\", "/")
         lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         try:

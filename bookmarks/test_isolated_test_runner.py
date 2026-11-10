@@ -14,6 +14,7 @@ from django.test.runner import ParallelTestSuite
 from app.isolated_test_runner import (
     IsolatedStateRunner,
     RealLaunchctlBlockedError,
+    _invoked_programs,
     _LaunchctlGuardedPopen,
     reject_real_launchctl,
 )
@@ -70,6 +71,24 @@ class RejectRealLaunchctlTests(SimpleTestCase):
         ):
             with self.assertRaises(RealLaunchctlBlockedError, msg=repr(args)):
                 reject_real_launchctl(args)
+
+    def test_windows_separators_are_normalized(self) -> None:
+        # Simulates Windows path separators from any host: POSIX-mode shlex
+        # would otherwise swallow the backslashes ("\\bin\\launchctl").
+        for args in (
+            [r"\bin\launchctl"],
+            r"C:\tools\launchctl list",
+            [r"C:\tools\launchctl", "list"],
+        ):
+            self.assertIn(
+                "launchctl", _invoked_programs(args, sep="\\"), msg=repr(args)
+            )
+        self.assertIn(
+            "launchctl",
+            _invoked_programs(["true"], r"C:\tools\launchctl", sep="\\"),
+        )
+        # POSIX hosts keep backslash-as-escape behavior.
+        self.assertNotIn("launchctl", _invoked_programs([r"a\launchctl"], sep="/"))
 
     def test_rejects_shell_and_executable_bypasses(self) -> None:
         for args in (
