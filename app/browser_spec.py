@@ -23,6 +23,8 @@ def parse_browser_spec(raw: object) -> BrowserSpec | None:
     """Parse a server ``browser`` payload; ``None`` when absent or malformed."""
     if not isinstance(raw, dict):
         return None
+    if set(raw) - {"app", "profile"}:
+        return None  # unknown key (typo?): never guess, fail closed upstream
     app = raw.get("app")
     profile = raw.get("profile")
     if app is not None and (not isinstance(app, str) or app not in BROWSER_APPS):

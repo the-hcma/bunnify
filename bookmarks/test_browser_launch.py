@@ -41,6 +41,7 @@ LOCAL_STATE = {
             "Profile 1": {"name": "Work-BRK"},
             "Profile 2": {"name": "Dup"},
             "Profile 3": {"name": "Dup"},
+            "Stale": {"name": "Ghost"},
         }
     }
 }
@@ -48,6 +49,9 @@ LOCAL_STATE = {
 
 def _write_local_state(user_data: Path) -> None:
     user_data.mkdir(parents=True, exist_ok=True)
+    for directory in LOCAL_STATE["profile"]["info_cache"]:
+        if directory != "Stale":
+            (user_data / directory).mkdir(exist_ok=True)
     (user_data / "Local State").write_text(json.dumps(LOCAL_STATE), encoding="utf-8")
 
 
@@ -63,7 +67,15 @@ class BrowserSpecTests(SimpleTestCase):
         )
 
     def test_parse_rejects_malformed(self) -> None:
-        for raw in (None, {}, [], {"app": "firefox"}, {"profile": ""}, {"app": 3}):
+        for raw in (
+            None,
+            {},
+            [],
+            {"app": "firefox"},
+            {"profile": ""},
+            {"app": 3},
+            {"app": "edge", "profle": "Work"},
+        ):
             self.assertIsNone(parse_browser_spec(raw), msg=repr(raw))
 
 
@@ -171,6 +183,29 @@ class ProfileLookupTests(SimpleTestCase):
         with self.assertRaises(BrowserLaunchError) as ambiguous:
             resolve_profile_dir("edge", "Dup", profiles)
         self.assertIn("2 profiles named", str(ambiguous.exception))
+
+    def test_stale_cache_entry_is_not_a_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_local_state(Path(tmp))
+            profiles = list_profiles(Path(tmp))
+        self.assertNotIn("Stale", profiles)
+        with self.assertRaises(BrowserLaunchError) as ctx:
+            resolve_profile_dir("edge", "Ghost", profiles)
+        self.assertIn("no profile named", str(ctx.exception))
+
+    def test_malformed_local_state_raises_launch_error(self) -> None:
+        for bad in (
+            {"profile": None},
+            {"profile": []},
+            {"profile": {"info_cache": []}},
+            {"profile": {}},
+            [],
+            "text",
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / "Local State").write_text(json.dumps(bad))
+                with self.assertRaises(BrowserLaunchError, msg=repr(bad)):
+                    list_profiles(Path(tmp))
 
     def test_unreadable_local_state_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -391,7 +426,8 @@ class ClientParseTests(SimpleTestCase):
             self.assertIsNone(resolve_shortcut("brk", base_url="http://b").browser)
 
     def test_malformed_browser_block_fails_closed(self) -> None:
-        for bad in ({"app": "firefox"}, {"profile": ""}, {}, "edge", []):
+        typo = {"app": "edge", "profle": "Work"}
+        for bad in ({"app": "firefox"}, {"profile": ""}, {}, "edge", [], typo):
             payload = {"ok": True, "url": "https://x.test", "browser": bad}
             with patch("app.client._request_json", return_value=payload):
                 with self.assertRaises(ClientError, msg=repr(bad)):

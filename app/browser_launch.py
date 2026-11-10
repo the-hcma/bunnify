@@ -186,24 +186,30 @@ def user_data_dir(
 
 
 def list_profiles(user_data: Path) -> dict[str, str]:
-    """Map profile directory name to display name from ``Local State``."""
+    """Map profile directory name to display name from ``Local State``.
+
+    Entries whose directory is missing on disk are stale cache and ignored, so
+    a pin to one is an error rather than a silently created fresh profile.
+    Malformed state raises :class:`BrowserLaunchError`.
+    """
+    state_path = user_data / "Local State"
     try:
-        state = json.loads((user_data / "Local State").read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise BrowserLaunchError(
-            f"Cannot read browser profiles from {user_data / 'Local State'}: {exc}"
+            f"Cannot read browser profiles from {state_path}: {exc}"
         ) from exc
-    cache = (
-        state.get("profile", {}).get("info_cache", {})
-        if isinstance(state, dict)
-        else {}
-    )
+    section = state.get("profile") if isinstance(state, dict) else None
+    cache = section.get("info_cache") if isinstance(section, dict) else None
+    if not isinstance(cache, dict):
+        raise BrowserLaunchError(
+            f"Unexpected profile data in {state_path}: no profile.info_cache"
+        )
     profiles: dict[str, str] = {}
-    if isinstance(cache, dict):
-        for directory, info in cache.items():
-            name = info.get("name") if isinstance(info, dict) else None
-            if isinstance(name, str):
-                profiles[str(directory)] = name
+    for directory, info in cache.items():
+        name = info.get("name") if isinstance(info, dict) else None
+        if isinstance(name, str) and (user_data / str(directory)).is_dir():
+            profiles[str(directory)] = name
     return profiles
 
 
