@@ -90,10 +90,32 @@ class RejectRealLaunchctlTests(SimpleTestCase):
             # executable passed positionally: Popen(args, bufsize, executable)
             subprocess.Popen(["true"], -1, "/bin/launchctl")
 
+    def test_rejects_wrapper_and_list_shell_forms(self) -> None:
+        for args in (
+            ["launchctl list"],
+            ["/bin/sh", "-c", "/bin/launchctl list"],
+            ["bash", "-c", "cd /tmp && launchctl list"],
+            ["env", "launchctl", "list"],
+            ["sudo", "-n", "/bin/launchctl", "list"],
+            ["timeout", "5", "launchctl", "print", "gui/501/x"],
+        ):
+            with self.assertRaises(RealLaunchctlBlockedError, msg=repr(args)):
+                reject_real_launchctl(args)
+        with self.assertRaises(RealLaunchctlBlockedError):
+            subprocess.run(["launchctl list"], shell=True, check=False)
+        with self.assertRaises(RealLaunchctlBlockedError):
+            subprocess.run(["/bin/sh", "-c", "/bin/launchctl list"], check=False)
+
+    def test_is_conservative_about_the_bare_word(self) -> None:
+        # A backstop, not a sandbox: the bare word anywhere is blocked.
+        with self.assertRaises(RealLaunchctlBlockedError):
+            reject_real_launchctl(["echo", "launchctl"])
+
     def test_allows_everything_else(self) -> None:
         for args in (
             ["git", "status"],
-            ["echo", "launchctl"],
+            ["echo", "launchd"],
+            ["git", "commit", "-m", "tidy launchctl-free code"],
             "ls -l",
             [],
             "",

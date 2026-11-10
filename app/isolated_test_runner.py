@@ -24,11 +24,13 @@ class RealLaunchctlBlockedError(RuntimeError):
 
 
 def _invoked_programs(args: object, executable: object = None) -> list[str]:
-    """Return basenames of every program ``args``/``executable`` could start.
+    """Return basenames of every word in ``args`` (plus ``executable``).
 
-    A list/tuple runs its first element; a string is a shell command, so every
-    word is considered (``cd x && "/bin/launchctl" list`` must not slip through).
-    An ``executable=`` override is checked too, since it replaces argv[0].
+    This is a backstop against *accidental* calls, not a sandbox, so it is
+    deliberately conservative: every word of every argument counts, which
+    catches ``["launchctl", ...]``, ``"cd x && '/bin/launchctl' list"``,
+    ``["/bin/sh", "-c", "launchctl list"]``, ``env``/``sudo``/``timeout``
+    wrappers and an ``executable=`` override (which replaces argv[0]).
     """
     names: list[str] = []
 
@@ -36,9 +38,10 @@ def _invoked_programs(args: object, executable: object = None) -> list[str]:
         if isinstance(value, (str, bytes, os.PathLike)):
             names.append(os.path.basename(os.fsdecode(value)))
 
-    add(executable)
-    if isinstance(args, (str, bytes, os.PathLike)):
-        text = os.fsdecode(args)
+    def add_words(value: object) -> None:
+        if not isinstance(value, (str, bytes, os.PathLike)):
+            return
+        text = os.fsdecode(value)
         lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         try:
@@ -47,8 +50,13 @@ def _invoked_programs(args: object, executable: object = None) -> list[str]:
             words = text.split()
         for word in words:
             add(word)
-    elif isinstance(args, (list, tuple)) and args:
-        add(args[0])
+
+    add(executable)
+    if isinstance(args, (list, tuple)):
+        for part in args:
+            add_words(part)
+    else:
+        add_words(args)
     return names
 
 
