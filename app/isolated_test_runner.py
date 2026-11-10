@@ -109,6 +109,14 @@ class _LaunchctlGuardedPopen(subprocess.Popen):  # pyright: ignore[reportMissing
         executable = kwargs.get("executable")
         if executable is None and len(popenargs) > 1:
             executable = popenargs[1]
+        if not isinstance(args, (str, bytes, os.PathLike)):
+            # Popen itself does list(args), so any iterable is valid input.
+            # Materialize once and pass the same list on: a generator must be
+            # inspected without being exhausted before the real Popen sees it.
+            try:
+                args = list(args)
+            except TypeError:
+                pass  # not iterable (None, int): let Popen raise its own error
         reject_real_launchctl(args, executable)
         super().__init__(args, *popenargs, **kwargs)
 

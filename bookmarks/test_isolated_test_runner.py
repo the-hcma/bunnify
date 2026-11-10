@@ -116,6 +116,24 @@ class RejectRealLaunchctlTests(SimpleTestCase):
             # executable passed positionally: Popen(args, bufsize, executable)
             subprocess.Popen(["true"], -1, "/bin/launchctl")
 
+    def test_iterable_arguments_are_inspected_without_being_exhausted(self) -> None:
+        for make in (
+            lambda: iter(["launchctl", "list"]),
+            lambda: (word for word in ["launchctl", "list"]),
+            lambda: map(str, ["launchctl", "list"]),
+        ):
+            with self.assertRaises(RealLaunchctlBlockedError):
+                subprocess.run(make(), check=False)
+        # A harmless generator must reach the real Popen intact (not exhausted).
+        completed = subprocess.run(
+            (word for word in [sys.executable, "-c", "print('ok')"]),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        self.assertEqual(completed.stdout.strip(), "ok")
+
     def test_rejects_wrapper_and_list_shell_forms(self) -> None:
         for args in (
             ["launchctl list"],
