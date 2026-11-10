@@ -45,6 +45,7 @@ class ResolveResult:
     error: str | None = None
     kind: ResolveKind | None = None
     key: str | None = None
+    browser: dict[str, str] | None = None
 
 
 def encode_placeholder_value_at(
@@ -180,13 +181,16 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
         )
 
     url = bookmark.url
+    browser = bookmark.browser if bookmark.browser else None
     placeholders = list(dict.fromkeys(PLACEHOLDER_PATTERN.findall(url)))
     defaults = bookmark.defaults or {}
 
     if not placeholders:
         if param_string:
             return _too_many_parameters_error(key, placeholders, defaults)
-        return ResolveResult(ok=True, url=url, kind="bookmark", key=key)
+        return ResolveResult(
+            ok=True, url=url, kind="bookmark", key=key, browser=browser
+        )
 
     param_mapping: dict[str, str] = {}
 
@@ -256,4 +260,5 @@ def resolve_query(query: str, *, strict: bool = False) -> ResolveResult:
         url=substitute_placeholder_values(url, param_mapping),
         kind="bookmark",
         key=key,
+        browser=browser,
     )

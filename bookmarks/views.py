@@ -324,14 +324,15 @@ def api_resolve(request: HttpRequest) -> JsonResponse:
         )
 
     assert result.url is not None
-    return JsonResponse(
-        {
-            "ok": True,
-            "url": _absolute_resolve_url(request, result.url),
-            "kind": result.kind,
-            "key": result.key,
-        }
-    )
+    payload: dict[str, object] = {
+        "ok": True,
+        "url": _absolute_resolve_url(request, result.url),
+        "kind": result.kind,
+        "key": result.key,
+    }
+    if result.browser:
+        payload["browser"] = result.browser
+    return JsonResponse(payload)
 
 
 @never_cache

@@ -8,6 +8,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from jsonschema import ValidationError, validate
 
+from app.browser_spec import BROWSER_APPS
 from app.completion_spec import parse_complete_map, validate_complete_map
 from app.config import default_bookmarks_path
 from bookmarks.models import Bookmark
@@ -88,6 +89,18 @@ class Command(BaseCommand):
                             },
                             "additionalProperties": False,
                         },
+                        "browser": {
+                            "type": "object",
+                            "properties": {
+                                "app": {
+                                    "type": "string",
+                                    "enum": list(BROWSER_APPS),
+                                },
+                                "profile": {"type": "string", "minLength": 1},
+                            },
+                            "minProperties": 1,
+                            "additionalProperties": False,
+                        },
                         "defaults": {"type": "object"},
                         "description": {"type": "string"},
                         "url": {"type": "string"},
@@ -157,6 +170,7 @@ class Command(BaseCommand):
                     url=bookmark_data["url"],
                     old_url=old_url,
                     defaults=defaults,
+                    browser=bookmark_data.get("browser") or {},
                     complete={
                         param: {
                             "kind": spec.kind,

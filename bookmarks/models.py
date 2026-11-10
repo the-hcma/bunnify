@@ -16,6 +16,9 @@ class Bookmark(models.Model):
     complete = models.JSONField(
         default=dict, blank=True
     )  # Declared Tab-completion kinds per placeholder
+    browser = models.JSONField(
+        default=dict, blank=True
+    )  # Optional browser/profile pin: {"app": "edge", "profile": "Work"}
 
     class Meta:
         ordering = ["key"]
