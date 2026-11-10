@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.0](https://github.com/the-hcma/bunnify/compare/bunnify-v1.1.2...bunnify-v1.2.0) (2026-11-10)
+
+
+### Features
+
+* **ci:** run uv through the temp layout ([#596](https://github.com/the-hcma/bunnify/issues/596)) ([aa8d572](https://github.com/the-hcma/bunnify/commit/aa8d5723926396055a235969a502d56bfaebd6cd))
+* optional per-shortcut browser (Edge/Chrome) and profile ([#604](https://github.com/the-hcma/bunnify/issues/604)) ([e6ece5c](https://github.com/the-hcma/bunnify/commit/e6ece5c1593c395926f2bbca905d8870bd9882ba))
+
+
+### Bug Fixes
+
+* **test:** keep the test suite off the developer's real launchd and HOME ([#603](https://github.com/the-hcma/bunnify/issues/603)) ([05f2cdf](https://github.com/the-hcma/bunnify/commit/05f2cdfa6e3764d8830c7f7ff8b37b723c84c452))
+
+
+### Documentation
+
+* **agents:** point the merge instructions at scripts/dev/merge-stack ([#586](https://github.com/the-hcma/bunnify/issues/586)) ([30471a2](https://github.com/the-hcma/bunnify/commit/30471a25cc23b3e6d9c4c6d535dcc44a08097924))
+* **agents:** say merge-stack takes the top PR of a stack and forbid a hand-run gh stack merge ([#587](https://github.com/the-hcma/bunnify/issues/587)) ([586ae6a](https://github.com/the-hcma/bunnify/commit/586ae6a48b90fffd9be176661d3eb004bd44d9ca))
+
 ## [1.1.2](https://github.com/the-hcma/bunnify/compare/bunnify-v1.1.1...bunnify-v1.1.2) (2026-10-11)
 
 
