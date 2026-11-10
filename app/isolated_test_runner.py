@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -17,6 +18,8 @@ XDG_DATA_HOME_ENV_VAR = "XDG_DATA_HOME"
 _DATA_VARS = (DATA_DIR_ENV_VAR, XDG_DATA_HOME_ENV_VAR)
 _HOME_VARS = ("HOME", "USERPROFILE")
 _BLOCKED_PROGRAMS = frozenset({"launchctl"})
+_MAX_SHELL_NESTING = 4
+_SHELL_SYNTAX = re.compile(r"[\s;&|<>()`$\"']")
 
 
 class RealLaunchctlBlockedError(RuntimeError):
@@ -38,7 +41,7 @@ def _invoked_programs(args: object, executable: object = None) -> list[str]:
         if isinstance(value, (str, bytes, os.PathLike)):
             names.append(os.path.basename(os.fsdecode(value)))
 
-    def add_words(value: object) -> None:
+    def add_words(value: object, depth: int = 0) -> None:
         if not isinstance(value, (str, bytes, os.PathLike)):
             return
         text = os.fsdecode(value)
@@ -50,6 +53,13 @@ def _invoked_programs(args: object, executable: object = None) -> list[str]:
             words = text.split()
         for word in words:
             add(word)
+            # `sh -c 'launchctl list'` leaves one nested-quoted word: look inside.
+            if (
+                depth < _MAX_SHELL_NESTING
+                and word != text
+                and _SHELL_SYNTAX.search(word)
+            ):
+                add_words(word, depth + 1)
 
     add(executable)
     if isinstance(args, (list, tuple)):

@@ -106,6 +106,18 @@ class RejectRealLaunchctlTests(SimpleTestCase):
         with self.assertRaises(RealLaunchctlBlockedError):
             subprocess.run(["/bin/sh", "-c", "/bin/launchctl list"], check=False)
 
+    def test_rejects_nested_quoted_shell_commands(self) -> None:
+        for args in (
+            "sh -c 'launchctl list'",
+            "bash -c \"cd /tmp && '/bin/launchctl' list\"",
+            ["/bin/sh", "-c", "sh -c 'launchctl list'"],
+            "sh -c \"sh -c 'env launchctl list'\"",
+        ):
+            with self.assertRaises(RealLaunchctlBlockedError, msg=repr(args)):
+                reject_real_launchctl(args)
+        with self.assertRaises(RealLaunchctlBlockedError):
+            subprocess.run("sh -c 'launchctl list'", shell=True, check=False)
+
     def test_is_conservative_about_the_bare_word(self) -> None:
         # A backstop, not a sandbox: the bare word anywhere is blocked.
         with self.assertRaises(RealLaunchctlBlockedError):
