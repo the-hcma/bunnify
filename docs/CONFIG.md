@@ -88,7 +88,7 @@ Without a `browser` block a shortcut opens in the system default browser with it
 
 | Set | Opens in |
 |-----|----------|
-| `app` only | that browser, default profile |
+| `app` only | that browser, in the profile it opens by default (Bunnify passes no profile, so this is usually the last-used one) |
 | `app` + `profile` | that browser and profile |
 | `profile` only | the system default browser, which must be Edge or Chrome, in that profile |
 
