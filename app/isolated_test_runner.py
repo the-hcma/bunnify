@@ -40,6 +40,7 @@ def _invoked_programs(
     names: list[str] = []
 
     def add(value: object) -> None:
+        """Record the program name of one path-like value (separators normalized)."""
         if isinstance(value, (str, bytes, os.PathLike)):
             text = os.fsdecode(value)
             if sep == "\\":
@@ -47,6 +48,7 @@ def _invoked_programs(
             names.append(os.path.basename(text))
 
     def add_words(value: object, depth: int = 0) -> None:
+        """Record each shell word of ``value``, recursing into nested commands."""
         if not isinstance(value, (str, bytes, os.PathLike)):
             return
         text = os.fsdecode(value)
@@ -61,6 +63,10 @@ def _invoked_programs(
             words = text.split()
         for word in words:
             add(word)
+            # shlex leaves backticks and `$(` attached to the word: split those too.
+            for part in _SHELL_SYNTAX.split(word):
+                if part:
+                    add(part)
             # `sh -c 'launchctl list'` leaves one nested-quoted word: look inside.
             if (
                 depth < _MAX_SHELL_NESTING
@@ -98,6 +104,7 @@ class _LaunchctlGuardedPopen(subprocess.Popen):  # pyright: ignore[reportMissing
     """
 
     def __init__(self, args: Any, *popenargs: Any, **kwargs: Any) -> None:
+        """Refuse to start ``launchctl``; otherwise behave like ``subprocess.Popen``."""
         # Popen(args, bufsize, executable, ...): executable may be positional.
         executable = kwargs.get("executable")
         if executable is None and len(popenargs) > 1:
@@ -152,6 +159,7 @@ class IsolatedStateRunner(DiscoverRunner):
     parallel_test_suite = _GuardedParallelTestSuite
 
     def setup_test_environment(self, **kwargs: Any) -> None:
+        """Isolate data dir and HOME, and install the launchctl guard (#527, #602)."""
         super().setup_test_environment(**kwargs)
         self._state_dir = tempfile.TemporaryDirectory(prefix="bunnify-test-data-")
         self._home_dir = tempfile.TemporaryDirectory(prefix="bunnify-test-home-")
@@ -165,6 +173,7 @@ class IsolatedStateRunner(DiscoverRunner):
         self._previous_popen = install_launchctl_guard()
 
     def teardown_test_environment(self, **kwargs: Any) -> None:
+        """Restore the environment and ``subprocess.Popen``; remove the temp dirs."""
         subprocess.Popen = self._previous_popen  # type: ignore[misc]
         for name, value in self._previous.items():
             if value is None:

@@ -96,6 +96,12 @@ class RejectRealLaunchctlTests(SimpleTestCase):
             "'launchctl' list",
             "cd /tmp && launchctl list",
             "true; /bin/launchctl list",
+            "true;launchctl list",
+            "cd /tmp&&launchctl list",
+            "$(launchctl list)",
+            "`launchctl list`",
+            "echo `launchctl`",
+            "(launchctl list)",
             'launchctl "unbalanced',
         ):
             with self.assertRaises(RealLaunchctlBlockedError, msg=repr(args)):
