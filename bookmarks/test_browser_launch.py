@@ -390,6 +390,13 @@ class ClientParseTests(SimpleTestCase):
         with patch("app.client._request_json", return_value=payload):
             self.assertIsNone(resolve_shortcut("brk", base_url="http://b").browser)
 
+    def test_malformed_browser_block_fails_closed(self) -> None:
+        for bad in ({"app": "firefox"}, {"profile": ""}, {}, "edge", []):
+            payload = {"ok": True, "url": "https://x.test", "browser": bad}
+            with patch("app.client._request_json", return_value=payload):
+                with self.assertRaises(ClientError, msg=repr(bad)):
+                    resolve_shortcut("brk", base_url="http://b")
+
 
 class ServerBrowserTests(TestCase):
     def setUp(self) -> None:

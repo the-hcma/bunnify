@@ -175,11 +175,19 @@ def resolve_shortcut(
     url = payload.get("url")
     if not isinstance(url, str) or not url:
         raise ClientError("Resolve response missing url")
+    raw_browser = payload.get("browser")
+    browser = parse_browser_spec(raw_browser)
+    if raw_browser is not None and browser is None:
+        # Fail closed: a pinned shortcut must never silently open elsewhere.
+        raise ClientError(
+            "Resolve response has an invalid browser block "
+            f"{raw_browser!r}; refusing to open in the default browser"
+        )
     return ResolvedShortcut(
         url=url,
         kind=payload.get("kind") if isinstance(payload.get("kind"), str) else None,
         key=payload.get("key") if isinstance(payload.get("key"), str) else None,
-        browser=parse_browser_spec(payload.get("browser")),
+        browser=browser,
     )
 
 
