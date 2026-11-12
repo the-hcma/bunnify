@@ -7,6 +7,8 @@ from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
+import click
+
 from app.browser_default import (
     DEFAULT_BROWSER_KEY,
     DEFAULT_BROWSER_PROFILE_KEY,
@@ -39,6 +41,7 @@ NO_PROFILES_PROMPT = "c to clear the saved default, Enter to keep it: "
 PICK_PROMPT = "Choose a default profile [1-{count}], Enter to cancel: "
 CLEARABLE_PROMPTS = (CHANGE_PROMPT, NO_PROFILES_PROMPT)
 ABORTED = "aborted"
+MAX_INVALID_ANSWERS = 5
 
 Choice = tuple[str, ProfileInfo]
 
@@ -340,11 +343,19 @@ def _ask_for_profile(
         if names[(app, info.name)] > 1:
             marker += colors.warn("  (name shared; rename it in the browser first)")
         log(_format_choice(number, app, info, colors, marker))
+    invalid = 0
     while True:
+        if invalid >= MAX_INVALID_ANSWERS:
+            # Bounded retries: a prompt that keeps returning unusable answers
+            # (a stuck wrapper, piped input) must not spin forever.
+            log(colors.warn("Too many invalid answers; nothing was changed."))
+            return ABORTED
         try:
             raw = ask(prompt.format(count=len(choices))).strip().lower()
-        except EOFError, KeyboardInterrupt:
-            return ABORTED  # an abort is not the same answer as "decide later"
+        except EOFError, KeyboardInterrupt, click.Abort:
+            # click.prompt turns Ctrl-C and EOF into click.Abort. An abort is
+            # not the same answer as "decide later".
+            return ABORTED
         if choices and raw.isdecimal() and 1 <= int(raw) <= len(choices):
             app, info = choices[int(raw) - 1]
             if names[(app, info.name)] > 1:
@@ -355,12 +366,14 @@ def _ask_for_profile(
                         "browser so Bunnify can tell them apart."
                     )
                 )
+                invalid += 1
                 continue
             return (app, info)
         if raw == "" or (raw == "c" and prompt in CLEARABLE_PROMPTS):
             return raw
         if raw == "n" and prompt == CHOOSE_PROMPT:
             return raw
+        invalid += 1
         log(
             colors.warn(
                 f"Enter a number from 1 to {len(choices)}."

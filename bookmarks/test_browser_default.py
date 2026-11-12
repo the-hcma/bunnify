@@ -1876,6 +1876,101 @@ class ProfileOnlyMarkerTests(SimpleTestCase):
         self.assertNotIn("default for unpinned shortcuts", commons)
 
 
+class ReviewFollowUpTests(SimpleTestCase):
+    def _both_broken(self, home: Path) -> None:
+        for name in ("Microsoft Edge", "Google/Chrome"):
+            state = home / "Library/Application Support" / name
+            state.mkdir(parents=True)
+            (state / "Local State").write_text("{not json", encoding="utf-8")
+
+    def test_every_discovery_error_is_reported_when_no_profiles_are_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._both_broken(home)
+            reported: list[BrowserLaunchError] = []
+            with self.assertRaises(BrowserLaunchError) as ctx:
+                installed_browser_profiles(
+                    platform="darwin",
+                    home=home,
+                    find_app=lambda _a: "/Applications/X",
+                    on_error=reported.append,
+                )
+        self.assertIn("Microsoft Edge", str(ctx.exception))
+        self.assertEqual(len(reported), 1)
+        self.assertIn("Chrome", str(reported[0]))
+
+    def test_without_a_callback_the_errors_are_combined_into_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._both_broken(home)
+            with self.assertRaises(BrowserLaunchError) as ctx:
+                installed_browser_profiles(
+                    platform="darwin", home=home, find_app=lambda _a: "/Applications/X"
+                )
+        text = str(ctx.exception)
+        self.assertIn("Microsoft Edge", text)
+        self.assertIn("Chrome", text)
+
+    def test_a_prompt_that_never_gives_a_usable_answer_gives_up(self) -> None:
+        lines: list[str] = []
+        calls: list[str] = []
+
+        def stuck(message: str) -> str:
+            calls.append(message)
+            return "y"
+
+        with (
+            patch("app.browsers.sys.platform", "darwin"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "config.toml"
+            offer_default_profile(
+                ask=stuck,
+                log=lines.append,
+                colors=COLORS,
+                env_path=path,
+                found=EDGE,
+            )
+            self.assertFalse(path.exists())
+        self.assertEqual(len(calls), 5)
+        self.assertIn("Too many invalid answers", "\n".join(lines))
+
+    def test_click_abort_cancels_instead_of_aborting_the_command(self) -> None:
+        import click
+
+        for where in ("installer", "command"):
+            with self.subTest(where=where):
+                lines: list[str] = []
+
+                def aborted(_m: str) -> str:
+                    raise click.Abort()
+
+                with (
+                    patch("app.browsers.sys.platform", "darwin"),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    path = Path(tmp) / "config.toml"
+                    if where == "installer":
+                        offer_default_profile(
+                            ask=aborted,
+                            log=lines.append,
+                            colors=COLORS,
+                            env_path=path,
+                            found=EDGE,
+                        )
+                    else:
+                        code = run_browsers(
+                            ["default"],
+                            env_path=path,
+                            print_fn=lines.append,
+                            prompt_fn=aborted,
+                            found=EDGE,
+                        )
+                        self.assertEqual(code, 1)
+                    self.assertFalse(path.exists())
+                self.assertIn("Cancelled; nothing was changed", "\n".join(lines))
+
+
 class NoProfilesFoundTests(SimpleTestCase):
     def test_the_saved_default_is_still_shown(self) -> None:
         lines: list[str] = []

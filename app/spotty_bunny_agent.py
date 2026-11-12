@@ -1087,6 +1087,11 @@ def _browser_profiles_lines(interpreter: Path, *, configured: bool) -> list[str]
     ]
 
 
+def _probe_configured_browser_profiles(interpreter: Path) -> bool | None:
+    """The real probe, limited to the browser the configured default uses."""
+    return _probe_browser_profiles(interpreter, browser=_default_profile_browser())
+
+
 def _check_browser_profiles(
     interpreter: Path,
     *,
@@ -1098,16 +1103,38 @@ def _check_browser_profiles(
     Like the TCC probe it starts a launchd job, so it only runs for real when
     the caller did not inject a TCC probe (tests and dry runs stay offline).
     """
-    runner = probe
-    if runner is None:
-        if probe_tcc is not None:
-            return None
-        runner = _probe_browser_profiles
+    if probe is None and probe_tcc is not None:
+        return None
+    run = probe if probe is not None else _probe_configured_browser_profiles
     try:
-        state = runner(interpreter)
+        state = run(interpreter)
     except OSError, subprocess.SubprocessError, ValueError:
         return "unknown"
     return "n/a" if state is None else ("yes" if state else "no")
+
+
+def _default_profile_browser() -> str | None:
+    """The browser the configured default profile lives in, if it can be told.
+
+    The default's own ``default_browser``, else the system default browser when
+    that is Edge or Chrome; ``None`` (check both) when neither is known.
+    """
+    from app.browser_default import load_default_browser
+    from app.browser_launch import (
+        BrowserLaunchError,
+        browser_from_identifier,
+        detect_default_browser_id,
+    )
+
+    try:
+        spec = load_default_browser()
+    except BrowserLaunchError, OSError, ValueError:
+        return None
+    if spec is None:
+        return None
+    if spec.app is not None:
+        return spec.app
+    return browser_from_identifier(detect_default_browser_id())
 
 
 def _default_profile_configured() -> bool:
@@ -1394,16 +1421,22 @@ def _run_tcc_probe(
 def _probe_browser_profiles(
     interpreter: Path,
     *,
+    browser: str | None = None,
     launchctl: LaunchctlFn | None = None,
 ) -> bool | None:
-    """Can *interpreter*, run by launchd, read the browsers' profile lists?
+    """Can *interpreter*, run by launchd, read the browser's profile list?
 
-    ``True`` when it can, ``False`` when macOS blocks it (Full Disk Access is
-    missing for that executable), ``None`` when no Edge/Chrome profile data
-    exists, so there is nothing to read.
+    ``browser`` (``edge``/``chrome``) limits the check to the browser the
+    configured default uses, so a denial in an unrelated browser is not blamed
+    on it; ``None`` checks both. ``True`` when it can read, ``False`` when macOS
+    blocks it (Full Disk Access is missing for that executable), ``None`` when
+    there is no Edge/Chrome profile data to read.
     """
     payload = _run_launchd_probe(
-        interpreter, _PROFILES_PROBE, argument="0", launchctl=launchctl
+        interpreter,
+        _PROFILES_PROBE,
+        argument=browser if browser in ("edge", "chrome") else "all",
+        launchctl=launchctl,
     )
     value = payload.get("browser_profiles") if isinstance(payload, dict) else None
     return value if isinstance(value, bool) else None
@@ -1629,12 +1662,17 @@ import json
 import os
 import sys
 
-bases = (
-    "~/Library/Application Support/Microsoft Edge",
-    "~/Library/Application Support/Google/Chrome",
-)
+bases = {
+    "edge": "~/Library/Application Support/Microsoft Edge",
+    "chrome": "~/Library/Application Support/Google/Chrome",
+}
+# argv[1] names one browser to check (the one the configured default uses);
+# anything else checks both.
+wanted = sys.argv[1] if sys.argv[1] in bases else None
 blocked = readable = False
-for base in bases:
+for name, base in bases.items():
+    if wanted is not None and name != wanted:
+        continue
     path = os.path.join(os.path.expanduser(base), "Local State")
     try:
         with open(path, "rb") as handle:

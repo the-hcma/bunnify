@@ -346,7 +346,13 @@ def installed_browser_profiles(
         if profiles:
             found[app] = profiles
     if errors and not found:
-        raise errors[0]
+        first, others = errors[0], errors[1:]
+        if on_error is not None:
+            for error in others:
+                on_error(error)  # the first one is raised, so none is lost
+        elif others:
+            raise type(first)(" | ".join(str(error) for error in errors)) from first
+        raise first
     if on_error is not None:
         for error in errors:
             on_error(error)

@@ -31,6 +31,11 @@ class OnboardTests(SimpleTestCase):
         # Never read this machine's real pipx install: tests that want a git
         # install patch their own spec.
         self.enterContext(patch("app.onboard.pipx_vcs_install_spec", return_value=None))
+        # Never read the developer's real Edge/Chrome profiles: the optional
+        # profile step would otherwise prompt on machines that have some.
+        self.enterContext(
+            patch("app.browsers.installed_browser_profiles", return_value={})
+        )
 
     def test_detect_install_state_marks_upgrade_when_pypi_is_newer(self) -> None:
         with (

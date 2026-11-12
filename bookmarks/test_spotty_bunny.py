@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -1903,6 +1904,111 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             run(PermissionError(errno.EPERM, "Operation not permitted")), False
         )
         self.assertIsNone(run(PermissionError(errno.EACCES, "Permission denied")))
+
+    def test_browser_profiles_probe_can_check_just_one_browser(self) -> None:
+        import errno
+
+        from app.spotty_bunny_agent import _PROFILES_PROBE
+
+        def run(argument: str) -> object:
+            real_open = open
+
+            def fake_open(path: object, *args: object, **kwargs: object) -> object:
+                text = str(path)
+                if "Google/Chrome" in text and "Local State" in text:
+                    raise PermissionError(errno.EPERM, "Operation not permitted")
+                if "Microsoft Edge" in text and "Local State" in text:
+                    return io.BytesIO(b"{}")
+                return real_open(path, *args, **kwargs)  # type: ignore[call-overload]
+
+            with TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                out = home / "out.json"
+                with (
+                    patch.dict(os.environ, {"HOME": str(home)}),
+                    patch.object(sys, "argv", ["probe", argument, str(out)]),
+                    patch("builtins.open", fake_open),
+                ):
+                    exec(  # noqa: S102
+                        compile(_PROFILES_PROBE, "probe", "exec"),
+                        {"__name__": "probe"},
+                    )
+                return json.loads(out.read_text(encoding="utf-8"))["browser_profiles"]
+
+        # Edge is readable, Chrome is denied: only the browser asked about counts.
+        self.assertIs(run("edge"), True)
+        self.assertIs(run("chrome"), False)
+        self.assertIs(run("all"), False)
+        self.assertIs(run("0"), False)
+
+    def test_browser_profiles_probe_passes_the_browser_to_the_job(self) -> None:
+        from app.spotty_bunny_agent import _probe_browser_profiles
+
+        for browser, expected in (
+            ("edge", "edge"),
+            ("chrome", "chrome"),
+            (None, "all"),
+        ):
+            with self.subTest(browser=browser):
+                ctl = _ProbeLaunchctl('{"browser_profiles": true}')
+                _probe_browser_profiles(
+                    Path("/opt/py/python"), browser=browser, launchctl=ctl
+                )
+                assert ctl.program is not None
+                self.assertEqual(ctl.program[3], expected)
+
+    def test_the_real_check_asks_about_the_configured_defaults_browser(self) -> None:
+        from app.spotty_bunny_agent import _check_browser_profiles
+
+        with (
+            patch(
+                "app.spotty_bunny_agent._default_profile_browser", return_value="edge"
+            ),
+            patch(
+                "app.spotty_bunny_agent._probe_browser_profiles", return_value=True
+            ) as probe,
+        ):
+            state = _check_browser_profiles(
+                Path("/opt/py/python"), probe=None, probe_tcc=None
+            )
+        self.assertEqual(state, "yes")
+        self.assertEqual(probe.call_args.kwargs["browser"], "edge")
+
+    def test_the_configured_default_browser_comes_from_config_then_the_system(
+        self,
+    ) -> None:
+        from app.browser_spec import BrowserSpec
+        from app.spotty_bunny_agent import _default_profile_browser
+
+        with patch(
+            "app.browser_default.load_default_browser",
+            return_value=BrowserSpec("chrome", "W"),
+        ):
+            self.assertEqual(_default_profile_browser(), "chrome")
+        with (
+            patch(
+                "app.browser_default.load_default_browser",
+                return_value=BrowserSpec(profile="W"),
+            ),
+            patch(
+                "app.browser_launch.detect_default_browser_id",
+                return_value="com.microsoft.edgemac",
+            ),
+        ):
+            self.assertEqual(_default_profile_browser(), "edge")
+        with (
+            patch(
+                "app.browser_default.load_default_browser",
+                return_value=BrowserSpec(profile="W"),
+            ),
+            patch(
+                "app.browser_launch.detect_default_browser_id",
+                return_value="com.apple.Safari",
+            ),
+        ):
+            self.assertIsNone(_default_profile_browser())
+        with patch("app.browser_default.load_default_browser", return_value=None):
+            self.assertIsNone(_default_profile_browser())
 
     def test_install_warns_but_still_installs_when_default_profile_is_blocked(
         self,
