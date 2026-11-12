@@ -55,29 +55,47 @@ def effective_families(values: list[str]) -> tuple[list[str], bool]:
     """Families left by repeated ``RestrictAddressFamilies=`` lines.
 
     Mirrors systemd's ``config_parse_address_families`` in ``src/core/load-fragment.c``
-    (read at v255) and ``systemd.exec(5)`` for ``RestrictAddressFamilies=``. The
-    parser's warnings are not modelled, only its effect: the lines
-    accumulate; an empty assignment resets the list; a line that is exactly
-    ``none`` (case-sensitive, and only as the whole value) resets it to an empty
-    allow-list, which denies every family; a leading ``~`` makes a deny-list; and
-    a word that is not an address family name is ignored (systemd logs a
-    warning), so ``AF_UNIX none`` is just ``AF_UNIX``, and a ``~`` anywhere but
-    the start of the value is part of an unknown word and is ignored too.
-    Returns ``(families, is_deny_list)``.
+    (read at v255) and ``systemd.exec(5)``. The parser's warnings are not
+    modelled, only its effect:
+
+    - an empty assignment resets everything, so nothing is restricted;
+    - a line that is exactly ``none`` (case-sensitive, whole value) leaves an empty
+      allow-list, which denies every family;
+    - the *first* list sets the mode: a leading ``~`` makes it a deny-list,
+      otherwise an allow-list. Later lists keep that mode and add families to it,
+      or, when their own prefix disagrees with the mode, remove them from it (so
+      ``AF_UNIX AF_INET`` followed by ``~AF_INET`` leaves just ``AF_UNIX``);
+    - a word that is not an address family name is ignored (systemd logs a
+      warning), so ``AF_UNIX none`` is just ``AF_UNIX``, and a ``~`` anywhere but
+      the start of the value belongs to an unknown word and is ignored too.
+
+    Returns ``(families, is_deny_list)``; nothing restricted is ``([], False)``.
     """
-    families: list[str] = []
-    deny = False
+    families: list[str] | None = None  # None: no restriction at all
+    allow_list = True
     for value in values:
         text = value.strip()
-        if not text or text == "none":
-            families, deny = [], False
+        if not text:
+            families, allow_list = None, True
             continue
-        tokens = text.split()
-        if tokens[0].startswith("~"):
-            deny = True
-            tokens[0] = tokens[0][1:]
-        families.extend(token for token in tokens if token.startswith("AF_"))
-    return families, deny
+        if text == "none":
+            families, allow_list = [], True
+            continue
+        invert = text.startswith("~")
+        words = (text[1:] if invert else text).split()
+        if families is None:
+            families, allow_list = [], not invert
+        for word in words:
+            if not word.startswith("AF_"):
+                continue
+            if (not invert) == allow_list:
+                if word not in families:
+                    families.append(word)
+            elif word in families:
+                families.remove(word)
+    if families is None:
+        return [], False
+    return families, not allow_list
 
 
 def allows_server_network(values: list[str]) -> bool:
@@ -139,6 +157,27 @@ class SandboxingHelperTests(SimpleTestCase):
         self.assertEqual(([], True), effective_families(["~none"]))
         # "~" only means a deny-list as the first character of the whole value.
         self.assertEqual((["AF_UNIX"], False), effective_families(["AF_UNIX ~AF_INET"]))
+
+    def test_the_first_assignment_sets_the_mode_for_later_ones(self) -> None:
+        # A later "~AF_PACKET" removes it from the allow-list; it does not turn the
+        # policy into a deny-list, so the three families stay allowed.
+        values = ["AF_UNIX AF_INET AF_INET6", "~AF_PACKET"]
+        self.assertEqual(
+            (["AF_UNIX", "AF_INET", "AF_INET6"], False), effective_families(values)
+        )
+        self.assertTrue(allows_server_network(values))
+        # Removing a required family from the allow-list does break the policy.
+        self.assertFalse(
+            allows_server_network(["AF_UNIX AF_INET AF_INET6", "~AF_INET6"])
+        )
+        self.assertEqual(
+            (["AF_UNIX"], False), effective_families(["AF_UNIX AF_INET", "~AF_INET"])
+        )
+        # A deny-list stays a deny-list, and a plain list after it removes from it.
+        self.assertEqual((["AF_PACKET"], True), effective_families(["~AF_PACKET"]))
+        self.assertEqual(([], True), effective_families(["~AF_PACKET", "AF_PACKET"]))
+        # An allow-list entry added after "none" starts from an empty list.
+        self.assertEqual((["AF_UNIX"], False), effective_families(["none", "AF_UNIX"]))
 
     def test_a_later_none_denies_every_family(self) -> None:
         self.assertEqual(([], False), effective_families(["AF_UNIX", "none"]))
