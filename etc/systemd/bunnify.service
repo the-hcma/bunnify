@@ -18,5 +18,32 @@ StandardOutput=append:%h/scratch/bunnify/bunnify.log
 StandardError=append:%h/scratch/bunnify/bunnify.log
 ExecStartPost=/usr/bin/curl --silent --fail --max-time 5 --retry 12 --retry-delay 1 --retry-connrefused http://127.0.0.1:8001/health
 
+# Baseline hardening (issue #581). This is a systemd *user* unit, so only the
+# directives that need neither privileges nor a mount namespace are enabled.
+#   NoNewPrivileges      the server and its children can never gain privileges
+#                        (setuid binaries, file capabilities).
+#   RestrictAddressFamilies
+#                        the server needs a TCP listener, HTTPS calls to
+#                        api.github.com and pypi.org, and name resolution; the
+#                        health-check curl above needs the same, so Unix, IPv4
+#                        and IPv6 sockets are allowed. A search of the server
+#                        code (app/) finds no AF_NETLINK, packet or raw sockets:
+#                        it uses the socket module for port and host-name
+#                        checks and urllib for HTTPS. Libraries and helper
+#                        processes were not audited. If one ever needs another
+#                        family (for example AF_NETLINK), what breaks depends on
+#                        the caller (an error, or quiet degradation); look in
+#                        `journalctl --user -u bunnify` and add the family here.
+# Deliberately not set, because they would need unprivileged user namespaces
+# (often disabled or restricted for user units, for example Ubuntu 24.04, where
+# the unit then fails with status=226/NAMESPACE) or would break the service:
+# ProtectSystem=, ProtectHome= (the data, logs and bookmarks live under $HOME),
+# PrivateTmp=, and CapabilityBoundingSet= (an unprivileged service's
+# effective and permitted capability sets are already empty, and
+# NoNewPrivileges stops it gaining any, so it would add little). See
+# systemd.exec(5).
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
 [Install]
 WantedBy=default.target
