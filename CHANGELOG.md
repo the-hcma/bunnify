@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/the-hcma/bunnify/compare/bunnify-v1.2.0...bunnify-v1.3.0) (2026-11-12)
+
+
+### Features
+
+* default browser profile with per-machine defaults and macOS profile access checks ([#609](https://github.com/the-hcma/bunnify/issues/609)) ([287dbfd](https://github.com/the-hcma/bunnify/commit/287dbfd2b9b432aac7943c99b2e2efa25e7a4107))
+
 ## [1.2.0](https://github.com/the-hcma/bunnify/compare/bunnify-v1.1.2...bunnify-v1.2.0) (2026-11-10)
 
 
