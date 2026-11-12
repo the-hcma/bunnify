@@ -151,6 +151,9 @@ def run_browsers(
         log(colors.err(f"error: {exc}"))
         return 1
     current = resolved.spec
+    # What is saved in the scope being edited (an invalid value counts), so it
+    # can always be cleared even when no profile can be listed.
+    saved = _scope_current(resolved, scope)
     if resolved.everywhere_error is not None:
         log(
             colors.warn(
@@ -192,15 +195,16 @@ def run_browsers(
                     f"({_where(resolved)})"
                 )
             return 1
-        if current is None:
+        if saved is None:
             return 1
         # The saved default may be the very thing that no longer opens, so
         # still offer to clear it even though discovery failed.
         profiles = {}
         discovery_failed = True
-    if choosing and (profiles or current is not None):
+    if choosing and (profiles or saved is not None):
         # With a saved default we still offer "clear", so an unusable default
-        # (its browser or profile is gone) can always be removed.
+        # (its browser or profile is gone, or the value is invalid) can always
+        # be removed.
         return _choose_default(
             profiles,
             resolved,

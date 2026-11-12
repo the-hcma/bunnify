@@ -1838,6 +1838,81 @@ class InvalidThisHostDefaultTests(SimpleTestCase):
         self.assertIn('default_browser_profile = "Everywhere"', saved)
 
 
+class ClearWhenNothingCanBeListedTests(SimpleTestCase):
+    GLOBAL_TYPO = 'default_browser = "edeg"\n'
+    HOST_TYPO = f'[hosts."{HOST}"]\ndefault_browser = "edeg"\n'
+
+    def _run(
+        self, args: list[str], text: str, *, discovery: str
+    ) -> tuple[int, str, str]:
+        """Run with discovery returning nothing (``empty``) or failing (``failed``)."""
+        lines: list[str] = []
+        answers = ["c"]
+        listing = (
+            patch(
+                "app.browsers.installed_browser_profiles",
+                side_effect=BrowserProfilesAccessError("blocked"),
+            )
+            if discovery == "failed"
+            else patch("app.browsers.installed_browser_profiles", return_value={})
+        )
+        with (
+            patch("app.browsers.sys.platform", "darwin"),
+            listing,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "config.toml"
+            path.write_text(text, encoding="utf-8")
+            code = run_browsers(
+                args,
+                env_path=path,
+                print_fn=lines.append,
+                prompt_fn=lambda _m: answers.pop(0) if answers else "",
+            )
+            saved = path.read_text(encoding="utf-8")
+        return code, "\n".join(lines), saved
+
+    def test_an_invalid_all_hosts_value_can_be_cleared_when_no_profiles_exist(
+        self,
+    ) -> None:
+        code, out, saved = self._run(
+            ["default", "global"], self.GLOBAL_TYPO, discovery="empty"
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("edeg", saved)
+        self.assertIn("Cleared the default for all hosts", out)
+
+    def test_an_invalid_all_hosts_value_can_be_cleared_when_discovery_fails(
+        self,
+    ) -> None:
+        code, out, saved = self._run(
+            ["default", "global"], self.GLOBAL_TYPO, discovery="failed"
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("edeg", saved)
+        self.assertIn("Could not list profiles", out)
+
+    def test_an_invalid_host_value_can_be_cleared_when_no_profiles_exist(self) -> None:
+        code, out, saved = self._run(["default"], self.HOST_TYPO, discovery="empty")
+        self.assertEqual(code, 0)
+        self.assertNotIn("edeg", saved)
+
+    def test_an_invalid_host_value_can_be_cleared_when_discovery_fails(self) -> None:
+        code, out, saved = self._run(["default"], self.HOST_TYPO, discovery="failed")
+        self.assertEqual(code, 0)
+        self.assertNotIn("edeg", saved)
+
+    def test_a_host_with_only_an_inherited_default_has_nothing_to_clear(self) -> None:
+        code, out, saved = self._run(
+            ["default"],
+            'default_browser = "edge"\ndefault_browser_profile = "X"\n',
+            discovery="empty",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("No Edge or Chrome profiles found", out)
+        self.assertIn("default_browser", saved)
+
+
 class ProfileOnlyMarkerTests(SimpleTestCase):
     def test_a_profile_only_default_is_marked_current(self) -> None:
         lines: list[str] = []
