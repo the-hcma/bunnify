@@ -384,6 +384,22 @@ class OnboardTests(SimpleTestCase):
         self.assertIn(f"bunnify --env-file {shlex.quote(str(path))} setup", text)
         self.assertNotIn("--env-file", format_onboarding_text(state))
 
+    def test_the_reprint_hint_keeps_the_selected_config(self) -> None:
+        from app.onboard import format_onboarding_text
+
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        path = Path("/tmp/my config.toml")
+        text = format_onboarding_text(state, env_path=path)
+        self.assertIn(
+            f"Re-print this message anytime:  bunnify --env-file "
+            f"{shlex.quote(str(path))} onboard",
+            text,
+        )
+        self.assertIn(
+            "Re-print this message anytime:  bunnify onboard",
+            format_onboarding_text(state),
+        )
+
     def test_windows_guidance_is_quoted_for_powershell_and_says_so(self) -> None:
         from app.onboard import format_onboarding_text
 

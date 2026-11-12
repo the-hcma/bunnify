@@ -235,10 +235,16 @@ def run_browsers(
     if not profiles:
         log("No Edge or Chrome profiles found (is a browser installed and run once?).")
         if current is not None:
+            # A top-level default is edited in the global scope; this host's
+            # command would find nothing of its own to clear.
+            fix = (
+                "bunnify browsers default global"
+                if resolved.source == "global"
+                else "bunnify browsers default"
+            )
             log(
                 f"Default for unpinned shortcuts: {_describe(current)} "
-                f"({_where(resolved)}). Change or clear it with: "
-                "bunnify browsers default"
+                f"({_where(resolved)}). Change or clear it with: {fix}"
             )
         return 1
     system_default = _system_default_app()

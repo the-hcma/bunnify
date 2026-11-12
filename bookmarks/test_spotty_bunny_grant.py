@@ -1033,3 +1033,44 @@ class WarnIfBrowserProfilesBlockedTests(SimpleTestCase):
         self.assertEqual(self._run(configured=False), [])
         self.assertEqual(self._run(installed=False), [])
         self.assertEqual(self._run(platform="linux"), [])
+
+    def test_probes_the_interpreter_of_the_installed_plist_not_the_wrapper_on_path(
+        self,
+    ) -> None:
+        from app.spotty_bunny_agent import warn_if_browser_profiles_blocked
+
+        probed: list[Path] = []
+        seen: list[Path] = []
+
+        def interpreter_for(program: Path) -> Path:
+            seen.append(program)
+            return Path("/opt/py") / program.name
+
+        def probe(path: Path) -> bool | None:
+            probed.append(path)
+            return True
+
+        with (
+            patch("app.spotty_bunny_agent.sys.platform", "darwin"),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=True),
+            patch(
+                "app.spotty_bunny_agent._plist_program_arguments",
+                return_value=["/old/bin/spotty-bunny", "--flag"],
+            ),
+            patch(
+                "app.spotty_bunny_agent.spotty_bunny_program",
+                return_value=Path("/new/bin/spotty-bunny-new"),
+            ),
+            patch(
+                "app.spotty_bunny_agent.interpreter_for_program",
+                side_effect=interpreter_for,
+            ),
+            patch(
+                "app.spotty_bunny_agent._default_profile_configured", return_value=True
+            ),
+        ):
+            warn_if_browser_profiles_blocked(
+                print_err=lambda _m: None, probe_browser_profiles=probe
+            )
+        self.assertEqual(seen, [Path("/old/bin/spotty-bunny")])
+        self.assertEqual(probed, [Path("/opt/py/spotty-bunny")])

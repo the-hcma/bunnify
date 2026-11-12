@@ -1179,7 +1179,10 @@ def warn_if_browser_profiles_blocked(
     """
     if sys.platform != "darwin" or not is_agent_installed():
         return
-    binary = spotty_bunny_program()
+    # The installed plist names the program the agent actually runs; a newer
+    # wrapper on PATH may have a different interpreter (as in doctor_agent).
+    plist_argv = _plist_program_arguments(agent_plist_path())
+    binary = Path(plist_argv[0]) if plist_argv else spotty_bunny_program()
     if binary is None:
         return
     _note_browser_profile_access(

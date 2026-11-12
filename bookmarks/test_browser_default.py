@@ -2129,6 +2129,32 @@ class ProfileOnlyMarkerTests(SimpleTestCase):
         self.assertIn("Edge", marked[0])
 
 
+class RecoveryAdviceScopeTests(SimpleTestCase):
+    def _advice(self, text: str) -> str:
+        lines: list[str] = []
+        with (
+            patch("app.browsers.sys.platform", "darwin"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "config.toml"
+            path.write_text(text, encoding="utf-8")
+            run_browsers([], env_path=path, print_fn=lines.append, found={})
+        return "\n".join(lines)
+
+    def test_a_global_default_points_at_the_global_chooser(self) -> None:
+        out = self._advice('default_browser = "edge"\ndefault_browser_profile = "X"\n')
+        self.assertIn("(all hosts)", out)
+        self.assertTrue(out.rstrip().endswith("bunnify browsers default global"), out)
+
+    def test_a_host_default_points_at_the_host_chooser(self) -> None:
+        out = self._advice(
+            f'[hosts."{HOST}"]\ndefault_browser = "edge"\n'
+            'default_browser_profile = "X"\n'
+        )
+        self.assertTrue(out.rstrip().endswith("bunnify browsers default"), out)
+        self.assertNotIn("default global", out)
+
+
 class NoProfilesFoundTests(SimpleTestCase):
     def test_the_saved_default_is_still_shown(self) -> None:
         lines: list[str] = []

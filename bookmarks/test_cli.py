@@ -2811,7 +2811,10 @@ class ConfigUnitTests(TestCase):
             patch("app.cli._pipx_bunnify_path", return_value=None),
             patch("app.cli.macos_extra_installed", return_value=False),
             patch("app.cli._refresh_macos_launch_agents") as refresh,
-            patch("app.cli._report_post_upgrade_coherence"),
+            # On Windows run_upgrade would query (and possibly rewrite) the real
+            # Scheduled Task, so patch that refresh next to the macOS one.
+            patch("app.cli._refresh_windows_spotty_bunny_task"),
+            patch("app.cli._report_post_upgrade_coherence") as coherence,
             patch("app.cli.run_setup", setup),
             patch("app.cli.sys.stdin") as stdin,
             patch("app.cli.sys.stdout") as stdout,
@@ -2825,12 +2828,31 @@ class ConfigUnitTests(TestCase):
                 refresh_launch_agents=True,
                 env_path=path,
             )
+        self.assertEqual(coherence.call_args.kwargs["env_path"], path)
         self.assertEqual(load_prefs.call_args.kwargs["env_path"], path)
         self.assertEqual(setup.call_args.kwargs["env_path"], path)
         # The LaunchAgents keep using the default file: their refresh takes no path.
         # (It only runs on macOS, so there is nothing to check elsewhere.)
         if refresh.call_args is not None:
             self.assertNotIn("env_path", refresh.call_args.kwargs)
+
+    def test_post_upgrade_coherence_reads_the_selected_config(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.theme import Theme
+
+        path = Path("/tmp/custom-config.toml")
+        with patch("app.cli.load_preferences", return_value=None) as load_prefs:
+            _report_post_upgrade_coherence(
+                print_fn=lambda _m: None,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=False,
+                upgraded_build="0.10.0 (abcdef123456)",
+                env_path=path,
+            )
+        self.assertEqual(load_prefs.call_args.kwargs["env_path"], path)
 
     def test_upgrade_command_passes_the_env_file(self) -> None:
         from pathlib import Path

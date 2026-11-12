@@ -883,6 +883,7 @@ def run_upgrade(
         theme=colors,
         refresh_launch_agents=refresh_launch_agents,
         upgraded_build=after_pipx,
+        env_path=env_path,
     )
     if reconfigure_after_upgrade:
         log(colors.dim("Opening setup to reconfigure…"))
@@ -1005,8 +1006,13 @@ def _report_post_upgrade_coherence(
     theme: Theme,
     refresh_launch_agents: bool | Literal["server"],
     upgraded_build: str | None = None,
+    env_path: Path | None = None,
 ) -> None:
-    """Verify local server and Spotty match the upgraded pipx build."""
+    """Verify local server and Spotty match the upgraded pipx build.
+
+    *env_path* is the config the upgrade was started with; the LaunchAgents'
+    own settings still come from the default file.
+    """
     from app.coherence import (
         builds_match_values,
         classify_server_skew_values,
@@ -1025,7 +1031,7 @@ def _report_post_upgrade_coherence(
         return
     local_version, local_commit = parsed
     local_label = f"{local_version} ({local_commit})"
-    preferences = load_preferences()
+    preferences = load_preferences(env_path=env_path)
     if preferences is not None and preferences.mode == "remote":
         if not preferences.base_url:
             return

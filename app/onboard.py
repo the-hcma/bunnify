@@ -146,6 +146,11 @@ def format_onboarding_text(
         if env_path is not None
         else "bunnify setup"
     )
+    reprint_cmd = (
+        f"bunnify --env-file {_quote_path(env_path)} onboard"
+        if env_path is not None
+        else "bunnify onboard"
+    )
     shell_note = (
         "   # PowerShell syntax"
         if env_path is not None and sys.platform == "win32"
@@ -212,7 +217,7 @@ def format_onboarding_text(
             f"   {pipx_bunnify_display()}.",
             "",
             "Docs: https://github.com/the-hcma/bunnify",
-            "Re-print this message anytime:  bunnify onboard",
+            f"Re-print this message anytime:  {reprint_cmd}",
         ]
     )
     return "\n".join(lines)
