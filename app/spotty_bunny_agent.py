@@ -1165,6 +1165,31 @@ def _note_browser_profile_access(
         err(f"{COMMAND_NAME}: {line}")
 
 
+def warn_if_browser_profiles_blocked(
+    *,
+    print_err: Callable[[str], None] | None = None,
+    probe_browser_profiles: Callable[[Path], bool | None] | None = None,
+) -> None:
+    """Non-blocking: warn when the installed agent cannot read the default profile.
+
+    For callers that save a default profile after the agent was installed (the
+    install-time check cannot see a default that does not exist yet). Does
+    nothing off macOS, without an installed agent, or without a configured
+    default profile.
+    """
+    if sys.platform != "darwin" or not is_agent_installed():
+        return
+    binary = spotty_bunny_program()
+    if binary is None:
+        return
+    _note_browser_profile_access(
+        interpreter_for_program(binary),
+        err=print_err or _print_err,
+        probe=probe_browser_profiles,
+        probe_tcc=None,
+    )
+
+
 def _probe_tcc(interpreter: Path) -> TccStatus:
     return _run_tcc_probe(interpreter, prompt=False)
 

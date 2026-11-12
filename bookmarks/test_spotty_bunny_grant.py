@@ -983,3 +983,53 @@ class BrowserProfileLinesQuotingTests(SimpleTestCase):
         real = os.path.realpath(tricky)
         self.assertIn(f"open -R {shlex.quote(real)}", text)
         self.assertEqual(shlex.split(f"open -R {shlex.quote(real)}")[-1], real)
+
+
+class WarnIfBrowserProfilesBlockedTests(SimpleTestCase):
+    def _run(
+        self,
+        *,
+        platform: str = "darwin",
+        installed: bool = True,
+        configured: bool = True,
+        probe_result: bool | None = False,
+    ) -> list[str]:
+        from app.spotty_bunny_agent import warn_if_browser_profiles_blocked
+
+        lines: list[str] = []
+
+        def probe(_path: Path) -> bool | None:
+            return probe_result
+
+        with (
+            patch("app.spotty_bunny_agent.sys.platform", platform),
+            patch("app.spotty_bunny_agent.is_agent_installed", return_value=installed),
+            patch(
+                "app.spotty_bunny_agent.spotty_bunny_program",
+                return_value=Path(sys.executable),
+            ),
+            patch(
+                "app.spotty_bunny_agent._default_profile_configured",
+                return_value=configured,
+            ),
+        ):
+            warn_if_browser_profiles_blocked(
+                print_err=lines.append, probe_browser_profiles=probe
+            )
+        return lines
+
+    def test_warns_when_the_installed_agent_cannot_read_the_default_profile(
+        self,
+    ) -> None:
+        text = "\n".join(self._run())
+        self.assertIn("Full Disk Access", text)
+
+    def test_silent_when_it_can_read_it(self) -> None:
+        self.assertEqual(self._run(probe_result=True), [])
+
+    def test_silent_without_a_default_profile_an_agent_or_on_other_platforms(
+        self,
+    ) -> None:
+        self.assertEqual(self._run(configured=False), [])
+        self.assertEqual(self._run(installed=False), [])
+        self.assertEqual(self._run(platform="linux"), [])

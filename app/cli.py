@@ -758,8 +758,13 @@ def run_upgrade(
     refresh_launch_agents: bool | Literal["server"] = True,
     run_fn: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     theme: Theme | None = None,
+    env_path: Path | None = None,
 ) -> None:
     """Upgrade the pipx install and report from/to versions with commits.
+
+    *env_path* is the config file to read and to reconfigure (the CLI's
+    ``--env-file``); ``None`` means the default location. The LaunchAgents
+    always use the default file, so refreshing them is unchanged.
 
     When *refresh_launch_agents* is True (CLI default), rewrite and bounce both
     macOS LaunchAgents (or, on Windows, just the Spotty Bunny Scheduled Task --
@@ -779,7 +784,7 @@ def run_upgrade(
     log(f"From: {from_label}")
     log(f"      {command_path}")
     reconfigure_after_upgrade = False
-    preferences = load_preferences()
+    preferences = load_preferences(env_path=env_path)
     if preferences is not None and preferences.base_url:
         log("")
         log(colors.header("Current configuration"))
@@ -884,6 +889,7 @@ def run_upgrade(
         try:
             run_setup(
                 prompt_fn=ask,
+                env_path=env_path,
                 print_fn=log,
                 skip_keep_confirmation=True,
                 theme=colors,
@@ -2621,7 +2627,7 @@ def main(
             )
             return
         if upgrade_requested or shortcut_args == ("upgrade",):
-            run_upgrade(print_fn=click.echo, theme=theme)
+            run_upgrade(print_fn=click.echo, theme=theme, env_path=env_file)
             return
         if shortcut_args == ("doctor",):
             raise SystemExit(

@@ -291,7 +291,7 @@ def run_onboard(
                 from app.cli import run_upgrade as upgrade  # noqa: PLC0415
 
             try:
-                upgrade(print_fn=log, prompt_fn=ask, theme=colors)
+                upgrade(print_fn=log, prompt_fn=ask, theme=colors, env_path=env_path)
             except ClientError as exc:
                 log(colors.err(f"error: {exc}"))
             else:
@@ -396,6 +396,14 @@ def run_onboard(
         from app.browsers import offer_default_profile  # noqa: PLC0415
 
         offer_default_profile(ask=ask, log=log, colors=colors, env_path=env_path)
+        if state.macos_platform:
+            # The agent was installed above, before any default existed, so its
+            # install-time check could not see one; check now (non-blocking).
+            from app.spotty_bunny_agent import (  # noqa: PLC0415
+                warn_if_browser_profiles_blocked,
+            )
+
+            warn_if_browser_profiles_blocked(print_err=log)
 
     log("")
     # The summary above is repeated only if the flow changed the install

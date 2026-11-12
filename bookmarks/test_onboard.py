@@ -395,6 +395,30 @@ class OnboardTests(SimpleTestCase):
         self.assertIn("bunnify --env-file 'C:\\configs\\work&home''s.toml' setup", text)
         self.assertIn("PowerShell syntax", text)
 
+    def _onboard_on(self, *, macos: bool) -> MagicMock:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        state = type(state)(**{**state.__dict__, "macos_platform": macos})
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.browsers.offer_default_profile"),
+            patch("app.spotty_bunny_agent.warn_if_browser_profiles_blocked") as warn,
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(print_fn=lambda _m: None, prompt_fn=lambda _m: "n")
+        return warn
+
+    def test_onboarding_checks_what_the_installed_agent_can_read_after_the_profile_step(
+        self,
+    ) -> None:
+        self._onboard_on(macos=True).assert_called_once()
+
+    def test_onboarding_skips_the_agent_access_check_off_macos(self) -> None:
+        self._onboard_on(macos=False).assert_not_called()
+
     def test_run_onboard_skips_the_default_browser_profile_when_not_interactive(
         self,
     ) -> None:

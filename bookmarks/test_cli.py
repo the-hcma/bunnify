@@ -2789,6 +2789,62 @@ class ConfigUnitTests(TestCase):
 
             _ = environ  # prefs path isolation via load_preferences patch
 
+    def test_run_upgrade_reads_and_reconfigures_the_selected_config(self) -> None:
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from app.cli import run_upgrade
+        from app.config import ServerPreferences
+
+        path = Path("/tmp/custom-config.toml")
+        runner = MagicMock(return_value=MagicMock(returncode=0))
+        setup = MagicMock(return_value="https://new.example")
+        with (
+            patch(
+                "app.cli.load_preferences",
+                return_value=ServerPreferences(
+                    mode="remote", base_url="https://working.example", local_port=None
+                ),
+            ) as load_prefs,
+            patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli._pypi_latest_version", return_value="0.11.2"),
+            patch("app.cli._pipx_bunnify_path", return_value=None),
+            patch("app.cli.macos_extra_installed", return_value=False),
+            patch("app.cli._refresh_macos_launch_agents") as refresh,
+            patch("app.cli._report_post_upgrade_coherence"),
+            patch("app.cli.run_setup", setup),
+            patch("app.cli.sys.stdin") as stdin,
+            patch("app.cli.sys.stdout") as stdout,
+        ):
+            stdin.isatty.return_value = True
+            stdout.isatty.return_value = True
+            run_upgrade(
+                print_fn=lambda _m: None,
+                prompt_fn=lambda _m: "n",
+                run_fn=runner,
+                refresh_launch_agents=True,
+                env_path=path,
+            )
+        self.assertEqual(load_prefs.call_args.kwargs["env_path"], path)
+        self.assertEqual(setup.call_args.kwargs["env_path"], path)
+        # The LaunchAgents keep using the default file: their refresh takes no path.
+        self.assertNotIn("env_path", refresh.call_args.kwargs)
+
+    def test_upgrade_command_passes_the_env_file(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from app.cli import main
+
+        with patch("app.cli.run_upgrade") as upgrade:
+            result = CliRunner().invoke(
+                main, ["--env-file", "/tmp/custom.toml", "upgrade"]
+            )
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(upgrade.call_args.kwargs["env_path"], Path("/tmp/custom.toml"))
+
     def test_run_upgrade_setup_abort_does_not_fail_upgrade(self) -> None:
         from unittest.mock import MagicMock, patch
 
