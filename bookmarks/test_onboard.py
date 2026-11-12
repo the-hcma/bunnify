@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shlex
+import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -375,7 +378,15 @@ class OnboardTests(SimpleTestCase):
         path = Path("/tmp/my config.toml")
         text = format_onboarding_text(state, env_path=path)
         self.assertIn(str(path), text)
-        self.assertIn("bunnify --env-file '/tmp/my config.toml' setup", text)
+        self.assertIn("bunnify --env-file ", text)
+        self.assertIn(" setup", text)
+        # The path has a space, so it must be quoted for the platform's shell.
+        quoted = (
+            subprocess.list2cmdline([str(path)])
+            if sys.platform == "win32"
+            else shlex.quote(str(path))
+        )
+        self.assertIn(f"bunnify --env-file {quoted} setup", text)
         default_text = format_onboarding_text(state)
         self.assertNotIn("--env-file", default_text)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -108,6 +109,13 @@ def detect_install_state(
     )
 
 
+def _quote_path(path: Path) -> str:
+    """*path* quoted for the user's shell (POSIX sh, or cmd/PowerShell on Windows)."""
+    if sys.platform == "win32":
+        return subprocess.list2cmdline([str(path)])
+    return shlex.quote(str(path))
+
+
 def format_onboarding_text(
     state: InstallState | None = None,
     *,
@@ -130,7 +138,7 @@ def format_onboarding_text(
     config = env_path if env_path is not None else env_file_path()
     # Follow-up commands must keep naming the same config file.
     setup_cmd = (
-        f"bunnify --env-file {shlex.quote(str(env_path))} setup"
+        f"bunnify --env-file {_quote_path(env_path)} setup"
         if env_path is not None
         else "bunnify setup"
     )

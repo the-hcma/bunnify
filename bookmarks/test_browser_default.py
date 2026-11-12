@@ -1556,7 +1556,10 @@ class HostRobustnessTests(SimpleTestCase):
                 save_default_browser(BrowserSpec("edge", "X"), env_path=path)
         self.assertIn(str(path), str(ctx.exception))
 
-    @skipIf(not hasattr(os, "fchmod"), "needs POSIX modes")
+    @skipIf(
+        sys.platform == "win32" or not hasattr(os, "fchmod"),
+        "needs POSIX modes",
+    )
     def test_the_temp_file_gets_its_final_mode_before_any_content_is_written(
         self,
     ) -> None:
