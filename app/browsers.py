@@ -89,14 +89,26 @@ def _scope_label(scope: Scope, resolved: DefaultBrowser) -> str:
     return "all hosts" if scope == "global" else f"this host, {resolved.host}"
 
 
-def _is_default(spec: BrowserSpec | None, app: str, info: ProfileInfo) -> bool:
-    # A profile-only default (no browser named) matches the name in any browser.
-    return (
-        spec is not None
-        and spec.app in (None, app)
-        and spec.profile is not None
-        and spec.profile == info.name
-    )
+def _system_default_app() -> str | None:
+    """``edge``/``chrome`` when the system default browser is one of them."""
+    return browser_from_identifier(detect_default_browser_id())
+
+
+def _is_default(
+    spec: BrowserSpec | None,
+    app: str,
+    info: ProfileInfo,
+    system_app: str | None,
+) -> bool:
+    """True when *info* in browser *app* is what *spec* selects.
+
+    A profile-only default (no browser named) applies to the system default
+    browser only, so it is not marked in another browser that happens to have a
+    profile of the same name, nor when the system default is unknown.
+    """
+    if spec is None or spec.profile is None or spec.profile != info.name:
+        return False
+    return (spec.app if spec.app is not None else system_app) == app
 
 
 def _format_choice(
@@ -225,7 +237,7 @@ def run_browsers(
                 "bunnify browsers default"
             )
         return 1
-    system_default = browser_from_identifier(detect_default_browser_id())
+    system_default = _system_default_app()
     log(colors.header("Browser profiles"))
     log(f"This host: {resolved.host}")
     for app, infos in profiles.items():
@@ -234,7 +246,7 @@ def run_browsers(
         for info in infos:
             marker = (
                 colors.ok("  ← default for unpinned shortcuts")
-                if _is_default(current, app, info)
+                if _is_default(current, app, info, system_default)
                 else ""
             )
             log(_format_choice(None, app, info, colors, marker))
@@ -328,6 +340,7 @@ def _ask_for_profile(
 ) -> str | Choice:
     """Show the numbered list and return the user's answer: a choice or a letter."""
     choices = _flatten(profiles)
+    system_app = _system_default_app()
     if not choices:
         log(
             colors.warn(
@@ -342,7 +355,9 @@ def _ask_for_profile(
     names = Counter((app, info.name) for app, info in choices)
     for number, (app, info) in enumerate(choices, start=1):
         marker = (
-            colors.ok("  ← current default") if _is_default(current, app, info) else ""
+            colors.ok("  ← current default")
+            if _is_default(current, app, info, system_app)
+            else ""
         )
         if names[(app, info.name)] > 1:
             marker += colors.warn("  (name shared; rename it in the browser first)")

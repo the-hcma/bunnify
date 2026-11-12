@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import shlex
-import subprocess
-import sys
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -383,17 +381,19 @@ class OnboardTests(SimpleTestCase):
         path = Path("/tmp/my config.toml")
         text = format_onboarding_text(state, env_path=path)
         self.assertIn(str(path), text)
-        self.assertIn("bunnify --env-file ", text)
-        self.assertIn(" setup", text)
-        # The path has a space, so it must be quoted for the platform's shell.
-        quoted = (
-            subprocess.list2cmdline([str(path)])
-            if sys.platform == "win32"
-            else shlex.quote(str(path))
-        )
-        self.assertIn(f"bunnify --env-file {quoted} setup", text)
-        default_text = format_onboarding_text(state)
-        self.assertNotIn("--env-file", default_text)
+        self.assertIn(f"bunnify --env-file {shlex.quote(str(path))} setup", text)
+        self.assertNotIn("--env-file", format_onboarding_text(state))
+
+    def test_windows_guidance_is_quoted_for_powershell_and_says_so(self) -> None:
+        from app.onboard import format_onboarding_text
+
+        state = self._state(preferences_ready=False, bookmarks_ready=False)
+        # '&' would split a cmd.exe command; PowerShell single quotes keep it whole.
+        path = Path("C:\\configs\\work&home's.toml")
+        with patch("app.onboard.sys.platform", "win32"):
+            text = format_onboarding_text(state, env_path=path)
+        self.assertIn("bunnify --env-file 'C:\\configs\\work&home''s.toml' setup", text)
+        self.assertIn("PowerShell syntax", text)
 
     def test_run_onboard_skips_the_default_browser_profile_when_not_interactive(
         self,

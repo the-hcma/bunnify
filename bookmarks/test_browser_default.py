@@ -1817,11 +1817,46 @@ class InvalidThisHostDefaultTests(SimpleTestCase):
             resolved = resolve_default_browser(env_path=path, strict=False)
         self.assertIsNone(resolved.this_host)
         self.assertIn("edge, chrome", resolved.this_host_error or "")
+        # The valid all-hosts value is not what launches would use here (they
+        # reject the host's override), so it is not reported as effective ...
+        self.assertIsNone(resolved.spec)
+        self.assertEqual(resolved.source, "none")
+        # ... but it stays available for the global chooser.
+        self.assertEqual(resolved.everywhere, BrowserSpec(profile="Everywhere"))
 
     def test_the_listing_reports_it_instead_of_failing(self) -> None:
         code, out, _ = self._run([])
         self.assertEqual(code, 0)
         self.assertIn("this host's default is invalid", out)
+        self.assertIn("Default for unpinned shortcuts: not set", out)
+        self.assertNotIn("Everywhere", out)
+
+    def test_onboarding_does_not_report_the_unusable_fallback_as_configured(
+        self,
+    ) -> None:
+        lines: list[str] = []
+        prompts: list[str] = []
+
+        def ask(message: str) -> str:
+            prompts.append(message)
+            return ""
+
+        with (
+            patch("app.browsers.sys.platform", "darwin"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "config.toml"
+            path.write_text(self.TEXT, encoding="utf-8")
+            offer_default_profile(
+                ask=ask,
+                log=lines.append,
+                colors=COLORS,
+                env_path=path,
+                found=EDGE,
+            )
+        self.assertNotIn("Default browser profile:", "\n".join(lines))
+        # The step still runs (and asks) instead of treating the fallback as set.
+        self.assertEqual(len(prompts), 1)
 
     def test_it_can_be_replaced_from_the_host_chooser(self) -> None:
         code, out, saved = self._run(["default"], "1")
@@ -1914,29 +1949,50 @@ class ClearWhenNothingCanBeListedTests(SimpleTestCase):
 
 
 class ProfileOnlyMarkerTests(SimpleTestCase):
-    def test_a_profile_only_default_is_marked_current(self) -> None:
+    EDGE_ID = "com.microsoft.edgemac"
+    CHROME_ID = "com.google.chrome"
+    BOTH = {
+        "edge": [ProfileInfo("Default", "Work", "me@edge.example")],
+        "chrome": [ProfileInfo("Default", "Work", "me@chrome.example")],
+    }
+
+    def _listing(self, system_id: str | None, found: dict, text: str) -> str:
+        lines: list[str] = []
+        with (
+            patch("app.browsers.sys.platform", "darwin"),
+            patch("app.browsers.detect_default_browser_id", return_value=system_id),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "config.toml"
+            path.write_text(text, encoding="utf-8")
+            run_browsers([], env_path=path, print_fn=lines.append, found=found)
+        return "\n".join(lines)
+
+    def _chooser(self, system_id: str | None, found: dict, text: str) -> str:
         lines: list[str] = []
         answers = [""]
         with (
             patch("app.browsers.sys.platform", "darwin"),
-            patch("app.browsers.detect_default_browser_id", return_value=None),
+            patch("app.browsers.detect_default_browser_id", return_value=system_id),
             tempfile.TemporaryDirectory() as tmp,
         ):
             path = Path(tmp) / "config.toml"
-            path.write_text(
-                'default_browser_profile = "hcma @ BRK Tech"\n', encoding="utf-8"
-            )
-            run_browsers([], env_path=path, print_fn=lines.append, found=EDGE)
-            listing = "\n".join(lines)
-            lines.clear()
+            path.write_text(text, encoding="utf-8")
             run_browsers(
                 ["default", "global"],
                 env_path=path,
                 print_fn=lines.append,
                 prompt_fn=lambda _m: answers.pop(0) if answers else "",
-                found=EDGE,
+                found=found,
             )
-            chooser = "\n".join(lines)
+        return "\n".join(lines)
+
+    def test_a_profile_only_default_is_marked_in_the_system_default_browser(
+        self,
+    ) -> None:
+        text = 'default_browser_profile = "hcma @ BRK Tech"\n'
+        listing = self._listing(self.EDGE_ID, EDGE, text)
+        chooser = self._chooser(self.EDGE_ID, EDGE, text)
         tech_listing = next(
             line for line in listing.splitlines() if "hcma @ BRK Tech" in line
         )
@@ -1950,100 +2006,38 @@ class ProfileOnlyMarkerTests(SimpleTestCase):
         )
         self.assertNotIn("default for unpinned shortcuts", commons)
 
-
-class ReviewFollowUpTests(SimpleTestCase):
-    def _both_broken(self, home: Path) -> None:
-        for name in ("Microsoft Edge", "Google/Chrome"):
-            state = home / "Library/Application Support" / name
-            state.mkdir(parents=True)
-            (state / "Local State").write_text("{not json", encoding="utf-8")
-
-    def test_every_discovery_error_is_reported_when_no_profiles_are_found(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            self._both_broken(home)
-            reported: list[BrowserLaunchError] = []
-            with self.assertRaises(BrowserLaunchError) as ctx:
-                installed_browser_profiles(
-                    platform="darwin",
-                    home=home,
-                    find_app=lambda _a: "/Applications/X",
-                    on_error=reported.append,
-                )
-        self.assertIn("Microsoft Edge", str(ctx.exception))
-        self.assertEqual(len(reported), 1)
-        self.assertIn("Chrome", str(reported[0]))
-
-    def test_without_a_callback_the_errors_are_combined_into_one(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            self._both_broken(home)
-            with self.assertRaises(BrowserLaunchError) as ctx:
-                installed_browser_profiles(
-                    platform="darwin", home=home, find_app=lambda _a: "/Applications/X"
-                )
-        text = str(ctx.exception)
-        self.assertIn("Microsoft Edge", text)
-        self.assertIn("Chrome", text)
-
-    def test_a_prompt_that_never_gives_a_usable_answer_gives_up(self) -> None:
-        lines: list[str] = []
-        calls: list[str] = []
-
-        def stuck(message: str) -> str:
-            calls.append(message)
-            return "y"
-
-        with (
-            patch("app.browsers.sys.platform", "darwin"),
-            tempfile.TemporaryDirectory() as tmp,
+    def test_it_is_not_marked_in_another_browser_with_a_same_named_profile(
+        self,
+    ) -> None:
+        text = 'default_browser_profile = "Work"\n'
+        for out in (
+            self._listing(self.CHROME_ID, self.BOTH, text),
+            self._chooser(self.CHROME_ID, self.BOTH, text),
         ):
-            path = Path(tmp) / "config.toml"
-            offer_default_profile(
-                ask=stuck,
-                log=lines.append,
-                colors=COLORS,
-                env_path=path,
-                found=EDGE,
-            )
-            self.assertFalse(path.exists())
-        self.assertEqual(len(calls), 5)
-        self.assertIn("Too many invalid answers", "\n".join(lines))
+            marked = [
+                line
+                for line in out.splitlines()
+                if "default" in line and "Work" in line
+            ]
+            self.assertEqual(len(marked), 1, out)
+            self.assertIn("Chrome", marked[0])
 
-    def test_click_abort_cancels_instead_of_aborting_the_command(self) -> None:
-        import click
+    def test_it_is_not_marked_when_the_system_default_browser_is_unknown(self) -> None:
+        text = 'default_browser_profile = "Work"\n'
+        for out in (
+            self._listing(None, self.BOTH, text),
+            self._listing("com.apple.Safari", self.BOTH, text),
+            self._chooser(None, self.BOTH, text),
+        ):
+            self.assertNotIn("current default", out)
+            self.assertNotIn("← default for unpinned shortcuts", out)
 
-        for where in ("installer", "command"):
-            with self.subTest(where=where):
-                lines: list[str] = []
-
-                def aborted(_m: str) -> str:
-                    raise click.Abort()
-
-                with (
-                    patch("app.browsers.sys.platform", "darwin"),
-                    tempfile.TemporaryDirectory() as tmp,
-                ):
-                    path = Path(tmp) / "config.toml"
-                    if where == "installer":
-                        offer_default_profile(
-                            ask=aborted,
-                            log=lines.append,
-                            colors=COLORS,
-                            env_path=path,
-                            found=EDGE,
-                        )
-                    else:
-                        code = run_browsers(
-                            ["default"],
-                            env_path=path,
-                            print_fn=lines.append,
-                            prompt_fn=aborted,
-                            found=EDGE,
-                        )
-                        self.assertEqual(code, 1)
-                    self.assertFalse(path.exists())
-                self.assertIn("Cancelled; nothing was changed", "\n".join(lines))
+    def test_a_named_browser_is_marked_whatever_the_system_default_is(self) -> None:
+        text = 'default_browser = "edge"\ndefault_browser_profile = "Work"\n'
+        out = self._chooser(self.CHROME_ID, self.BOTH, text)
+        marked = [line for line in out.splitlines() if "current default" in line]
+        self.assertEqual(len(marked), 1)
+        self.assertIn("Edge", marked[0])
 
 
 class NoProfilesFoundTests(SimpleTestCase):

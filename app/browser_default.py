@@ -128,6 +128,19 @@ def resolve_default_browser(
         # It is kept so ``bunnify browsers`` can report and clear it.
         everywhere = None
         everywhere_error = str(exc)
+    if this_host_error is not None:
+        # Real launches on this host reject its invalid override, so the global
+        # value is not what would actually be used: report no effective
+        # default, but keep ``everywhere`` for the global chooser.
+        return DefaultBrowser(
+            spec=None,
+            source="none",
+            host=host,
+            everywhere=everywhere,
+            this_host=None,
+            everywhere_error=everywhere_error,
+            this_host_error=this_host_error,
+        )
     source: Literal["host", "global", "none"] = (
         "host" if mine is not None else "global" if everywhere is not None else "none"
     )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shlex
 import shutil
-import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -110,9 +109,14 @@ def detect_install_state(
 
 
 def _quote_path(path: Path) -> str:
-    """*path* quoted for the user's shell (POSIX sh, or cmd/PowerShell on Windows)."""
+    """*path* quoted for one shell: POSIX sh, or PowerShell on Windows.
+
+    ``list2cmdline`` quotes for the Windows C runtime, not for cmd.exe or
+    PowerShell (a path with ``&`` would be split), so Windows gets PowerShell's
+    single-quoted form and the guidance labels it.
+    """
     if sys.platform == "win32":
-        return subprocess.list2cmdline([str(path)])
+        return "'" + str(path).replace("'", "''") + "'"
     return shlex.quote(str(path))
 
 
@@ -142,6 +146,11 @@ def format_onboarding_text(
         if env_path is not None
         else "bunnify setup"
     )
+    shell_note = (
+        "   # PowerShell syntax"
+        if env_path is not None and sys.platform == "win32"
+        else ""
+    )
     lines = ["Bunnify — next steps after install or upgrade", ""]
     if include_summary:
         lines.extend(_format_install_summary(state))
@@ -152,7 +161,10 @@ def format_onboarding_text(
         lines.extend(
             [
                 f"{step}. Bookmarks (required before the server starts):",
-                f"     {setup_cmd}   # offers to install the example shortcuts",
+                "     "
+                + setup_cmd
+                + "   # offers to install the example shortcuts"
+                + (" (PowerShell syntax)" if shell_note else ""),
                 f"     # or create {bookmarks} yourself from bunnify.json.example",
                 "",
             ]
@@ -163,7 +175,7 @@ def format_onboarding_text(
             [
                 f"{step}. Configure and start the server (local on a laptop;",
                 "   remote for a home/always-on host):",
-                f"     {setup_cmd}",
+                f"     {setup_cmd}{shell_note}",
                 "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
                 "",
             ]
