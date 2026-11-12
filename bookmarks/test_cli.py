@@ -2828,7 +2828,9 @@ class ConfigUnitTests(TestCase):
         self.assertEqual(load_prefs.call_args.kwargs["env_path"], path)
         self.assertEqual(setup.call_args.kwargs["env_path"], path)
         # The LaunchAgents keep using the default file: their refresh takes no path.
-        self.assertNotIn("env_path", refresh.call_args.kwargs)
+        # (It only runs on macOS, so there is nothing to check elsewhere.)
+        if refresh.call_args is not None:
+            self.assertNotIn("env_path", refresh.call_args.kwargs)
 
     def test_upgrade_command_passes_the_env_file(self) -> None:
         from pathlib import Path
