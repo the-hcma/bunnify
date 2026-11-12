@@ -351,16 +351,28 @@ def _find_host_table(
     if not isinstance(hosts, Mapping):
         return None
     wanted = host.casefold()
-    for name, table in hosts.items():
-        if str(name).casefold() != wanted:
-            continue
-        if not isinstance(table, Mapping):
-            raise ConfigParseError(
-                f"{path}: `{HOSTS_TABLE}.{name}` must be a table of per-host "
-                f"settings, not {type(table).__name__}"
-            )
-        return str(name), table
-    return None
+    matches = [
+        (str(name), table)
+        for name, table in hosts.items()
+        if str(name).casefold() == wanted
+    ]
+    if len(matches) > 1:
+        # Only one would be read and written, so the other would silently do
+        # nothing; hand edits or merges of a shared file can create this.
+        names = ", ".join(f"`{HOSTS_TABLE}.{name}`" for name, _ in matches)
+        raise ConfigParseError(
+            f"{path}: {names} name the same host (host names ignore case); "
+            "keep one of them"
+        )
+    if not matches:
+        return None
+    name, table = matches[0]
+    if not isinstance(table, Mapping):
+        raise ConfigParseError(
+            f"{path}: `{HOSTS_TABLE}.{name}` must be a table of per-host "
+            f"settings, not {type(table).__name__}"
+        )
+    return name, table
 
 
 @dataclass(frozen=True)

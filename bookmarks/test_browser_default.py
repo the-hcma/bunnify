@@ -945,7 +945,7 @@ class BrowsersCommandTests(SimpleTestCase):
                 [], env_path=Path(tmp) / "c.toml", print_fn=lines.append
             )
         self.assertEqual(code, 1)
-        self.assertIn("Full Disk Access", lines[0])
+        self.assertIn("Full Disk Access", "\n".join(lines))
 
     def test_duplicate_names_cannot_be_chosen(self) -> None:
         dup = {
@@ -1871,6 +1871,95 @@ class InvalidThisHostDefaultTests(SimpleTestCase):
         self.assertNotIn("firefox", saved)
         self.assertNotIn(HOST, saved)
         self.assertIn('default_browser_profile = "Everywhere"', saved)
+
+
+class ThirdReviewFollowUpTests(SimpleTestCase):
+    def test_the_host_label_is_shown_even_when_no_profiles_can_be_listed(self) -> None:
+        for discovery in ("empty", "denied"):
+            with self.subTest(discovery=discovery):
+                lines: list[str] = []
+                listing = (
+                    patch(
+                        "app.browsers.installed_browser_profiles",
+                        side_effect=BrowserProfilesAccessError("blocked"),
+                    )
+                    if discovery == "denied"
+                    else patch(
+                        "app.browsers.installed_browser_profiles", return_value={}
+                    )
+                )
+                with (
+                    patch("app.browsers.sys.platform", "darwin"),
+                    listing,
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    code = run_browsers(
+                        [], env_path=Path(tmp) / "c.toml", print_fn=lines.append
+                    )
+                self.assertEqual(code, 1)
+                self.assertIn(f"This host: {HOST}", "\n".join(lines))
+
+    def test_the_host_label_is_printed_once_in_a_normal_listing(self) -> None:
+        lines: list[str] = []
+        with (
+            patch("app.browsers.sys.platform", "darwin"),
+            patch("app.browsers.detect_default_browser_id", return_value=None),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            run_browsers(
+                [], env_path=Path(tmp) / "c.toml", print_fn=lines.append, found=EDGE
+            )
+        self.assertEqual("\n".join(lines).count("This host:"), 1)
+
+    def test_clearing_the_global_default_does_not_hide_an_invalid_host_override(
+        self,
+    ) -> None:
+        lines: list[str] = []
+        answers = ["c"]
+        text = (
+            'default_browser_profile = "Everywhere"\n'
+            f'[hosts."{HOST}"]\ndefault_browser = "firefox"\n'
+        )
+        with (
+            patch("app.browsers.sys.platform", "darwin"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "config.toml"
+            path.write_text(text, encoding="utf-8")
+            code = run_browsers(
+                ["default", "global"],
+                env_path=path,
+                print_fn=lines.append,
+                prompt_fn=lambda _m: answers.pop(0) if answers else "",
+                found=EDGE,
+            )
+            saved = path.read_text(encoding="utf-8")
+        out = "\n".join(lines)
+        self.assertEqual(code, 0)
+        self.assertNotIn("Everywhere", saved)
+        self.assertNotIn("shortcuts use the system default", out)
+        self.assertIn("has its own invalid default", out)
+
+    def test_host_tables_that_differ_only_in_case_are_an_error(self) -> None:
+        text = (
+            f'[hosts."{HOST.upper()}"]\ndefault_browser_profile = "A"\n'
+            f'[hosts."{HOST.lower()}"]\ndefault_browser_profile = "B"\n'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(BrowserLaunchError, "name the same host"):
+                load_default_browser(env_path=path)
+            with self.assertRaisesRegex(ValueError, "name the same host"):
+                save_default_browser(BrowserSpec("edge", "X"), env_path=path)
+            # Other hosts' tables are never consulted, so only a clash for this
+            # host matters.
+            path.write_text(
+                '[hosts.AAA]\ndefault_browser_profile = "A"\n'
+                '[hosts.aaa]\ndefault_browser_profile = "B"\n',
+                encoding="utf-8",
+            )
+            self.assertIsNone(load_default_browser(env_path=path))
 
 
 class ClearWhenNothingCanBeListedTests(SimpleTestCase):

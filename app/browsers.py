@@ -189,6 +189,10 @@ def run_browsers(
                 "with: bunnify browsers default"
             )
         )
+    if not choosing:
+        # Printed before discovery so the name for ``[hosts.<name>]`` is shown
+        # even when no browser or profile can be read.
+        log(f"This host: {resolved.host}")
     discovery_failed = False
     try:
         profiles = (
@@ -239,7 +243,6 @@ def run_browsers(
         return 1
     system_default = _system_default_app()
     log(colors.header("Browser profiles"))
-    log(f"This host: {resolved.host}")
     for app, infos in profiles.items():
         suffix = "  (system default browser)" if app == system_default else ""
         log(f"{display_name(app)}{suffix}")
@@ -449,6 +452,11 @@ def _apply_answer(
             after = (
                 f"this host ({resolved.host}) still uses its own default "
                 f"({_describe(resolved.this_host)})."
+            )
+        elif resolved.this_host_error is not None:
+            after = (
+                f"this host ({resolved.host}) has its own invalid default, which "
+                "still has to be fixed or cleared (bunnify browsers default)."
             )
         else:
             after = "shortcuts use the system default."
