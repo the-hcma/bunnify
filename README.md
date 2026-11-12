@@ -126,6 +126,7 @@ That's a [bash-completion v2](https://github.com/scop/bash-completion) user dire
 - **macOS server LaunchAgent** — local setup installs `bunnify-server` under launchd (`bunnify-server install|status|upgrade|uninstall`)
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
 - **Chrome / Edge** — OpenSearch at `/opensearch.xml` ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
+- **Browser profiles** — pin a shortcut to an Edge/Chrome profile, or set a machine-wide default (`bunnify browsers` lists your profiles, with per-machine defaults for a shared config; see [docs/CONFIG.md](docs/CONFIG.md#finding-your-browser-profiles))
 - **Parameters** — URLs with `#{name}` placeholders and optional defaults
 - **Validation** — JSON Schema on load; reserved keys `h` / `help`
 
@@ -338,6 +339,10 @@ Wrappers under `./scripts/` prefer `uv run` when `uv` is on `PATH`, otherwise th
 bunnify-server --console --log-level DEBUG
 # or in a checkout: ./scripts/bunnify-server --console
 ```
+
+**Spotty Bunny: "Cannot read browser profiles … Operation not permitted" (macOS)**
+
+macOS blocks the launchd-run Python from reading the browser's profile list. Run `spotty-bunny doctor`, then grant Full Disk Access to the executable it names (see [docs/CONFIG.md](docs/CONFIG.md#macos-reading-profile-names-from-spotty-bunny)).
 
 **Bookmarks missing**
 

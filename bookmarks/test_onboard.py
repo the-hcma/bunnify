@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -28,6 +29,11 @@ class OnboardTests(SimpleTestCase):
         # Never read this machine's real pipx install: tests that want a git
         # install patch their own spec.
         self.enterContext(patch("app.onboard.pipx_vcs_install_spec", return_value=None))
+        # Never read the developer's real Edge/Chrome profiles: the optional
+        # profile step would otherwise prompt on machines that have some.
+        self.enterContext(
+            patch("app.browsers.installed_browser_profiles", return_value={})
+        )
 
     def test_detect_install_state_marks_upgrade_when_pypi_is_newer(self) -> None:
         with (
@@ -311,6 +317,128 @@ class OnboardTests(SimpleTestCase):
         output = stdout.getvalue()
         self.assertIn("Already installed:", output)
         self.assertIn("Spotty Bunny LaunchAgent: installed", output)
+
+    def _onboard_with_tty(self, *, tty: bool) -> MagicMock:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.browsers.offer_default_profile") as offer,
+        ):
+            stdin.isatty.return_value = tty
+            stdout_tty.isatty.return_value = tty
+            run_onboard(print_fn=lambda _m: None, prompt_fn=lambda _m: "n")
+        return offer
+
+    def test_run_onboard_offers_the_default_browser_profile_when_interactive(
+        self,
+    ) -> None:
+        self._onboard_with_tty(tty=True).assert_called_once()
+
+    def test_run_onboard_saves_the_browser_profile_to_the_requested_config(
+        self,
+    ) -> None:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        path = Path("/tmp/custom-config.toml")
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.browsers.offer_default_profile") as offer,
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(
+                print_fn=lambda _m: None, prompt_fn=lambda _m: "n", env_path=path
+            )
+        self.assertEqual(offer.call_args.kwargs["env_path"], path)
+
+    def test_run_onboard_reads_the_requested_config_throughout(self) -> None:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        path = Path("/tmp/custom-config.toml")
+        with (
+            patch("app.onboard.detect_install_state", return_value=state) as detect,
+            patch("app.onboard.load_preferences", return_value=None) as prefs,
+            patch("app.onboard.sys.stdin") as stdin,
+        ):
+            stdin.isatty.return_value = False
+            run_onboard(
+                print_fn=lambda _m: None, prompt_fn=lambda _m: "n", env_path=path
+            )
+        self.assertTrue(detect.called)
+        for call in detect.call_args_list:
+            self.assertEqual(call.kwargs["env_path"], path)
+        for call in prefs.call_args_list:
+            self.assertEqual(call.kwargs["env_path"], path)
+
+    def test_onboarding_guidance_names_the_selected_config(self) -> None:
+        from app.onboard import format_onboarding_text
+
+        state = self._state(preferences_ready=False, bookmarks_ready=False)
+        path = Path("/tmp/my config.toml")
+        text = format_onboarding_text(state, env_path=path)
+        self.assertIn(str(path), text)
+        self.assertIn(f"bunnify --env-file {shlex.quote(str(path))} setup", text)
+        self.assertNotIn("--env-file", format_onboarding_text(state))
+
+    def test_the_reprint_hint_keeps_the_selected_config(self) -> None:
+        from app.onboard import format_onboarding_text
+
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        path = Path("/tmp/my config.toml")
+        text = format_onboarding_text(state, env_path=path)
+        self.assertIn(
+            f"Re-print this message anytime:  bunnify --env-file "
+            f"{shlex.quote(str(path))} onboard",
+            text,
+        )
+        self.assertIn(
+            "Re-print this message anytime:  bunnify onboard",
+            format_onboarding_text(state),
+        )
+
+    def test_windows_guidance_is_quoted_for_powershell_and_says_so(self) -> None:
+        from app.onboard import format_onboarding_text
+
+        state = self._state(preferences_ready=False, bookmarks_ready=False)
+        # '&' would split a cmd.exe command; PowerShell single quotes keep it whole.
+        path = Path("C:\\configs\\work&home's.toml")
+        with patch("app.onboard.sys.platform", "win32"):
+            text = format_onboarding_text(state, env_path=path)
+        self.assertIn("bunnify --env-file 'C:\\configs\\work&home''s.toml' setup", text)
+        self.assertIn("PowerShell syntax", text)
+
+    def _onboard_on(self, *, macos: bool) -> MagicMock:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        state = type(state)(**{**state.__dict__, "macos_platform": macos})
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.browsers.offer_default_profile"),
+            patch("app.spotty_bunny_agent.warn_if_browser_profiles_blocked") as warn,
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(print_fn=lambda _m: None, prompt_fn=lambda _m: "n")
+        return warn
+
+    def test_onboarding_checks_what_the_installed_agent_can_read_after_the_profile_step(
+        self,
+    ) -> None:
+        self._onboard_on(macos=True).assert_called_once()
+
+    def test_onboarding_skips_the_agent_access_check_off_macos(self) -> None:
+        self._onboard_on(macos=False).assert_not_called()
+
+    def test_run_onboard_skips_the_default_browser_profile_when_not_interactive(
+        self,
+    ) -> None:
+        self._onboard_with_tty(tty=False).assert_not_called()
 
     def test_run_onboard_prints_the_install_summary_once(self) -> None:
         stdout = StringIO()

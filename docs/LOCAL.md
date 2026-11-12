@@ -108,6 +108,8 @@ bunnify spotty-bunny status
 
 After granting permissions, run `bunnify spotty-bunny install` again (or `bunnify spotty-bunny upgrade`) so launchd starts a fresh process with the new grants. A process that started before TCC was granted may not receive Control chord events until it is restarted.
 
+Shortcuts that open in a specific Edge or Chrome profile need a third, optional grant: **Full Disk Access** for the same executable, so Spotty Bunny can read the browser's profile list. Add the interpreter path that `bunnify spotty-bunny status` prints (the real Python executable, not `Python.app`), restart with `bunnify spotty-bunny upgrade`, and see [Browser and profile](CONFIG.md#browser-and-profile) for the steps. `bunnify spotty-bunny doctor` reports `browser_profiles: yes|no|n/a|unknown` (`unknown` means the probe could not run, not that access is denied).
+
 `status` prints running/pid, whether launchd has loaded the agent, the binary path, the **Python interpreter** launchd will exec (real path for TCC lookups), the application log (`~/.local/share/bunnify/spotty-bunny.log` or `BUNNIFY_SPOTTY_BUNNY_LOG_FILE` / `$BUNNIFY_DATA_DIR`), a suggested log-follow command (`tail --follow=name --retry "<application_log>"`), launchd stdout/stderr paths from the plist, version, and Accessibility / Input Monitoring yes/no. Exit `0` only when the plist exists, the agent is loaded, the process is running, and the plist binary path still exists and is executable.
 
 `install` / `upgrade` prefer `~/.local/bin/spotty-bunny` when present (stable operator wrapper), validate that the plist target exists before bootstrap, warn when the interpreter identity changes (for example pipx → local clone), and remind you to test the Control chord after a successful reload.

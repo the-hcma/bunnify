@@ -433,6 +433,42 @@ class HandleResolvedTests(SimpleTestCase):
         printed = " ".join(str(c.args[0]) for c in echo.call_args_list)
         self.assertIn('Edge, profile "W"', printed)
 
+    def test_dry_run_reports_the_configured_default_for_unpinned_shortcuts(
+        self,
+    ) -> None:
+        resolved = ResolvedShortcut("https://x.test", "bookmark", "brk", None)
+        plan = LaunchPlan("edge", "Work", "Default", ("open",))
+        default = BrowserSpec("edge", "Work")
+        with (
+            patch("app.cli.apply_default_browser", return_value=default),
+            patch("app.cli.plan_launch", return_value=plan) as planned,
+            patch("app.cli.launch") as run,
+            patch("click.echo") as echo,
+        ):
+            self._call(resolved, open_browser=False)
+        planned.assert_called_once_with("https://x.test", default)
+        run.assert_not_called()
+        printed = " ".join(str(c.args[0]) for c in echo.call_args_list)
+        self.assertIn('Edge, profile "Work"', printed)
+
+    def test_dry_run_passes_the_env_file_to_the_default_lookup(self) -> None:
+        resolved = ResolvedShortcut("https://x.test", "bookmark", "brk", None)
+        path = Path("/tmp/custom-config.toml")
+        with (
+            patch("app.cli.resolve_shortcut", return_value=resolved),
+            patch("app.cli.apply_default_browser", return_value=None) as apply,
+        ):
+            _handle_resolved(
+                "brk",
+                base_url="http://b",
+                theme=Theme(enabled=False),
+                print_url=True,
+                open_browser=False,
+                opener=MagicMock(return_value=True),
+                env_path=path,
+            )
+        apply.assert_called_once_with(None, env_path=path)
+
     def test_dry_run_surfaces_lookup_errors(self) -> None:
         resolved = ResolvedShortcut(
             "https://x.test", "bookmark", "brk", BrowserSpec("edge", "Bad")

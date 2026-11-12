@@ -2789,6 +2789,86 @@ class ConfigUnitTests(TestCase):
 
             _ = environ  # prefs path isolation via load_preferences patch
 
+    def test_run_upgrade_reads_and_reconfigures_the_selected_config(self) -> None:
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from app.cli import run_upgrade
+        from app.config import ServerPreferences
+
+        path = Path("/tmp/custom-config.toml")
+        runner = MagicMock(return_value=MagicMock(returncode=0))
+        setup = MagicMock(return_value="https://new.example")
+        with (
+            patch(
+                "app.cli.load_preferences",
+                return_value=ServerPreferences(
+                    mode="remote", base_url="https://working.example", local_port=None
+                ),
+            ) as load_prefs,
+            patch("app.cli.shutil.which", return_value="/usr/bin/pipx"),
+            patch("app.cli._pypi_latest_version", return_value="0.11.2"),
+            patch("app.cli._pipx_bunnify_path", return_value=None),
+            patch("app.cli.macos_extra_installed", return_value=False),
+            patch("app.cli._refresh_macos_launch_agents") as refresh,
+            # On Windows run_upgrade would query (and possibly rewrite) the real
+            # Scheduled Task, so patch that refresh next to the macOS one.
+            patch("app.cli._refresh_windows_spotty_bunny_task"),
+            patch("app.cli._report_post_upgrade_coherence") as coherence,
+            patch("app.cli.run_setup", setup),
+            patch("app.cli.sys.stdin") as stdin,
+            patch("app.cli.sys.stdout") as stdout,
+        ):
+            stdin.isatty.return_value = True
+            stdout.isatty.return_value = True
+            run_upgrade(
+                print_fn=lambda _m: None,
+                prompt_fn=lambda _m: "n",
+                run_fn=runner,
+                refresh_launch_agents=True,
+                env_path=path,
+            )
+        self.assertEqual(coherence.call_args.kwargs["env_path"], path)
+        self.assertEqual(load_prefs.call_args.kwargs["env_path"], path)
+        self.assertEqual(setup.call_args.kwargs["env_path"], path)
+        # The LaunchAgents keep using the default file: their refresh takes no path.
+        # (It only runs on macOS, so there is nothing to check elsewhere.)
+        if refresh.call_args is not None:
+            self.assertNotIn("env_path", refresh.call_args.kwargs)
+
+    def test_post_upgrade_coherence_reads_the_selected_config(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.cli import _report_post_upgrade_coherence
+        from app.theme import Theme
+
+        path = Path("/tmp/custom-config.toml")
+        with patch("app.cli.load_preferences", return_value=None) as load_prefs:
+            _report_post_upgrade_coherence(
+                print_fn=lambda _m: None,
+                theme=Theme(enabled=False),
+                refresh_launch_agents=False,
+                upgraded_build="0.10.0 (abcdef123456)",
+                env_path=path,
+            )
+        self.assertEqual(load_prefs.call_args.kwargs["env_path"], path)
+
+    def test_upgrade_command_passes_the_env_file(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from app.cli import main
+
+        with patch("app.cli.run_upgrade") as upgrade:
+            result = CliRunner().invoke(
+                main, ["--env-file", "/tmp/custom.toml", "upgrade"]
+            )
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(upgrade.call_args.kwargs["env_path"], Path("/tmp/custom.toml"))
+
     def test_run_upgrade_setup_abort_does_not_fail_upgrade(self) -> None:
         from unittest.mock import MagicMock, patch
 
@@ -7145,3 +7225,66 @@ class KeyUsageAndCompletionTests(TestCase):
         body = lines[1].strip()
         # "b" + spaces + desc(40) + spaces + "u"
         self.assertRegex(body, r"^b\s+.{40}\s+u$")
+
+
+class BrowsersCommandDispatchTests(SimpleTestCase):
+    def test_browsers_command_runs_without_a_server(self) -> None:
+        from app.cli import main
+
+        with patch("app.browsers.run_browsers", return_value=0) as run:
+            result = CliRunner().invoke(main, ["browsers", "default"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(run.call_args.args[0], ["default"])
+
+    def test_browsers_exit_code_is_propagated(self) -> None:
+        from app.cli import main
+
+        with patch("app.browsers.run_browsers", return_value=1):
+            result = CliRunner().invoke(main, ["browsers"])
+        self.assertEqual(result.exit_code, 1)
+
+    def test_help_lists_the_browsers_command(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["--help"])
+        self.assertIn("bunnify browsers default", result.output)
+
+
+class EnvFileThreadingTests(SimpleTestCase):
+    def test_main_passes_the_env_file_to_the_shortcut_run(self) -> None:
+        from pathlib import Path
+
+        from app.cli import main
+
+        with (
+            patch("app.cli.ensure_ready_base_url", return_value="http://b"),
+            patch("app.cli._run") as run,
+        ):
+            result = CliRunner().invoke(
+                main, ["--env-file", "/tmp/custom.toml", "--dry-run", "x"]
+            )
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(run.call_args.kwargs["env_path"], Path("/tmp/custom.toml"))
+
+    def test_repl_dispatch_passes_the_env_file_to_the_launch(self) -> None:
+        from pathlib import Path
+
+        from app.cli import _dispatch_repl_line
+        from app.theme import Theme
+
+        path = Path("/tmp/custom.toml")
+        with patch("app.cli._handle_resolved") as handle:
+            _dispatch_repl_line(
+                "gh",
+                keys=["gh"],
+                base_url="http://b",
+                theme=Theme(enabled=False),
+                print_url=False,
+                open_browser=True,
+                env_path=path,
+                opener=None,
+                fzf_picker=lambda *a, **k: None,
+                session=None,
+                set_keys=None,
+            )
+        self.assertEqual(handle.call_args.kwargs["env_path"], path)

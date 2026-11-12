@@ -15,7 +15,11 @@ from django.test.runner import DiscoverRunner, ParallelTestSuite
 from app.config import DATA_DIR_ENV_VAR
 
 XDG_DATA_HOME_ENV_VAR = "XDG_DATA_HOME"
+XDG_CONFIG_HOME_ENV_VAR = "XDG_CONFIG_HOME"
 _DATA_VARS = (DATA_DIR_ENV_VAR, XDG_DATA_HOME_ENV_VAR)
+# Cleared so config falls back to the throwaway HOME's ``.config`` instead of
+# the developer's real ``$XDG_CONFIG_HOME/bunnify/config.toml``.
+_CONFIG_VARS = (XDG_CONFIG_HOME_ENV_VAR,)
 _HOME_VARS = ("HOME", "USERPROFILE")
 _BLOCKED_PROGRAMS = frozenset({"launchctl"})
 _MAX_SHELL_NESTING = 4
@@ -159,6 +163,9 @@ class IsolatedStateRunner(DiscoverRunner):
     ``XDG_DATA_HOME`` is redirected and ``BUNNIFY_DATA_DIR`` cleared, so a
     test that isolates itself with either variable still overrides this.
 
+    ``XDG_CONFIG_HOME`` is cleared, so ``config.toml`` resolves under the
+    throwaway home rather than the developer's real configuration.
+
     ``HOME`` / ``USERPROFILE`` point at a throwaway directory too, so code
     that looks for the real ``~/Library/LaunchAgents/*.plist`` finds nothing
     and behaves as it does on CI. As a backstop, starting a real
@@ -174,9 +181,12 @@ class IsolatedStateRunner(DiscoverRunner):
         self._state_dir = tempfile.TemporaryDirectory(prefix="bunnify-test-data-")
         self._home_dir = tempfile.TemporaryDirectory(prefix="bunnify-test-home-")
         self._previous: Mapping[str, str | None] = {
-            name: os.environ.get(name) for name in (*_DATA_VARS, *_HOME_VARS)
+            name: os.environ.get(name)
+            for name in (*_DATA_VARS, *_HOME_VARS, *_CONFIG_VARS)
         }
         os.environ.pop(DATA_DIR_ENV_VAR, None)
+        for name in _CONFIG_VARS:
+            os.environ.pop(name, None)
         os.environ[XDG_DATA_HOME_ENV_VAR] = self._state_dir.name
         for name in _HOME_VARS:
             os.environ[name] = self._home_dir.name

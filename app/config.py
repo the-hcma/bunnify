@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
+import socket
+import stat
+import subprocess
 import sys
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -39,6 +44,11 @@ _LEGACY_LOCAL_PORT_ENV_KEY = "BUNNIFY_LOCAL_PORT"
 MODE_KEY = "mode"
 BASE_URL_KEY = "base_url"
 LOCAL_PORT_KEY = "local_port"
+# Per-host overrides live under ``[hosts.<name>]`` so one config.toml can be
+# shared (for example from a git repository) between machines.
+HOSTS_TABLE = "hosts"
+HOST_ENV_VAR = "BUNNIFY_HOST"
+HOST_LOOKUP_TIMEOUT_S = 2
 SPOTTY_BUNNY_HOTKEY_KEY = "spotty_bunny_hotkey"
 DEFAULT_SPOTTY_BUNNY_HOTKEY = "auto"
 SPOTTY_BUNNY_HOTKEY_CHOICES = ("auto", "control", "option", "command")
@@ -228,14 +238,57 @@ def read_toml_document(path: Path) -> tomlkit.TOMLDocument:
 
 
 def write_toml_document(path: Path, document: tomlkit.TOMLDocument) -> None:
-    """Persist ``document`` to ``path`` (parent directories created)."""
+    """Persist ``document`` to ``path`` (parent directories created).
+
+    The file is replaced atomically (temp file in the same directory, flushed
+    to disk, then ``os.replace``), so a concurrent reader never sees a partial
+    file and a crash mid-write leaves the previous contents in place. (The
+    directory entry itself is not fsynced, so a power loss right after the
+    rename can still lose the update, but not the other saved keys.)
+    """
+    # Write through a symlinked config (for example one managed from a dotfiles
+    # repository) instead of replacing the link with a regular file.
+    path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(tomlkit.dumps(document), encoding="utf-8")
+    temp = path.parent / f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+    # A file that already exists keeps its own mode (applied before any content
+    # is written, from an owner-only start, so it is never readable more widely
+    # than the file it replaces). A new file is created 0o666 and the kernel
+    # applies the umask, exactly as ``write_text`` would, without touching the
+    # process-wide umask.
+    try:
+        existing_mode: int | None = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        existing_mode = None
+    handle = os.open(
+        temp,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600 if existing_mode is not None else 0o666,
+    )
+    try:
+        if existing_mode is not None and hasattr(os, "fchmod"):
+            os.fchmod(handle, existing_mode)
+        stream = os.fdopen(handle, "w", encoding="utf-8")
+    except BaseException:
+        os.close(handle)  # nothing owns the descriptor yet
+        temp.unlink(missing_ok=True)
+        raise
+    try:
+        with stream:
+            text = tomlkit.dumps(document)
+            # Removing the last table can leave a trailing blank line.
+            stream.write(text.rstrip("\n") + "\n" if text.strip() else text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def set_config_value(
     key: str,
-    value: str | int,
+    value: str | int | bool,
     *,
     env_path: Path | None = None,
     environ: dict[str, str] | None = None,
@@ -248,6 +301,218 @@ def set_config_value(
     document = read_toml_document(path)
     document[key] = value
     write_toml_document(path, document)
+
+
+@functools.lru_cache(maxsize=1)
+def _system_host_label() -> str:
+    """The machine's stable short name (``LocalHostName`` on macOS).
+
+    ``socket.gethostname()`` can change with the network on a laptop, so on
+    macOS the user-set Bonjour name is preferred.
+    """
+    if sys.platform == "darwin":
+        try:
+            completed = subprocess.run(
+                ["scutil", "--get", "LocalHostName"],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=HOST_LOOKUP_TIMEOUT_S,
+            )
+        except OSError, subprocess.SubprocessError:
+            pass
+        else:
+            name = completed.stdout.strip()
+            if completed.returncode == 0 and name:
+                return name
+    return socket.gethostname().split(".")[0]
+
+
+def current_host(*, environ: Mapping[str, str] | None = None) -> str:
+    """This machine's label for ``[hosts.<label>]`` overrides.
+
+    ``BUNNIFY_HOST`` overrides it (useful when two machines share a name, or
+    to test a host section). Matching against the table names is
+    case-insensitive. The override is read from the calling process's
+    environment, so the macOS LaunchAgents (which start with only ``PATH``) never
+    see a shell-exported ``BUNNIFY_HOST`` and always use the system host name.
+    """
+    env = environ if environ is not None else os.environ
+    override = (env.get(HOST_ENV_VAR) or "").strip()
+    return override or _system_host_label()
+
+
+def _find_host_table(
+    document: tomlkit.TOMLDocument, host: str, path: Path
+) -> tuple[str, Mapping[str, object]] | None:
+    """The ``[hosts.<name>]`` table for *host* (case-insensitive), if any.
+
+    An entry for this host that is not a table is an error, not "no table".
+    """
+    hosts = document.get(HOSTS_TABLE)
+    if not isinstance(hosts, Mapping):
+        return None
+    wanted = host.casefold()
+    matches = [
+        (str(name), table)
+        for name, table in hosts.items()
+        if str(name).casefold() == wanted
+    ]
+    if len(matches) > 1:
+        # Only one would be read and written, so the other would silently do
+        # nothing; hand edits or merges of a shared file can create this.
+        names = ", ".join(f"`{HOSTS_TABLE}.{name}`" for name, _ in matches)
+        raise ConfigParseError(
+            f"{path}: {names} name the same host (host names ignore case); "
+            "keep one of them"
+        )
+    if not matches:
+        return None
+    name, table = matches[0]
+    if not isinstance(table, Mapping):
+        raise ConfigParseError(
+            f"{path}: `{HOSTS_TABLE}.{name}` must be a table of per-host "
+            f"settings, not {type(table).__name__}"
+        )
+    return name, table
+
+
+@dataclass(frozen=True)
+class ScopedValues:
+    """Top-level (all hosts) and this-host values read from one document."""
+
+    everywhere: dict[str, str | None]
+    this_host: dict[str, str | None]
+    host: str | None
+    """The host table's own name in the file, when this host has one."""
+
+
+def _clean(value: object) -> str | None:
+    text = None if value is None else str(value)
+    return text if text is not None and text.strip() else None
+
+
+def read_scoped_config_values(
+    keys: tuple[str, ...],
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+    host: str | None = None,
+) -> ScopedValues:
+    """Read *keys* for all hosts and for this host from one read of the file.
+
+    The machine's name is only looked up when the file has a ``[hosts]``
+    table, so an ordinary config never pays for it.
+    """
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    document = read_toml_document(path)
+    everywhere = {key: _clean(document.get(key)) for key in keys}
+    this_host: dict[str, str | None] = {key: None for key in keys}
+    name: str | None = None
+    _require_hosts_table(document, path)
+    if isinstance(document.get(HOSTS_TABLE), Mapping):
+        found = _find_host_table(
+            document, host if host is not None else current_host(environ=env), path
+        )
+        if found is not None:
+            name, table = found
+            this_host = {key: _clean(table.get(key)) for key in keys}
+    return ScopedValues(everywhere=everywhere, this_host=this_host, host=name)
+
+
+def _require_hosts_table(document: tomlkit.TOMLDocument, path: Path) -> None:
+    """Reject a ``hosts`` key that is not a table, instead of ignoring it."""
+    hosts = document.get(HOSTS_TABLE)
+    if hosts is not None and not isinstance(hosts, Mapping):
+        raise ConfigParseError(
+            f"{path}: `{HOSTS_TABLE}` must be a table of per-host settings "
+            f"(for example [{HOSTS_TABLE}.my-laptop]), not {type(hosts).__name__}"
+        )
+
+
+def _write_scoped(
+    document: tomlkit.TOMLDocument,
+    updates: dict[str, str | int | bool | None],
+    host: str,
+    path: Path,
+) -> None:
+    _require_hosts_table(document, path)
+    found = _find_host_table(document, host, path)
+    name = found[0] if found is not None else host
+    hosts = document.get(HOSTS_TABLE)
+    if hosts is None:
+        if all(value is None for value in updates.values()):
+            return
+        hosts = tomlkit.table(is_super_table=True)
+        document[HOSTS_TABLE] = hosts
+    table = hosts.get(name)
+    if table is None:
+        if all(value is None for value in updates.values()):
+            return
+        table = tomlkit.table()
+        hosts[name] = table
+    for key, value in updates.items():
+        if value is None:
+            if key in table:
+                del table[key]
+        else:
+            table[key] = value
+    if not table:
+        del hosts[name]
+    if not hosts:
+        del document[HOSTS_TABLE]
+
+
+def update_config_values(
+    updates: dict[str, str | int | bool | None],
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+    host: str | None = None,
+) -> None:
+    """Set (or, for ``None``, remove) several keys in one ``config.toml`` write.
+
+    Keys that belong together (a browser and its profile) must not be written
+    one at a time, or an interruption can leave a mixed pair. With *host* the
+    keys go into that host's ``[hosts.<name>]`` table (an existing table of the
+    same name, ignoring case, is reused; an emptied one is removed).
+    """
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    if path == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(path, environ=env)
+    document = read_toml_document(path)
+    before = tomlkit.dumps(document)
+    if host is not None:
+        _write_scoped(document, updates, host, path)
+    else:
+        for key, value in updates.items():
+            if value is None:
+                if key in document:
+                    del document[key]
+            else:
+                document[key] = value
+    if tomlkit.dumps(document) == before:
+        return  # nothing changed: don't rewrite, or create, the file
+    write_toml_document(path, document)
+
+
+def unset_config_value(
+    key: str,
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> None:
+    """Remove one ``config.toml`` key if present, preserving other keys."""
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    if path == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(path, environ=env)
+    document = read_toml_document(path)
+    if key in document:
+        del document[key]
+        write_toml_document(path, document)
 
 
 def get_config_value(
@@ -264,6 +529,31 @@ def get_config_value(
         return None
     text = str(value).strip()
     return text or None
+
+
+def get_config_values(
+    keys: tuple[str, ...],
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> dict[str, str | None]:
+    """Return several ``config.toml`` values from one read of the file.
+
+    Keys that must agree (a browser and its profile) are read together so a
+    concurrent edit cannot hand back a mixed pair. Unlike
+    :func:`get_config_value` the values are not stripped.
+    """
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    document = read_toml_document(path)
+    values: dict[str, str | None] = {}
+    for key in keys:
+        value = document.get(key)
+        text = None if value is None else str(value)
+        # Only a blank value counts as unset; a non-blank value is returned
+        # exactly as written, so a profile name with edge spaces still matches.
+        values[key] = text if text is not None and text.strip() else None
+    return values
 
 
 def load_spotty_bunny_hotkey(

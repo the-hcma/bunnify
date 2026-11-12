@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import sys
 from collections.abc import Callable
@@ -58,6 +59,7 @@ class InstallState:
 def detect_install_state(
     *,
     read_executable_build: Callable[[Path], str | None],
+    env_path: Path | None = None,
 ) -> InstallState:
     """Gather pipx, PyPI, macOS, and config state for onboarding."""
     package, commit = get_build_info()
@@ -71,7 +73,7 @@ def detect_install_state(
     pypi_latest = None if vcs_install is not None else pypi_latest_version()
     upgrade_available = _upgrade_available(package, pypi_latest)
     bookmarks = default_bookmarks_path()
-    preferences = load_preferences()
+    preferences = load_preferences(env_path=env_path)
     spotty_installed = False
     server_installed = False
     if sys.platform == "win32":
@@ -106,11 +108,24 @@ def detect_install_state(
     )
 
 
+def _quote_path(path: Path) -> str:
+    """*path* quoted for one shell: POSIX sh, or PowerShell on Windows.
+
+    ``list2cmdline`` quotes for the Windows C runtime, not for cmd.exe or
+    PowerShell (a path with ``&`` would be split), so Windows gets PowerShell's
+    single-quoted form and the guidance labels it.
+    """
+    if sys.platform == "win32":
+        return "'" + str(path).replace("'", "''") + "'"
+    return shlex.quote(str(path))
+
+
 def format_onboarding_text(
     state: InstallState | None = None,
     *,
     read_executable_build: Callable[[Path], str | None] | None = None,
     include_summary: bool = True,
+    env_path: Path | None = None,
 ) -> str:
     """Return post-install / post-upgrade next steps for the terminal.
 
@@ -122,9 +137,25 @@ def format_onboarding_text(
         if reader is None:
             from app.cli import _read_executable_build as reader  # noqa: PLC0415
 
-        state = detect_install_state(read_executable_build=reader)
+        state = detect_install_state(read_executable_build=reader, env_path=env_path)
     bookmarks = default_bookmarks_path()
-    config = env_file_path()
+    config = env_path if env_path is not None else env_file_path()
+    # Follow-up commands must keep naming the same config file.
+    setup_cmd = (
+        f"bunnify --env-file {_quote_path(env_path)} setup"
+        if env_path is not None
+        else "bunnify setup"
+    )
+    reprint_cmd = (
+        f"bunnify --env-file {_quote_path(env_path)} onboard"
+        if env_path is not None
+        else "bunnify onboard"
+    )
+    shell_note = (
+        "   # PowerShell syntax"
+        if env_path is not None and sys.platform == "win32"
+        else ""
+    )
     lines = ["Bunnify — next steps after install or upgrade", ""]
     if include_summary:
         lines.extend(_format_install_summary(state))
@@ -135,7 +166,10 @@ def format_onboarding_text(
         lines.extend(
             [
                 f"{step}. Bookmarks (required before the server starts):",
-                "     bunnify setup   # offers to install the example shortcuts",
+                "     "
+                + setup_cmd
+                + "   # offers to install the example shortcuts"
+                + (" (PowerShell syntax)" if shell_note else ""),
                 f"     # or create {bookmarks} yourself from bunnify.json.example",
                 "",
             ]
@@ -146,7 +180,7 @@ def format_onboarding_text(
             [
                 f"{step}. Configure and start the server (local on a laptop;",
                 "   remote for a home/always-on host):",
-                "     bunnify setup",
+                f"     {setup_cmd}{shell_note}",
                 "   Guide: https://github.com/the-hcma/bunnify/blob/main/docs/LOCAL.md",
                 "",
             ]
@@ -183,7 +217,7 @@ def format_onboarding_text(
             f"   {pipx_bunnify_display()}.",
             "",
             "Docs: https://github.com/the-hcma/bunnify",
-            "Re-print this message anytime:  bunnify onboard",
+            f"Re-print this message anytime:  {reprint_cmd}",
         ]
     )
     return "\n".join(lines)
@@ -197,15 +231,20 @@ def run_onboard(
     read_executable_build: Callable[[Path], str | None] | None = None,
     run_upgrade: Callable[..., None] | None = None,
     theme: Theme | None = None,
+    env_path: Path | None = None,
 ) -> None:
-    """Print onboarding guidance; interactively upgrade and install macOS extras."""
+    """Print onboarding guidance; interactively upgrade and install macOS extras.
+
+    ``env_path`` is the config file the browser-profile step saves to (the
+    CLI's ``--env-file``); ``None`` means the default location.
+    """
     from app.cli import _command_banner, _read_executable_build  # noqa: PLC0415
 
     log = print_fn or print
     ask = prompt_fn or input
     colors = theme if theme is not None else Theme(enabled=False)
     reader = read_executable_build or _read_executable_build
-    state = detect_install_state(read_executable_build=reader)
+    state = detect_install_state(read_executable_build=reader, env_path=env_path)
     yes = confirm_yes
     if yes is None:
         from app.cli import _confirm_explicit_yes as yes  # noqa: PLC0415
@@ -215,7 +254,7 @@ def run_onboard(
     summary = _format_install_summary(state)
     for line in summary:
         log(line)
-    preferences = load_preferences()
+    preferences = load_preferences(env_path=env_path)
     if preferences is not None and preferences.base_url:
         log("")
         log(colors.header("Current configuration"))
@@ -234,6 +273,7 @@ def run_onboard(
                 try:
                     run_setup(
                         prompt_fn=ask,
+                        env_path=env_path,
                         print_fn=log,
                         skip_keep_confirmation=True,
                         theme=colors,
@@ -241,7 +281,9 @@ def run_onboard(
                 except ClientError as exc:
                     log(colors.err(f"error: {exc}"))
                 else:
-                    state = detect_install_state(read_executable_build=reader)
+                    state = detect_install_state(
+                        read_executable_build=reader, env_path=env_path
+                    )
     log("")
 
     if interactive and state.upgrade_available and state.pypi_latest is not None:
@@ -254,11 +296,13 @@ def run_onboard(
                 from app.cli import run_upgrade as upgrade  # noqa: PLC0415
 
             try:
-                upgrade(print_fn=log, prompt_fn=ask, theme=colors)
+                upgrade(print_fn=log, prompt_fn=ask, theme=colors, env_path=env_path)
             except ClientError as exc:
                 log(colors.err(f"error: {exc}"))
             else:
-                state = detect_install_state(read_executable_build=reader)
+                state = detect_install_state(
+                    read_executable_build=reader, env_path=env_path
+                )
 
     if interactive and state.macos_platform and not state.macos_extra:
         if yes(
@@ -273,12 +317,14 @@ def run_onboard(
                 log("  pipx install --force 'bunnify[macos]'")
             elif install_macos_extra(pipx):
                 log(colors.ok("✓ Installed bunnify[macos] (PyObjC) via pipx"))
-                state = detect_install_state(read_executable_build=reader)
+                state = detect_install_state(
+                    read_executable_build=reader, env_path=env_path
+                )
             else:
                 log(colors.warn("pipx install --force 'bunnify[macos]' failed."))
 
     if interactive and state.macos_platform and state.macos_extra:
-        preferences = load_preferences()
+        preferences = load_preferences(env_path=env_path)
         installed_local_port: int | None = None
         if preferences is not None and preferences.mode == "local":
             if not state.server_agent_installed or yes(
@@ -297,7 +343,9 @@ def run_onboard(
                 if code == 0:
                     installed_local_port = port
                     log(colors.ok("✓ Local Bunnify server LaunchAgent is installed."))
-                    state = detect_install_state(read_executable_build=reader)
+                    state = detect_install_state(
+                        read_executable_build=reader, env_path=env_path
+                    )
                 else:
                     log(
                         colors.warn(
@@ -339,7 +387,9 @@ def run_onboard(
                             "✓ Spotty Bunny is installed and the hotkey chord works."
                         )
                     )
-                    state = detect_install_state(read_executable_build=reader)
+                    state = detect_install_state(
+                        read_executable_build=reader, env_path=env_path
+                    )
                 else:
                     log(
                         colors.warn(
@@ -347,13 +397,28 @@ def run_onboard(
                         )
                     )
 
+    if interactive:
+        from app.browsers import offer_default_profile  # noqa: PLC0415
+
+        offer_default_profile(ask=ask, log=log, colors=colors, env_path=env_path)
+        if state.macos_platform:
+            # The agent was installed above, before any default existed, so its
+            # install-time check could not see one; check now (non-blocking).
+            from app.spotty_bunny_agent import (  # noqa: PLC0415
+                warn_if_browser_profiles_blocked,
+            )
+
+            warn_if_browser_profiles_blocked(print_err=log)
+
     log("")
     # The summary above is repeated only if the flow changed the install
     # (an upgrade, PyObjC, a new agent), so it is never printed twice for
     # the same state.
     log(
         format_onboarding_text(
-            state, include_summary=_format_install_summary(state) != summary
+            state,
+            include_summary=_format_install_summary(state) != summary,
+            env_path=env_path,
         )
     )
 
