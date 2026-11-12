@@ -54,13 +54,14 @@ _FALSE = {"", "0", "f", "false", "n", "no", "off"}
 def effective_families(values: list[str]) -> tuple[list[str], bool]:
     """Families left by repeated ``RestrictAddressFamilies=`` lines.
 
-    systemd accumulates the lines and an empty assignment resets the list.
+    systemd accumulates the lines. An empty assignment resets the list, and
+    ``none`` resets it to an empty allow-list, which denies every family.
     Returns ``(families, is_deny_list)``.
     """
     families: list[str] = []
     deny = False
     for value in values:
-        if not value.strip():
+        if not value.strip() or value.strip().lower() == "none":
             families, deny = [], False
             continue
         tokens = value.split()
@@ -69,6 +70,17 @@ def effective_families(values: list[str]) -> tuple[list[str], bool]:
             tokens[0] = tokens[0][1:]
         families.extend(token for token in tokens if token)
     return families, deny
+
+
+def allows_server_network(values: list[str]) -> bool:
+    """True when the effective policy still allows Unix, IPv4 and IPv6 sockets.
+
+    The listener, the HTTPS calls to api.github.com and pypi.org and the
+    health-check curl need all three. A deny-list is a different policy, so it
+    is not accepted here.
+    """
+    families, deny = effective_families(values)
+    return not deny and all(f in families for f in ("AF_UNIX", "AF_INET", "AF_INET6"))
 
 
 def enabled_sandboxing(service: dict[str, list[str]]) -> list[str]:
@@ -109,6 +121,20 @@ class ParserTests(SimpleTestCase):
 
 
 class SandboxingHelperTests(SimpleTestCase):
+    def test_a_later_none_denies_every_family(self) -> None:
+        self.assertEqual(([], False), effective_families(["AF_UNIX", "none"]))
+        self.assertFalse(allows_server_network(["AF_UNIX AF_INET AF_INET6", "none"]))
+        # ... and a list given after it applies again.
+        self.assertTrue(
+            allows_server_network(["none", "AF_UNIX AF_INET AF_INET6"]),
+        )
+
+    def test_the_network_policy_check_rejects_unusable_policies(self) -> None:
+        self.assertTrue(allows_server_network(["AF_UNIX AF_INET AF_INET6"]))
+        self.assertFalse(allows_server_network(["AF_UNIX AF_INET"]))  # no IPv6
+        self.assertFalse(allows_server_network(["~AF_INET"]))  # a deny-list
+        self.assertFalse(allows_server_network(["AF_UNIX AF_INET AF_INET6", ""]))
+
     def test_all_of_systemds_boolean_spellings_are_understood(self) -> None:
         for spelling in ("1", "on", "t", "true", "y", "yes", "YES"):
             self.assertEqual(
@@ -167,13 +193,7 @@ class BunnifyUnitTests(SimpleTestCase):
     def test_the_server_can_still_listen_and_reach_the_network(self) -> None:
         values = self.service.get("RestrictAddressFamilies", [])
         self.assertTrue(values, "RestrictAddressFamilies is not set")
-        families, deny = effective_families(values)
-        # The listener, the HTTPS calls to api.github.com and pypi.org, and the
-        # health-check curl need these. A deny-list ("~...") is a different
-        # policy, so it is not accepted here.
-        self.assertFalse(deny)
-        for family in ("AF_UNIX", "AF_INET", "AF_INET6"):
-            self.assertIn(family, families)
+        self.assertTrue(allows_server_network(values), values)
 
     def test_directives_that_need_user_namespaces_stay_out_of_the_user_unit(
         self,
