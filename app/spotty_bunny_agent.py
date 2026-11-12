@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1080,8 +1081,8 @@ def _browser_profiles_lines(interpreter: Path, *, configured: bool) -> list[str]
         "“Operation not permitted”.",
         "Add this executable (the real python, not Python.app) under System "
         f"Settings → Privacy & Security → Full Disk Access: {executable}",
-        f'Open the pane: open "{FULL_DISK_ACCESS_URL}"; reveal the file: '
-        f'open -R "{executable}"',
+        f"Open the pane: open {shlex.quote(FULL_DISK_ACCESS_URL)}; reveal the file: "
+        f"open -R {shlex.quote(executable)}",
         f"Then restart the agent: {COMMAND_NAME} upgrade",
     ]
 
@@ -1640,8 +1641,10 @@ for base in bases:
             handle.read(1)
     except FileNotFoundError:
         continue
-    except PermissionError:
-        blocked = True
+    except PermissionError as error:
+        if error.errno == 1:  # EPERM: macOS privacy (TCC) denial
+            blocked = True
+        # EACCES is an ordinary file-mode problem, not fixed by Full Disk Access.
     except OSError:
         continue  # not a privacy denial (e.g. a directory): say nothing
     else:

@@ -71,3 +71,17 @@ spotty_bunny_hotkey = "auto"
 # Set to false so the installer (`bunnify onboard`) stops asking you to pick
 # a default profile.
 # default_browser_prompt = false
+
+# One config shared between machines? Give a machine its own default in a
+# [hosts.<name>] table; the top-level keys above stay the default for machines
+# without one. `bunnify browsers` prints this machine's name ("This host:");
+# matching ignores case, and BUNNIFY_HOST overrides it. A machine's table
+# replaces the browser/profile pair as a whole (it never inherits half of it).
+#
+# [hosts.my-work-laptop]
+# default_browser = "edge"
+# default_browser_profile = "Work"
+# default_browser_prompt = false
+#
+# `bunnify browsers default` writes this machine's table for you;
+# `bunnify browsers default global` writes the top-level keys.

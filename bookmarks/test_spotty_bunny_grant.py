@@ -968,3 +968,18 @@ class SpottyBunnyRuntimeGrantRecorderTests(SimpleTestCase):
             input_monitoring=False,
         )
         self.assertEqual(heartbeat.call_count, 1)
+
+
+class BrowserProfileLinesQuotingTests(SimpleTestCase):
+    def test_paths_are_shell_quoted(self) -> None:
+        import os
+        import shlex
+
+        from app.spotty_bunny_agent import _browser_profiles_lines
+
+        tricky = Path("/tmp/odd dir/py'th$on`x")
+        lines = _browser_profiles_lines(tricky, configured=True)
+        text = "\n".join(lines)
+        real = os.path.realpath(tricky)
+        self.assertIn(f"open -R {shlex.quote(real)}", text)
+        self.assertEqual(shlex.split(f"open -R {shlex.quote(real)}")[-1], real)

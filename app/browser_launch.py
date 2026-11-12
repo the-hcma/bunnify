@@ -8,6 +8,7 @@ be found, :class:`BrowserLaunchError` is raised and nothing is opened.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import plistlib
@@ -20,6 +21,7 @@ from xml.parsers.expat import ExpatError
 
 from app.browser_spec import BROWSER_APPS, BrowserSpec
 from app.client import ClientError
+from app.config import current_host
 
 LAUNCH_TIMEOUT_SECONDS = 10.0
 
@@ -50,6 +52,15 @@ class BrowserLaunchError(ClientError):
 
 class BrowserProfilesAccessError(BrowserLaunchError):
     """The OS denied reading the browser's profile list (macOS privacy)."""
+
+
+class BrowserProfileNotFoundError(BrowserLaunchError):
+    """A shortcut names a profile that does not exist on this machine.
+
+    Usually the shortcut was set up on another machine (a work laptop, say)
+    that shares the same bookmarks, so nothing is opened and the message says
+    so instead of just failing.
+    """
 
 
 class BrowserProfilesMissingError(BrowserLaunchError):
@@ -248,6 +259,10 @@ def list_profile_details(user_data: Path) -> list[ProfileInfo]:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except PermissionError as exc:
         detail = f"Cannot read browser profiles from {state_path}: {exc}"
+        if exc.errno != errno.EPERM:
+            # EACCES is an ordinary file-mode problem; Full Disk Access would
+            # not fix it, so do not send the user there.
+            raise BrowserLaunchError(detail) from exc
         if sys.platform == "darwin":
             detail += f". {macos_profile_access_hint()}"
         raise BrowserProfilesAccessError(detail) from exc
@@ -355,8 +370,12 @@ def resolve_profile_dir(app: str, profile: str, profiles: Mapping[str, str]) -> 
             f"({', '.join(matches)}); rename one so the shortcut is unambiguous"
         )
     available = ", ".join(f'"{n}"' for n in sorted(profiles.values())) or "none"
-    raise BrowserLaunchError(
-        f'{label} has no profile named "{profile}". Available profiles: {available}'
+    raise BrowserProfileNotFoundError(
+        f'{label} has no profile named "{profile}" on this machine ({current_host()}). '
+        "This shortcut was probably set up for a different machine (for example a "
+        "work laptop), so nothing was opened. "
+        f"Profiles here: {available}. To use it here, create or rename a profile "
+        "with that exact name, or point the shortcut at one of these."
     )
 
 

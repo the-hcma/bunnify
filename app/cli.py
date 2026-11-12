@@ -2527,7 +2527,8 @@ def main(
     List Edge/Chrome profiles and choose the default one
     (`browsers` is a reserved shortcut name):
       bunnify browsers
-      bunnify browsers default
+      bunnify browsers default          # this host only
+      bunnify browsers default global   # every host
 
     \b
     Diagnose a dead Spotty Bunny hotkey and get the exact System Settings

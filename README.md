@@ -126,7 +126,7 @@ That's a [bash-completion v2](https://github.com/scop/bash-completion) user dire
 - **macOS server LaunchAgent** — local setup installs `bunnify-server` under launchd (`bunnify-server install|status|upgrade|uninstall`)
 - **Web** — `/cmd/` command palette, `/list/` browser, smart `/search/`
 - **Chrome / Edge** — OpenSearch at `/opensearch.xml` ([setup guide](https://github.com/the-hcma/bunnify/blob/main/CHROME_SETUP.md))
-- **Browser profiles** — pin a shortcut to an Edge/Chrome profile, or set a machine-wide default (`bunnify browsers` lists your profiles; see [docs/CONFIG.md](docs/CONFIG.md#finding-your-browser-profiles))
+- **Browser profiles** — pin a shortcut to an Edge/Chrome profile, or set a machine-wide default (`bunnify browsers` lists your profiles, with per-machine defaults for a shared config; see [docs/CONFIG.md](docs/CONFIG.md#finding-your-browser-profiles))
 - **Parameters** — URLs with `#{name}` placeholders and optional defaults
 - **Validation** — JSON Schema on load; reserved keys `h` / `help`
 

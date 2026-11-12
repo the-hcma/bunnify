@@ -1857,7 +1857,11 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             denied.write_text("{}", encoding="utf-8")
             denied.chmod(0o000)
             try:
-                self.assertIs(run(home), False)
+                # chmod 000 is EACCES, an ordinary file-mode problem that Full
+                # Disk Access would not fix, so it must not be reported as a
+                # privacy denial (only EPERM is). Edge's file is still readable,
+                # so the probe reports readable, not blocked.
+                self.assertIs(run(home), True)
             finally:
                 denied.chmod(0o600)
             # A non-denial failure (Local State is a directory) says nothing.
@@ -1867,6 +1871,38 @@ class SpottyBunnyAgentTests(SimpleTestCase):
             (home / edge / "Local State").unlink()
             (home / edge / "Local State").mkdir()
             self.assertIsNone(run(home))
+
+    def test_browser_profiles_probe_script_reports_only_eperm_as_blocked(self) -> None:
+        import errno
+
+        from app.spotty_bunny_agent import _PROFILES_PROBE
+
+        def run(error: OSError) -> object:
+            real_open = open
+
+            def fake_open(path: object, *args: object, **kwargs: object) -> object:
+                if "Local State" in str(path):
+                    raise error
+                return real_open(path, *args, **kwargs)  # type: ignore[call-overload]
+
+            with TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                out = home / "out.json"
+                with (
+                    patch.dict(os.environ, {"HOME": str(home)}),
+                    patch.object(sys, "argv", ["probe", "0", str(out)]),
+                    patch("builtins.open", fake_open),
+                ):
+                    exec(  # noqa: S102
+                        compile(_PROFILES_PROBE, "probe", "exec"),
+                        {"__name__": "probe"},
+                    )
+                return json.loads(out.read_text(encoding="utf-8"))["browser_profiles"]
+
+        self.assertIs(
+            run(PermissionError(errno.EPERM, "Operation not permitted")), False
+        )
+        self.assertIsNone(run(PermissionError(errno.EACCES, "Permission denied")))
 
     def test_install_warns_but_still_installs_when_default_profile_is_blocked(
         self,

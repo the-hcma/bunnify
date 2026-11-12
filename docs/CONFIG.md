@@ -116,17 +116,20 @@ Two profiles with the same display name cannot be told apart, so Bunnify refuses
 
 ### Default browser and profile
 
-Pinning every shortcut is tedious, so set a machine-wide default in `config.toml` (it lives there, not in the shared bookmarks, because profile names differ between machines):
+Pinning every shortcut is tedious, so set a default in `config.toml` (it lives there, not in the shared bookmarks, because profile names differ between machines):
 
 ```toml
 default_browser = "edge"
 default_browser_profile = "Work"
 ```
 
-or choose it interactively:
+That top-level pair applies to every machine that reads this file. To give one machine its own default, see [Using one config on several machines](#using-one-config-on-several-machines).
+
+You can also choose it interactively. This saves it for **this machine** only:
 
 ```bash
-bunnify browsers default
+bunnify browsers default          # this machine only
+bunnify browsers default global   # the all-machines default
 ```
 
 | Shortcut has | Opens in |
@@ -139,7 +142,45 @@ bunnify browsers default
 
 A `browser` block that names a profile always wins; the one exception is a block naming only the same browser as the default, which opens in the default profile instead of the browser's last-used one. With no default set, nothing changes: unpinned shortcuts open in the system default browser. The default applies on macOS and Windows and is ignored elsewhere. `default_browser` must be `edge` or `chrome`; a typo is an error rather than a silent fallback, and so is a `config.toml` that cannot be parsed (every command reads `base_url` from the same file and already stops on that), because opening in the wrong profile silently would hide the mistake.
 
-`bunnify onboard` lists the profiles it finds after the other install steps and asks whether to use one as the default. Press Enter to decide later (it asks again next time), pick a number to save it, or answer `n` to never ask: that sets `default_browser_prompt = false`.
+`bunnify onboard` lists the profiles it finds after the other install steps and asks whether to use one as the default for this machine. Press Enter to decide later (it asks again next time), pick a number to save it, or answer `n` to never ask on this machine: that sets `default_browser_prompt = false` in this machine's table.
+
+### Using one config on several machines
+
+If the same `config.toml` is shared between machines (for example checked out from a git repository), put each machine's own choice in a `[hosts.<name>]` table and keep the top-level keys as the default for every machine that has no table of its own:
+
+```toml
+# every machine without its own table
+default_browser = "edge"
+default_browser_profile = "Personal"
+
+[hosts.BRKT-MAC-CX6LJXFCQK]
+default_browser = "edge"
+default_browser_profile = "hcma @ BRK Tech"
+
+[hosts.home-mini]
+default_browser = "chrome"
+default_browser_profile = "Me"
+```
+
+- **Which table is mine.** `bunnify browsers` prints `This host: <name>`; that is the table name to use. On macOS it is the Bonjour name (`scutil --get LocalHostName`), elsewhere the short hostname. Matching ignores case. Set `BUNNIFY_HOST` to override it, for example when two machines share a name.
+- **A host's table replaces the pair.** If a machine's table sets `default_browser` and/or `default_browser_profile`, those replace the top-level pair as a whole, so a browser is never paired with another machine's profile. Keys a table does not set are not inherited for the browser/profile pair.
+- **`default_browser_prompt`** follows the same rule: this machine's table wins, otherwise the top-level value.
+- **Writing it for you.** `bunnify browsers default` and the `bunnify onboard` step write this machine's table and leave everything else (other machines, the top-level default, and comments outside this machine's table) untouched; comments inside this machine's own table are lost if clearing leaves it empty and it is removed. `bunnify browsers default global` writes the top-level keys. Choosing `c` on a machine removes only that machine's `default_browser` and `default_browser_profile` (its table goes away if nothing else is left in it, and other keys such as `default_browser_prompt` stay), so it falls back to the top-level default.
+
+Only the machine's own table is read, so a table for another machine has no effect here.
+
+#### Shared bookmarks and per-machine profiles
+
+A shortcut's `browser` block lives in the shared `bookmarks.json`, so it names a profile that may only exist on one of your machines (a work laptop, say). On a machine without that profile Bunnify opens nothing and says why instead of guessing:
+
+```text
+Edge has no profile named "hcma @ BRK Tech" on this machine (home-mini). This shortcut was
+probably set up for a different machine (for example a work laptop), so nothing was opened.
+Profiles here: "Personal". To use it here, create or rename a profile with that exact name,
+or point the shortcut at one of these.
+```
+
+It never falls back to another profile, because opening a work-only page in the wrong profile is worse than not opening it.
 
 ### macOS: reading profile names from Spotty Bunny
 

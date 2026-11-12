@@ -350,6 +350,35 @@ class OnboardTests(SimpleTestCase):
             )
         self.assertEqual(offer.call_args.kwargs["env_path"], path)
 
+    def test_run_onboard_reads_the_requested_config_throughout(self) -> None:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        path = Path("/tmp/custom-config.toml")
+        with (
+            patch("app.onboard.detect_install_state", return_value=state) as detect,
+            patch("app.onboard.load_preferences", return_value=None) as prefs,
+            patch("app.onboard.sys.stdin") as stdin,
+        ):
+            stdin.isatty.return_value = False
+            run_onboard(
+                print_fn=lambda _m: None, prompt_fn=lambda _m: "n", env_path=path
+            )
+        self.assertTrue(detect.called)
+        for call in detect.call_args_list:
+            self.assertEqual(call.kwargs["env_path"], path)
+        for call in prefs.call_args_list:
+            self.assertEqual(call.kwargs["env_path"], path)
+
+    def test_onboarding_guidance_names_the_selected_config(self) -> None:
+        from app.onboard import format_onboarding_text
+
+        state = self._state(preferences_ready=False, bookmarks_ready=False)
+        path = Path("/tmp/my config.toml")
+        text = format_onboarding_text(state, env_path=path)
+        self.assertIn(str(path), text)
+        self.assertIn("bunnify --env-file '/tmp/my config.toml' setup", text)
+        default_text = format_onboarding_text(state)
+        self.assertNotIn("--env-file", default_text)
+
     def test_run_onboard_skips_the_default_browser_profile_when_not_interactive(
         self,
     ) -> None:
