@@ -15,6 +15,7 @@ import click
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
+from app.browser_default import apply_default_browser
 from app.browser_launch import launch, plan_launch
 from app.browser_spec import BrowserSpec
 from app.client import (
@@ -253,12 +254,15 @@ def open_url(
     *,
     opener: Callable[[str], bool] | None = None,
     browser: BrowserSpec | None = None,
+    env_path: Path | None = None,
 ) -> None:
     """Open ``url`` in the platform default browser.
 
-    When ``browser`` is given, open it in that browser/profile instead and
-    raise :class:`BrowserLaunchError` (opening nothing) if it is unavailable.
+    When ``browser`` is given (or ``default_browser`` in ``config.toml`` fills
+    one in), open it in that browser/profile instead and raise
+    :class:`BrowserLaunchError` (opening nothing) if it is unavailable.
     """
+    browser = apply_default_browser(browser, env_path=env_path)
     if browser is not None:
         launch(plan_launch(url, browser))
         return
@@ -1883,17 +1887,24 @@ def _handle_resolved(
     theme: Theme,
     print_url: bool,
     open_browser: bool,
+    env_path: Path | None = None,
     opener: Callable[[str], bool] | None,
 ) -> None:
     resolved = resolve_shortcut(query, base_url=base_url, strict=True)
     if print_url:
         click.echo(resolved.url)
-    if resolved.browser is not None and not open_browser:
+    effective_browser = apply_default_browser(resolved.browser, env_path=env_path)
+    if effective_browser is not None and not open_browser:
         # Validate (and report) the pin without launching anything.
-        plan = plan_launch(resolved.url, resolved.browser)
+        plan = plan_launch(resolved.url, effective_browser)
         click.echo(f"{theme.meta('browser:')} {plan.describe()}", err=True)
     if open_browser:
-        open_url(resolved.url, opener=opener, browser=resolved.browser)
+        open_url(
+            resolved.url,
+            opener=opener,
+            browser=resolved.browser,
+            env_path=env_path,
+        )
         kind = resolved.kind or "url"
         key = resolved.key or ""
         meta = f"{kind}" + (f":{key}" if key else "")
@@ -1930,6 +1941,7 @@ def _run_repl(
     theme: Theme,
     print_url: bool,
     open_browser: bool,
+    env_path: Path | None = None,
     opener: Callable[[str], bool] | None,
     input_fn: Callable[[str], str] | None,
     fzf_picker: Callable[..., str | None],
@@ -1994,6 +2006,7 @@ def _run_repl(
                 theme=theme,
                 print_url=print_url,
                 open_browser=open_browser,
+                env_path=env_path,
                 opener=opener,
                 fzf_picker=fzf_picker,
                 session=None,
@@ -2083,6 +2096,7 @@ def _run_repl(
             theme=theme,
             print_url=print_url,
             open_browser=open_browser,
+            env_path=env_path,
             opener=opener,
             fzf_picker=fzf_picker,
             session=session,
@@ -2100,6 +2114,7 @@ def _dispatch_repl_line(
     theme: Theme,
     print_url: bool,
     open_browser: bool,
+    env_path: Path | None = None,
     opener: Callable[[str], bool] | None,
     fzf_picker: Callable[..., str | None],
     session: object | None,
@@ -2156,6 +2171,7 @@ def _dispatch_repl_line(
             theme=theme,
             print_url=print_url,
             open_browser=open_browser,
+            env_path=env_path,
             opener=opener,
         )
     except ClientError as exc:
@@ -2214,6 +2230,7 @@ def _run(
     fzf_query: str,
     print_url: bool,
     open_browser: bool,
+    env_path: Path | None = None,
     theme: Theme | None = None,
     opener: Callable[[str], bool] | None = None,
     input_fn: Callable[[str], str] | None = None,
@@ -2257,6 +2274,7 @@ def _run(
             theme=active_theme,
             print_url=print_url,
             open_browser=open_browser,
+            env_path=env_path,
             opener=opener,
         )
         return
@@ -2267,6 +2285,7 @@ def _run(
             theme=active_theme,
             print_url=print_url,
             open_browser=open_browser,
+            env_path=env_path,
             opener=opener,
             input_fn=input_fn,
             fzf_picker=picker,
@@ -2282,6 +2301,7 @@ def _run(
         theme=active_theme,
         print_url=print_url,
         open_browser=open_browser,
+        env_path=env_path,
         opener=opener,
     )
 
@@ -2504,6 +2524,12 @@ def main(
       spotty-bunny --verbose
 
     \b
+    List Edge/Chrome profiles and choose the default one
+    (`browsers` is a reserved shortcut name):
+      bunnify browsers
+      bunnify browsers default
+
+    \b
     Diagnose a dead Spotty Bunny hotkey and get the exact System Settings
     fix (`doctor` is a reserved shortcut name):
       bunnify doctor
@@ -2553,8 +2579,27 @@ def main(
         )
 
     if onboard_requested or shortcut_args == ("onboard",):
-        run_onboard(print_fn=click.echo, prompt_fn=prompt_fn, theme=theme)
+        run_onboard(
+            print_fn=click.echo,
+            prompt_fn=prompt_fn,
+            theme=theme,
+            env_path=env_file,
+        )
         return
+
+    if shortcut_args and shortcut_args[0] == "browsers":
+        from app.browsers import run_browsers
+
+        raise SystemExit(
+            run_browsers(
+                list(shortcut_args[1:]),
+                env_path=env_file,
+                print_fn=click.echo,
+                prompt_fn=prompt_fn,
+                theme=theme,
+                interactive=sys.stdin.isatty() and sys.stdout.isatty(),
+            )
+        )
 
     if shortcut_args and shortcut_args[0] == "spotty-bunny":
         from app.spotty_bunny_cli import main as spotty_bunny_main
@@ -2614,6 +2659,7 @@ def main(
             fzf_query=fzf_query,
             print_url=print_url or dry_run,
             open_browser=not (print_url or dry_run),
+            env_path=env_file,
             theme=theme,
             editing_mode=editing_mode_enum(mode_name),
         )

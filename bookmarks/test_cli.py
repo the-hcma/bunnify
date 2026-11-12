@@ -7145,3 +7145,66 @@ class KeyUsageAndCompletionTests(TestCase):
         body = lines[1].strip()
         # "b" + spaces + desc(40) + spaces + "u"
         self.assertRegex(body, r"^b\s+.{40}\s+u$")
+
+
+class BrowsersCommandDispatchTests(SimpleTestCase):
+    def test_browsers_command_runs_without_a_server(self) -> None:
+        from app.cli import main
+
+        with patch("app.browsers.run_browsers", return_value=0) as run:
+            result = CliRunner().invoke(main, ["browsers", "default"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(run.call_args.args[0], ["default"])
+
+    def test_browsers_exit_code_is_propagated(self) -> None:
+        from app.cli import main
+
+        with patch("app.browsers.run_browsers", return_value=1):
+            result = CliRunner().invoke(main, ["browsers"])
+        self.assertEqual(result.exit_code, 1)
+
+    def test_help_lists_the_browsers_command(self) -> None:
+        from app.cli import main
+
+        result = CliRunner().invoke(main, ["--help"])
+        self.assertIn("bunnify browsers default", result.output)
+
+
+class EnvFileThreadingTests(SimpleTestCase):
+    def test_main_passes_the_env_file_to_the_shortcut_run(self) -> None:
+        from pathlib import Path
+
+        from app.cli import main
+
+        with (
+            patch("app.cli.ensure_ready_base_url", return_value="http://b"),
+            patch("app.cli._run") as run,
+        ):
+            result = CliRunner().invoke(
+                main, ["--env-file", "/tmp/custom.toml", "--dry-run", "x"]
+            )
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(run.call_args.kwargs["env_path"], Path("/tmp/custom.toml"))
+
+    def test_repl_dispatch_passes_the_env_file_to_the_launch(self) -> None:
+        from pathlib import Path
+
+        from app.cli import _dispatch_repl_line
+        from app.theme import Theme
+
+        path = Path("/tmp/custom.toml")
+        with patch("app.cli._handle_resolved") as handle:
+            _dispatch_repl_line(
+                "gh",
+                keys=["gh"],
+                base_url="http://b",
+                theme=Theme(enabled=False),
+                print_url=False,
+                open_browser=True,
+                env_path=path,
+                opener=None,
+                fzf_picker=lambda *a, **k: None,
+                session=None,
+                set_keys=None,
+            )
+        self.assertEqual(handle.call_args.kwargs["env_path"], path)

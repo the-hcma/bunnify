@@ -7,7 +7,7 @@
 Bunnify stores user configuration under `$XDG_CONFIG_HOME/bunnify`, defaulting to `~/.config/bunnify` when `XDG_CONFIG_HOME` is unset:
 
 - `bookmarks.json` contains personal shortcuts (required before server start).
-- `config.toml` contains persistent CLI/server preferences (`mode`, `base_url`, `local_port`) and the Spotty Bunny hotkey chord (`spotty_bunny_hotkey`). Not environment variables — edit the file directly, or use `bunnify setup` / `bunnify spotty-bunny hotkey`. A legacy `config.env` (or the old `BUNNIFY_MODE`/`BUNNIFY_BASE_URL`/ `BUNNIFY_LOCAL_PORT` environment variables) is migrated into `config.toml` once, automatically, the first time it's read. See [`config.example.toml`](../config.example.toml) at the repository root for an annotated example of every key.
+- `config.toml` contains persistent CLI/server preferences (`mode`, `base_url`, `local_port`), the Spotty Bunny hotkey chord (`spotty_bunny_hotkey`), and the default browser profile (`default_browser`, `default_browser_profile`, `default_browser_prompt`). Not environment variables — edit the file directly, or use `bunnify setup` / `bunnify spotty-bunny hotkey`. A legacy `config.env` (or the old `BUNNIFY_MODE`/`BUNNIFY_BASE_URL`/ `BUNNIFY_LOCAL_PORT` environment variables) is migrated into `config.toml` once, automatically, the first time it's read. See [`config.example.toml`](../config.example.toml) at the repository root for an annotated example of every key.
 - `run/` contains PID and port files for CLI-managed servers. On macOS the server LaunchAgent uses `run/launchd/` (see [LOCAL.md](LOCAL.md)).
 
 Writable data (logs, SQLite, Spotty Bunny’s daily PyPI check cache `pypi-latest.json`) lives under `$XDG_DATA_HOME/bunnify` or `BUNNIFY_DATA_DIR`.
@@ -99,6 +99,62 @@ There is no fallback: if the browser is not installed, the profile does not exis
 `bunnify --dry-run` (and `--print-url`) does not launch anything but still validates the browser and profile and prints `browser: Edge, profile "Work-BRK"` on stderr.
 
 Supported on macOS and Windows, from the `bunnify` CLI and Spotty Bunny. Typing a shortcut into the browser address bar cannot honor `browser`: the server only returns a redirect to whichever browser sent the request.
+
+### Finding your browser profiles
+
+A profile is identified by its display name, exactly as the browser shows it in its profile picker (case-sensitive). List the profiles Bunnify can see on this machine with:
+
+```bash
+bunnify browsers
+```
+
+It prints, for each installed Edge and Chrome, every profile's display name, the signed-in account, and its on-disk directory (`Default`, `Profile 1`, …), and marks the default you configured. Use the **display name** in `browser.profile`, not the directory.
+
+You can also look inside the browser: open `edge://settings/profiles` (or `chrome://settings/manageProfile`) to see and rename profiles, and `edge://version` (or `chrome://version`) to see the current profile's on-disk path.
+
+Two profiles with the same display name cannot be told apart, so Bunnify refuses to use that name until you rename one of them in the browser.
+
+### Default browser and profile
+
+Pinning every shortcut is tedious, so set a machine-wide default in `config.toml` (it lives there, not in the shared bookmarks, because profile names differ between machines):
+
+```toml
+default_browser = "edge"
+default_browser_profile = "Work"
+```
+
+or choose it interactively:
+
+```bash
+bunnify browsers default
+```
+
+| Shortcut has | Opens in |
+|--------------|----------|
+| no `browser` block | the default browser and profile (with only `default_browser_profile` set, the system default browser, which must be Edge or Chrome and have that profile) |
+| `browser` with only `app`, same browser as the default | that browser, in the default profile when the default sets one (a browser-only default leaves it in the profile the browser opens by default) |
+| `browser` with only `app`, a different browser | that browser, in the profile it opens by default |
+| `browser` with only `app`, and a default with only `default_browser_profile` | that browser, in the profile it opens by default (a profile-only default is not applied to a browser-only pin) |
+| `browser` with a `profile` | exactly what the block says |
+
+A `browser` block that names a profile always wins; the one exception is a block naming only the same browser as the default, which opens in the default profile instead of the browser's last-used one. With no default set, nothing changes: unpinned shortcuts open in the system default browser. The default applies on macOS and Windows and is ignored elsewhere. `default_browser` must be `edge` or `chrome`; a typo is an error rather than a silent fallback, and so is a `config.toml` that cannot be parsed (every command reads `base_url` from the same file and already stops on that), because opening in the wrong profile silently would hide the mistake.
+
+`bunnify onboard` lists the profiles it finds after the other install steps and asks whether to use one as the default. Press Enter to decide later (it asks again next time), pick a number to save it, or answer `n` to never ask: that sets `default_browser_prompt = false`.
+
+### macOS: reading profile names from Spotty Bunny
+
+Resolving a profile name means reading the browser's `Local State` file, which macOS protects as another app's data. A terminal you have granted access can read it, but Spotty Bunny runs under launchd and needs its own grant, or a profile shortcut fails with `Cannot read browser profiles … Operation not permitted`.
+
+Grant **Full Disk Access** to the executable launchd starts: the real Python executable behind the pipx virtual environment (the path `spotty-bunny status` prints on its `interpreter:` line, for example a `…/bin/python3.14`), **not** the `Python.app` bundle it hands off to:
+
+```bash
+spotty-bunny status      # the "interpreter:" line is the path to add
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+open -R "<that path>"    # reveal it in Finder, then drag it into the list
+spotty-bunny upgrade     # restart so the new grant applies
+```
+
+`spotty-bunny doctor` reports `browser_profiles: yes|no|n/a|unknown` using the same launchd path as the agent (`no` means macOS denied the read, `n/a` means there is no Edge/Chrome profile data to read, and `unknown` means the probe itself could not run, so it says nothing about access). It treats a `no` as a problem when a default profile is configured and as a hint otherwise, because it cannot see which shortcuts pin a profile on the server. `spotty-bunny install`/`upgrade` warn when a default profile is configured but unreadable. Full Disk Access is a broad permission for that Python, so grant it only if you use profile shortcuts or a default profile; without them nothing needs it. Granting only the `Python.app` bundle may not be enough: grant the executable that `spotty-bunny status` prints on its `interpreter:` line. If the profile list stays blocked after you grant it and restart, `spotty-bunny doctor` says so. The grant is for that exact path, which includes the Python version, so check it again after Homebrew upgrades Python.
 
 ### `complete` map
 

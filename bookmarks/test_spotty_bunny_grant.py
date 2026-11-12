@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -332,6 +333,7 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self,
         *,
         answers: tuple[str, ...] = (),
+        browser_profiles: Callable[[Path], bool | None] | None = None,
         current: InterpreterIdentity,
         fresh_program: bool = False,
         health: SpottyBunnyHealth | None = None,
@@ -421,6 +423,7 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
                     open_settings=open_settings,
                     platform="darwin",
                     print_fn=lines.append,
+                    probe_browser_profiles=browser_profiles,
                     probe_tcc=probe,
                     program=None if plist_program is not None else program,
                     prompt_fn=ask,
@@ -445,6 +448,63 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertIn(
             "permissions_source: running spotty-bunny (pid 77, reported", text
         )
+
+    def _healthy_doctor(
+        self, browser_profiles: Callable[[Path], bool | None] | None
+    ) -> tuple[int, str]:
+        return self._run(
+            browser_profiles=browser_profiles,
+            current=NEW,
+            recorded=NEW,
+            report=_report(executable=NEW.path, updated_at=time.time()),
+            running_executable=NEW.path,
+            running_pid=77,
+            tcc=TccStatus(False, False),
+        )
+
+    def test_doctor_skips_browser_profiles_when_tcc_probe_is_injected(self) -> None:
+        code, text = self._healthy_doctor(None)
+        self.assertEqual(code, 0)
+        self.assertNotIn("browser_profiles:", text)
+
+    def test_doctor_reports_readable_browser_profiles(self) -> None:
+        code, text = self._healthy_doctor(lambda _p: True)
+        self.assertEqual(code, 0)
+        self.assertIn("browser_profiles: yes", text)
+        self.assertNotIn("Full Disk Access", text)
+
+    def test_doctor_reports_no_browser_profile_data_as_not_applicable(self) -> None:
+        code, text = self._healthy_doctor(lambda _p: None)
+        self.assertEqual(code, 0)
+        self.assertIn("browser_profiles: n/a", text)
+
+    def test_doctor_reports_probe_failure_as_unknown(self) -> None:
+        def broken(_path: Path) -> bool | None:
+            raise OSError("launchctl unavailable")
+
+        code, text = self._healthy_doctor(broken)
+        self.assertEqual(code, 0)
+        self.assertIn("browser_profiles: unknown", text)
+
+    def test_doctor_blocked_profiles_is_a_hint_without_a_default_profile(self) -> None:
+        with patch(
+            "app.spotty_bunny_agent._default_profile_configured", return_value=False
+        ):
+            code, text = self._healthy_doctor(lambda _p: False)
+        self.assertEqual(code, 0)
+        self.assertIn("browser_profiles: no", text)
+        self.assertIn("hint: macOS blocks this interpreter", text)
+        self.assertIn("Full Disk Access", text)
+        self.assertIn("Privacy_AllFiles", text)
+        self.assertIn("not Python.app", text)
+
+    def test_doctor_blocked_profiles_is_a_problem_with_a_default_profile(self) -> None:
+        with patch(
+            "app.spotty_bunny_agent._default_profile_configured", return_value=True
+        ):
+            code, text = self._healthy_doctor(lambda _p: False)
+        self.assertEqual(code, 1)
+        self.assertIn("problem: macOS blocks this interpreter", text)
 
     def test_doctor_ignores_report_from_another_pid(self) -> None:
         code, text = self._run(
@@ -593,6 +653,29 @@ class SpottyBunnyDoctorTests(SimpleTestCase):
         self.assertIn("restarted spotty-bunny", text)
         self.assertEqual(self.reload_calls, 1)
         self.assertEqual(self.recorded_calls, 1)
+
+    def test_doctor_keeps_failing_when_only_the_tcc_part_was_repaired(self) -> None:
+        with patch(
+            "app.spotty_bunny_agent._default_profile_configured", return_value=True
+        ):
+            code, text = self._run(
+                answers=("", "", "", "", "", "y"),
+                browser_profiles=lambda _p: False,
+                current=NEW,
+                install_plist=True,
+                interactive=True,
+                recorded=NEW,
+                tcc=TccStatus(False, False),
+                tcc_after=(
+                    TccStatus(False, False),
+                    TccStatus(False, False),
+                    TccStatus(True, False),
+                    TccStatus(True, True),
+                ),
+            )
+        self.assertIn("restarted spotty-bunny", text)
+        self.assertIn("problem: macOS blocks this interpreter", text)
+        self.assertEqual(code, 1)
 
     def test_doctor_fix_without_agent_points_at_install(self) -> None:
         code, text = self._run(

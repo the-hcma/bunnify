@@ -312,6 +312,49 @@ class OnboardTests(SimpleTestCase):
         self.assertIn("Already installed:", output)
         self.assertIn("Spotty Bunny LaunchAgent: installed", output)
 
+    def _onboard_with_tty(self, *, tty: bool) -> MagicMock:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.browsers.offer_default_profile") as offer,
+        ):
+            stdin.isatty.return_value = tty
+            stdout_tty.isatty.return_value = tty
+            run_onboard(print_fn=lambda _m: None, prompt_fn=lambda _m: "n")
+        return offer
+
+    def test_run_onboard_offers_the_default_browser_profile_when_interactive(
+        self,
+    ) -> None:
+        self._onboard_with_tty(tty=True).assert_called_once()
+
+    def test_run_onboard_saves_the_browser_profile_to_the_requested_config(
+        self,
+    ) -> None:
+        state = self._state(preferences_ready=True, bookmarks_ready=True)
+        path = Path("/tmp/custom-config.toml")
+        with (
+            patch("app.onboard.detect_install_state", return_value=state),
+            patch("app.onboard.load_preferences", return_value=None),
+            patch("app.onboard.sys.stdin") as stdin,
+            patch("app.onboard.sys.stdout") as stdout_tty,
+            patch("app.browsers.offer_default_profile") as offer,
+        ):
+            stdin.isatty.return_value = True
+            stdout_tty.isatty.return_value = True
+            run_onboard(
+                print_fn=lambda _m: None, prompt_fn=lambda _m: "n", env_path=path
+            )
+        self.assertEqual(offer.call_args.kwargs["env_path"], path)
+
+    def test_run_onboard_skips_the_default_browser_profile_when_not_interactive(
+        self,
+    ) -> None:
+        self._onboard_with_tty(tty=False).assert_not_called()
+
     def test_run_onboard_prints_the_install_summary_once(self) -> None:
         stdout = StringIO()
         state = self._state(preferences_ready=True, bookmarks_ready=True)

@@ -46,3 +46,28 @@ local_port = 8000
 # Change it live with:
 #   bunnify spotty-bunny hotkey <auto|control|option|command>
 spotty_bunny_hotkey = "auto"
+
+# Default browser and profile for shortcuts that do not pin their own
+# `browser` block (macOS and Windows only). Both are optional and per machine,
+# because profile names differ between machines. A shortcut's own `browser`
+# block always wins. Leave both unset to keep opening in the system default
+# browser, whichever profile it picks.
+#
+# Precedence: a shortcut whose `browser` block names a profile always wins.
+# One exception: a block naming only the same browser (for example
+# {"app": "edge"} when default_browser = "edge") opens in the default
+# profile, not in the browser's last-used one.
+#
+# `default_browser` is "edge" or "chrome". `default_browser_profile` is the
+# profile's display name exactly as the browser shows it (case-sensitive).
+# List what you have with:
+#   bunnify browsers
+# and choose interactively with:
+#   bunnify browsers default
+#
+# default_browser = "edge"
+# default_browser_profile = "Work"
+#
+# Set to false so the installer (`bunnify onboard`) stops asking you to pick
+# a default profile.
+# default_browser_prompt = false

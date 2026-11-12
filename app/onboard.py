@@ -197,8 +197,13 @@ def run_onboard(
     read_executable_build: Callable[[Path], str | None] | None = None,
     run_upgrade: Callable[..., None] | None = None,
     theme: Theme | None = None,
+    env_path: Path | None = None,
 ) -> None:
-    """Print onboarding guidance; interactively upgrade and install macOS extras."""
+    """Print onboarding guidance; interactively upgrade and install macOS extras.
+
+    ``env_path`` is the config file the browser-profile step saves to (the
+    CLI's ``--env-file``); ``None`` means the default location.
+    """
     from app.cli import _command_banner, _read_executable_build  # noqa: PLC0415
 
     log = print_fn or print
@@ -346,6 +351,11 @@ def run_onboard(
                             "Spotty Bunny install did not finish; see messages above."
                         )
                     )
+
+    if interactive:
+        from app.browsers import offer_default_profile  # noqa: PLC0415
+
+        offer_default_profile(ask=ask, log=log, colors=colors, env_path=env_path)
 
     log("")
     # The summary above is repeated only if the flow changed the install

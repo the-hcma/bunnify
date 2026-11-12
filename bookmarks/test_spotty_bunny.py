@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -9,6 +10,7 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
+from unittest import skipIf
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -1804,6 +1806,122 @@ class SpottyBunnyAgentTests(SimpleTestCase):
         ctl = _ProbeLaunchctl('{"error": "pyobjc"}')
         with self.assertRaises(ImportError):
             _run_tcc_probe(Path("/opt/py/python"), launchctl=ctl, prompt=False)
+
+    def test_browser_profiles_probe_reports_each_state_via_launchd(self) -> None:
+        from app.spotty_bunny_agent import _probe_browser_profiles
+
+        for payload, expected in (
+            ('{"browser_profiles": true}', True),
+            ('{"browser_profiles": false}', False),
+            ('{"browser_profiles": null}', None),
+            ("{}", None),
+        ):
+            with self.subTest(payload=payload):
+                ctl = _ProbeLaunchctl(payload)
+                state = _probe_browser_profiles(Path("/opt/py/python"), launchctl=ctl)
+                self.assertIs(state, expected)
+                self.assertEqual([call[1] for call in ctl.calls][0], "bootstrap")
+                self.assertEqual([call[1] for call in ctl.calls][-1], "bootout")
+                assert ctl.program is not None
+                self.assertEqual(ctl.program[0], str(Path("/opt/py/python")))
+
+    @skipIf(
+        sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        "needs POSIX modes that deny reads: chmod 000 does not stop Windows or root",
+    )
+    def test_browser_profiles_probe_script_tells_denied_from_absent(self) -> None:
+        from app.spotty_bunny_agent import _PROFILES_PROBE
+
+        edge = Path("Library/Application Support/Microsoft Edge")
+        chrome = Path("Library/Application Support/Google/Chrome")
+
+        def run(home: Path) -> object:
+            out = home / "out.json"
+            subprocess.run(
+                [sys.executable, "-I", "-c", _PROFILES_PROBE, "0", str(out)],
+                check=True,
+                env={"HOME": str(home), "PATH": os.environ.get("PATH", "")},
+                timeout=30,
+            )
+            return json.loads(out.read_text(encoding="utf-8"))["browser_profiles"]
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self.assertIsNone(run(home))
+            (home / edge).mkdir(parents=True)
+            state = home / edge / "Local State"
+            state.write_text("{}", encoding="utf-8")
+            self.assertIs(run(home), True)
+            (home / chrome).mkdir(parents=True)
+            denied = home / chrome / "Local State"
+            denied.write_text("{}", encoding="utf-8")
+            denied.chmod(0o000)
+            try:
+                self.assertIs(run(home), False)
+            finally:
+                denied.chmod(0o600)
+            # A non-denial failure (Local State is a directory) says nothing.
+            denied.chmod(0o600)
+            denied.unlink()
+            denied.mkdir()
+            (home / edge / "Local State").unlink()
+            (home / edge / "Local State").mkdir()
+            self.assertIsNone(run(home))
+
+    def test_install_warns_but_still_installs_when_default_profile_is_blocked(
+        self,
+    ) -> None:
+        from app.spotty_bunny_agent import install_agent
+
+        ctl = _FakeLaunchctl()
+        lines: list[str] = []
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            _write_executable(program, content="#!/opt/venv/bin/python\n")
+            with patch(
+                "app.spotty_bunny_agent._default_profile_configured",
+                return_value=True,
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=ctl,
+                    platform="darwin",
+                    print_err=lines.append,
+                    probe_browser_profiles=lambda _p: False,
+                    probe_tcc=_FakeTcc(TccStatus(True, True)).probe,
+                    program=program,
+                    skip_chord_confirm=True,
+                )
+        self.assertEqual(code, 0)
+        text = "\n".join(lines)
+        self.assertIn("Full Disk Access", text)
+        self.assertIn("installed LaunchAgent", text)
+
+    def test_install_is_silent_about_profiles_without_a_default_profile(self) -> None:
+        from app.spotty_bunny_agent import install_agent
+
+        lines: list[str] = []
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            program = home / "spotty-bunny"
+            _write_executable(program, content="#!/opt/venv/bin/python\n")
+            with patch(
+                "app.spotty_bunny_agent._default_profile_configured",
+                return_value=False,
+            ):
+                code = install_agent(
+                    home=home,
+                    launchctl=_FakeLaunchctl(),
+                    platform="darwin",
+                    print_err=lines.append,
+                    probe_browser_profiles=lambda _p: self.fail("must not probe"),
+                    probe_tcc=_FakeTcc(TccStatus(True, True)).probe,
+                    program=program,
+                    skip_chord_confirm=True,
+                )
+        self.assertEqual(code, 0)
+        self.assertNotIn("Full Disk Access", "\n".join(lines))
 
     def test_tcc_probe_raises_when_launchctl_cannot_start_it(self) -> None:
         from app.spotty_bunny_agent import _run_tcc_probe

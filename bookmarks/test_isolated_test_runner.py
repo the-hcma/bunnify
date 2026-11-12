@@ -29,6 +29,12 @@ class RunnerEnvironmentTests(SimpleTestCase):
             self.assertIn("bunnify-test-home-", os.environ[name], msg=name)
         self.assertIn("bunnify-test-home-", str(Path.home()))
 
+    def test_a_developers_xdg_config_home_does_not_leak_into_tests(self) -> None:
+        self.assertNotIn("XDG_CONFIG_HOME", os.environ)
+        from app.config import config_dir
+
+        self.assertIn("bunnify-test-home-", str(config_dir()))
+
     def test_no_real_launch_agent_is_visible(self) -> None:
         self.assertFalse(agent_plist_path().exists())
         self.assertFalse(is_agent_installed())
@@ -210,9 +216,12 @@ class RunnerTeardownTests(SimpleTestCase):
     def test_setup_installs_and_teardown_restores_guard_and_environment(self) -> None:
         # The live runner already guards Popen, so start from the real class.
         real_popen = _LaunchctlGuardedPopen.__mro__[1]
-        before_env = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+        before_env = {
+            k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME")
+        }
         runner = IsolatedStateRunner()
         with (
+            patch.dict(os.environ, {"XDG_CONFIG_HOME": "/developer/config"}),
             patch("subprocess.Popen", real_popen),
             patch("django.test.runner.DiscoverRunner.setup_test_environment"),
             patch("django.test.runner.DiscoverRunner.teardown_test_environment"),
@@ -221,6 +230,7 @@ class RunnerTeardownTests(SimpleTestCase):
             try:
                 inner_home = os.environ["HOME"]
                 self.assertIn("bunnify-test-home-", inner_home)
+                self.assertNotIn("XDG_CONFIG_HOME", os.environ)
                 self.assertIs(subprocess.Popen, _LaunchctlGuardedPopen)
             finally:
                 # Always restore HOME/Popen and remove the temp dirs, even

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
-from app.browser_spec import BrowserSpec
+from app.browser_spec import BROWSER_APPS, BrowserSpec
 from app.client import ClientError
 
 LAUNCH_TIMEOUT_SECONDS = 10.0
@@ -46,6 +46,23 @@ _WIN_CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 class BrowserLaunchError(ClientError):
     """The requested browser/profile cannot be used; nothing was opened."""
+
+
+class BrowserProfilesAccessError(BrowserLaunchError):
+    """The OS denied reading the browser's profile list (macOS privacy)."""
+
+
+class BrowserProfilesMissingError(BrowserLaunchError):
+    """The browser has no ``Local State`` yet (never run, or not installed)."""
+
+
+@dataclass(frozen=True)
+class ProfileInfo:
+    """One browser profile as listed in the browser's ``Local State``."""
+
+    directory: str
+    name: str
+    account: str | None = None
 
 
 @dataclass(frozen=True)
@@ -200,16 +217,44 @@ def _is_profile_dir_name(name: object) -> bool:
     )
 
 
-def list_profiles(user_data: Path) -> dict[str, str]:
-    """Map profile directory name to display name from ``Local State``.
+def macos_profile_access_hint(executable: str | None = None) -> str:
+    """How to grant macOS access to the browser's profile list.
+
+    TCC attributes the read to the process that started this one: the
+    terminal app for a command run from a terminal, or the executable launchd
+    started (the real ``python`` behind a venv, not the ``Python.app`` it hands
+    off to) for Spotty Bunny. The hint names both so neither path is misled.
+    """
+    exe = os.path.realpath(executable or sys.executable)
+    return (
+        "macOS blocked access to the browser's profile data. Under System "
+        "Settings → Privacy & Security → Full Disk Access, add the app that "
+        "started this: your terminal app when you ran it from a terminal, or, "
+        f"for Spotty Bunny (launchd), this executable: {exe} "
+        "(run `spotty-bunny doctor` for steps). Then restart the process"
+    )
+
+
+def list_profile_details(user_data: Path) -> list[ProfileInfo]:
+    """List profiles (directory, display name, account) from ``Local State``.
 
     Entries whose directory is missing on disk are stale cache and ignored, so
     a pin to one is an error rather than a silently created fresh profile.
-    Malformed state raises :class:`BrowserLaunchError`.
+    Malformed state raises :class:`BrowserLaunchError`; a macOS privacy denial
+    raises :class:`BrowserProfilesAccessError` with the fix.
     """
     state_path = user_data / "Local State"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
+    except PermissionError as exc:
+        detail = f"Cannot read browser profiles from {state_path}: {exc}"
+        if sys.platform == "darwin":
+            detail += f". {macos_profile_access_hint()}"
+        raise BrowserProfilesAccessError(detail) from exc
+    except FileNotFoundError as exc:
+        raise BrowserProfilesMissingError(
+            f"Cannot read browser profiles from {state_path}: {exc}"
+        ) from exc
     except (OSError, ValueError) as exc:
         raise BrowserLaunchError(
             f"Cannot read browser profiles from {state_path}: {exc}"
@@ -220,7 +265,7 @@ def list_profiles(user_data: Path) -> dict[str, str]:
         raise BrowserLaunchError(
             f"Unexpected profile data in {state_path}: no profile.info_cache"
         )
-    profiles: dict[str, str] = {}
+    profiles: list[ProfileInfo] = []
     for directory, info in cache.items():
         name = info.get("name") if isinstance(info, dict) else None
         if (
@@ -228,8 +273,74 @@ def list_profiles(user_data: Path) -> dict[str, str]:
             and _is_profile_dir_name(directory)
             and (user_data / directory).is_dir()
         ):
-            profiles[directory] = name
+            account = info.get("user_name") if isinstance(info, dict) else None
+            profiles.append(
+                ProfileInfo(
+                    directory=directory,
+                    name=name,
+                    account=account if isinstance(account, str) and account else None,
+                )
+            )
     return profiles
+
+
+def list_profiles(user_data: Path) -> dict[str, str]:
+    """Map profile directory name to display name from ``Local State``."""
+    return {info.directory: info.name for info in list_profile_details(user_data)}
+
+
+def installed_browser_profiles(
+    *,
+    platform: str | None = None,
+    home: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    find_app: FindAppFn | None = None,
+    on_error: Callable[[BrowserLaunchError], None] | None = None,
+) -> dict[str, list[ProfileInfo]]:
+    """Profiles of every installed Edge/Chrome, keyed by ``edge``/``chrome``.
+
+    A browser that is not installed or has never been run (no ``Local State``)
+    is omitted. A browser whose state is malformed or denied is skipped while
+    another yields profiles, and its error is passed to ``on_error`` so the
+    caller can still tell the user (for example the Full Disk Access fix);
+    when no browser yields profiles, the first error propagates as
+    :class:`BrowserLaunchError`.
+    """
+    platform = platform or sys.platform
+    locate = find_app or (
+        lambda name: find_installed_app(name, platform=platform, home=home)
+    )
+    found: dict[str, list[ProfileInfo]] = {}
+    errors: list[BrowserLaunchError] = []
+    for app in BROWSER_APPS:
+        if locate(app) is None:
+            continue
+        data_dir = user_data_dir(app, platform=platform, home=home, env=env)
+        if data_dir is None:
+            continue
+        try:
+            # Read, don't stat: a macOS privacy denial must surface as an
+            # access error, not look like "no profiles".
+            profiles = list_profile_details(data_dir)
+        except BrowserProfilesMissingError:
+            continue
+        except BrowserLaunchError as exc:
+            # One broken browser must not hide a working one.
+            errors.append(exc)
+            continue
+        if profiles:
+            found[app] = profiles
+    if errors and not found:
+        raise errors[0]
+    if on_error is not None:
+        for error in errors:
+            on_error(error)
+    return found
+
+
+def display_name(app: str) -> str:
+    """``Edge`` / ``Chrome`` for a browser key."""
+    return _DISPLAY_NAMES[app]
 
 
 def resolve_profile_dir(app: str, profile: str, profiles: Mapping[str, str]) -> str:

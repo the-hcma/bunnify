@@ -92,6 +92,9 @@ TCC_PERMISSIONS: tuple[tuple[str, str, str], ...] = (
         "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
     ),
 )
+FULL_DISK_ACCESS_URL = (
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+)
 TCC_PROBE_LABEL = f"{AGENT_LABEL}.tcc-probe"
 TCC_PROBE_POLL_S = 0.1
 TCC_PROBE_TIMEOUT_S = 15
@@ -148,6 +151,7 @@ def doctor_agent(
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
     print_fn: Callable[[str], None] | None = None,
+    probe_browser_profiles: Callable[[Path], bool | None] | None = None,
     probe_tcc: TccFn | None = None,
     program: Path | None = None,
     prompt_fn: Callable[[str], str] | None = None,
@@ -274,6 +278,11 @@ def doctor_agent(
     out(f"permissions_source: {source}")
     out(f"accessibility: {'yes' if tcc.accessibility else 'no'}")
     out(f"input_monitoring: {'yes' if tcc.input_monitoring else 'no'}")
+    profiles_state = _check_browser_profiles(
+        interpreter, probe=probe_browser_profiles, probe_tcc=probe_tcc
+    )
+    if profiles_state is not None:
+        out(f"browser_profiles: {profiles_state}")
     out(
         "authorized_interpreter: "
         + (recorded.label() if recorded is not None else "not recorded")
@@ -301,9 +310,17 @@ def doctor_agent(
             f"problem: {problem}. Restart spotty-bunny (launchd relaunches it) "
             "and, if it persists, re-authorize the interpreter above."
         )
+    profiles_failed = False
+    if profiles_state == "no":
+        configured = _default_profile_configured()
+        for line in _browser_profiles_lines(interpreter, configured=configured):
+            out(line)
+        if configured:
+            healthy = False
+            profiles_failed = True
     if tcc.ok or not _is_interactive():
         return 0 if healthy else 1
-    return _fix_tcc_from_doctor(
+    repaired = _fix_tcc_from_doctor(
         interpreter,
         current=current,
         installed=installed,
@@ -317,6 +334,8 @@ def doctor_agent(
         request_tcc=request_tcc,
         stale_plist=stale_plist,
     )
+    # Repairing Accessibility/Input Monitoring does not fix the profile grant.
+    return 1 if profiles_failed else repaired
 
 
 def format_agent_plist(*, home: Path, program_arguments: Sequence[str]) -> str:
@@ -344,6 +363,7 @@ def install_agent(
     pid_dir: Path | None = None,
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
+    probe_browser_profiles: Callable[[Path], bool | None] | None = None,
     probe_tcc: TccFn | None = None,
     program: Path | None = None,
     prompt_fn: Callable[[str], str] | None = None,
@@ -383,6 +403,9 @@ def install_agent(
     )
     if status is None:
         return 1
+    _note_browser_profile_access(
+        interpreter, err=err, probe=probe_browser_profiles, probe_tcc=probe_tcc
+    )
     root = home if home is not None else Path.home()
     plist = agent_plist_path(home=root)
     _write_plist(plist, home=root, program_arguments=program_argv)
@@ -742,6 +765,7 @@ def upgrade_agent(
     pid_dir: Path | None = None,
     platform: str | None = None,
     print_err: Callable[[str], None] | None = None,
+    probe_browser_profiles: Callable[[Path], bool | None] | None = None,
     probe_tcc: TccFn | None = None,
     program: Path | None = None,
     prompt_fn: Callable[[str], str] | None = None,
@@ -789,6 +813,9 @@ def upgrade_agent(
     )
     if status is None:
         return 1
+    _note_browser_profile_access(
+        interpreter, err=err, probe=probe_browser_profiles, probe_tcc=probe_tcc
+    )
     _write_plist(plist, home=root, program_arguments=program_argv)
     if not _reload_agent(
         plist,
@@ -1043,6 +1070,73 @@ def _confirm_chord_works(
             return False
 
 
+def _browser_profiles_lines(interpreter: Path, *, configured: bool) -> list[str]:
+    """Explain the Full Disk Access gap for the browsers' profile lists."""
+    executable = os.path.realpath(interpreter)
+    level = "problem" if configured else "hint"
+    return [
+        f"{level}: macOS blocks this interpreter from reading the Edge/Chrome "
+        "profile list, so shortcuts that open in a specific profile fail with "
+        "“Operation not permitted”.",
+        "Add this executable (the real python, not Python.app) under System "
+        f"Settings → Privacy & Security → Full Disk Access: {executable}",
+        f'Open the pane: open "{FULL_DISK_ACCESS_URL}"; reveal the file: '
+        f'open -R "{executable}"',
+        f"Then restart the agent: {COMMAND_NAME} upgrade",
+    ]
+
+
+def _check_browser_profiles(
+    interpreter: Path,
+    *,
+    probe: Callable[[Path], bool | None] | None,
+    probe_tcc: TccFn | None,
+) -> str | None:
+    """``yes``/``no``/``n/a``/``unknown``, or ``None`` when not probed.
+
+    Like the TCC probe it starts a launchd job, so it only runs for real when
+    the caller did not inject a TCC probe (tests and dry runs stay offline).
+    """
+    runner = probe
+    if runner is None:
+        if probe_tcc is not None:
+            return None
+        runner = _probe_browser_profiles
+    try:
+        state = runner(interpreter)
+    except OSError, subprocess.SubprocessError, ValueError:
+        return "unknown"
+    return "n/a" if state is None else ("yes" if state else "no")
+
+
+def _default_profile_configured() -> bool:
+    """True when ``config.toml`` pins a default browser profile."""
+    from app.browser_default import load_default_browser
+    from app.browser_launch import BrowserLaunchError
+
+    try:
+        spec = load_default_browser()
+    except BrowserLaunchError, OSError, ValueError:
+        return False
+    return spec is not None and spec.profile is not None
+
+
+def _note_browser_profile_access(
+    interpreter: Path,
+    *,
+    err: Callable[[str], None],
+    probe: Callable[[Path], bool | None] | None,
+    probe_tcc: TccFn | None,
+) -> None:
+    """Warn (never block) when the default profile cannot be read at runtime."""
+    if not _default_profile_configured():
+        return
+    if _check_browser_profiles(interpreter, probe=probe, probe_tcc=probe_tcc) != "no":
+        return
+    for line in _browser_profiles_lines(interpreter, configured=True):
+        err(f"{COMMAND_NAME}: {line}")
+
+
 def _probe_tcc(interpreter: Path) -> TccStatus:
     return _run_tcc_probe(interpreter, prompt=False)
 
@@ -1275,11 +1369,62 @@ def _run_tcc_probe(
     sleep: Callable[[float], None] = time.sleep,
     timeout_s: float = TCC_PROBE_TIMEOUT_S,
 ) -> TccStatus:
-    """Probe (or request) the grants of *interpreter* as launchd would run it.
+    """Probe (or request) the grants of *interpreter* as launchd would run it."""
+    payload = _run_launchd_probe(
+        interpreter,
+        _TCC_PROBE,
+        argument="1" if prompt else "0",
+        launchctl=launchctl,
+        monotonic=monotonic,
+        sleep=sleep,
+        timeout_s=timeout_s,
+    )
+    if isinstance(payload, dict) and payload.get("error") == "pyobjc":
+        raise ImportError("PyObjC is required to probe TCC")
+    try:
+        return TccStatus(
+            accessibility=bool(payload["accessibility"]),
+            input_monitoring=bool(payload["input_monitoring"]),
+        )
+    except (KeyError, TypeError) as exc:
+        raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
+
+
+def _probe_browser_profiles(
+    interpreter: Path,
+    *,
+    launchctl: LaunchctlFn | None = None,
+) -> bool | None:
+    """Can *interpreter*, run by launchd, read the browsers' profile lists?
+
+    ``True`` when it can, ``False`` when macOS blocks it (Full Disk Access is
+    missing for that executable), ``None`` when no Edge/Chrome profile data
+    exists, so there is nothing to read.
+    """
+    payload = _run_launchd_probe(
+        interpreter, _PROFILES_PROBE, argument="0", launchctl=launchctl
+    )
+    value = payload.get("browser_profiles") if isinstance(payload, dict) else None
+    return value if isinstance(value, bool) else None
+
+
+def _run_launchd_probe(
+    interpreter: Path,
+    script: str,
+    *,
+    argument: str,
+    launchctl: LaunchctlFn | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    timeout_s: float = TCC_PROBE_TIMEOUT_S,
+) -> dict[str, object]:
+    """Run *script* with *interpreter* as a short-lived launchd job; its JSON.
 
     A child of the terminal inherits the terminal app as its TCC responsible
     process, so probing it directly reports the terminal's grants. A launchd
-    job is its own responsible process, exactly like the LaunchAgent.
+    job is its own responsible process, exactly like the LaunchAgent, and TCC
+    attributes access to the executable launchd starts (the venv ``python``),
+    not to a ``Python.app`` it may hand off to.
     """
     label = f"{TCC_PROBE_LABEL}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="spotty-bunny-tcc-") as tmp:
@@ -1295,8 +1440,8 @@ def _run_tcc_probe(
                     for arg in (
                         str(interpreter),
                         "-c",
-                        _TCC_PROBE,
-                        "1" if prompt else "0",
+                        script,
+                        argument,
                         str(output),
                     )
                 ),
@@ -1338,15 +1483,9 @@ def _run_tcc_probe(
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
-    if isinstance(payload, dict) and payload.get("error") == "pyobjc":
-        raise ImportError("PyObjC is required to probe TCC")
-    try:
-        return TccStatus(
-            accessibility=bool(payload["accessibility"]),
-            input_monitoring=bool(payload["input_monitoring"]),
-        )
-    except (KeyError, TypeError) as exc:
-        raise OSError(f"tcc probe returned invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise OSError("tcc probe returned invalid JSON: expected an object")
+    return payload
 
 
 def _running_agent_pid() -> int | None:
@@ -1482,6 +1621,35 @@ __PROGRAM_ARGUMENTS__
   <string>__STDERR__</string>
 </dict>
 </plist>
+"""
+
+_PROFILES_PROBE = r"""
+import json
+import os
+import sys
+
+bases = (
+    "~/Library/Application Support/Microsoft Edge",
+    "~/Library/Application Support/Google/Chrome",
+)
+blocked = readable = False
+for base in bases:
+    path = os.path.join(os.path.expanduser(base), "Local State")
+    try:
+        with open(path, "rb") as handle:
+            handle.read(1)
+    except FileNotFoundError:
+        continue
+    except PermissionError:
+        blocked = True
+    except OSError:
+        continue  # not a privacy denial (e.g. a directory): say nothing
+    else:
+        readable = True
+state = False if blocked else (True if readable else None)
+with open(sys.argv[2] + ".tmp", "w", encoding="utf-8") as handle:
+    json.dump({"browser_profiles": state}, handle)
+os.replace(sys.argv[2] + ".tmp", sys.argv[2])
 """
 
 _TCC_PROBE = r"""

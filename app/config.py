@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import resources
@@ -228,14 +230,44 @@ def read_toml_document(path: Path) -> tomlkit.TOMLDocument:
 
 
 def write_toml_document(path: Path, document: tomlkit.TOMLDocument) -> None:
-    """Persist ``document`` to ``path`` (parent directories created)."""
+    """Persist ``document`` to ``path`` (parent directories created).
+
+    The file is replaced atomically (temp file in the same directory, flushed
+    to disk, then ``os.replace``), so a concurrent reader never sees a partial
+    file and a crash mid-write leaves the previous contents in place. (The
+    directory entry itself is not fsynced, so a power loss right after the
+    rename can still lose the update, but not the other saved keys.)
+    """
+    # Write through a symlinked config (for example one managed from a dotfiles
+    # repository) instead of replacing the link with a regular file.
+    path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(tomlkit.dumps(document), encoding="utf-8")
+    temp = path.parent / f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+    # 0o666 lets the umask pick the mode, as ``write_text`` did, instead of the
+    # owner-only mode ``mkstemp`` would give a first-time ``config.toml``.
+    handle = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        stream = os.fdopen(handle, "w", encoding="utf-8")
+    except BaseException:
+        os.close(handle)  # fdopen failed, so nothing owns the descriptor yet
+        temp.unlink(missing_ok=True)
+        raise
+    try:
+        with stream:
+            stream.write(tomlkit.dumps(document))
+            stream.flush()
+            os.fsync(stream.fileno())
+        if path.exists():
+            shutil.copymode(path, temp)
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def set_config_value(
     key: str,
-    value: str | int,
+    value: str | int | bool,
     *,
     env_path: Path | None = None,
     environ: dict[str, str] | None = None,
@@ -248,6 +280,48 @@ def set_config_value(
     document = read_toml_document(path)
     document[key] = value
     write_toml_document(path, document)
+
+
+def update_config_values(
+    updates: dict[str, str | int | bool | None],
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> None:
+    """Set (or, for ``None``, remove) several keys in one ``config.toml`` write.
+
+    Keys that belong together (a browser and its profile) must not be written
+    one at a time, or an interruption can leave a mixed pair.
+    """
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    if path == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(path, environ=env)
+    document = read_toml_document(path)
+    for key, value in updates.items():
+        if value is None:
+            if key in document:
+                del document[key]
+        else:
+            document[key] = value
+    write_toml_document(path, document)
+
+
+def unset_config_value(
+    key: str,
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> None:
+    """Remove one ``config.toml`` key if present, preserving other keys."""
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    if path == env_file_path(environ=env):
+        _migrate_legacy_config_if_needed(path, environ=env)
+    document = read_toml_document(path)
+    if key in document:
+        del document[key]
+        write_toml_document(path, document)
 
 
 def get_config_value(
@@ -264,6 +338,31 @@ def get_config_value(
         return None
     text = str(value).strip()
     return text or None
+
+
+def get_config_values(
+    keys: tuple[str, ...],
+    *,
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> dict[str, str | None]:
+    """Return several ``config.toml`` values from one read of the file.
+
+    Keys that must agree (a browser and its profile) are read together so a
+    concurrent edit cannot hand back a mixed pair. Unlike
+    :func:`get_config_value` the values are not stripped.
+    """
+    env = environ if environ is not None else os.environ
+    path = env_path if env_path is not None else env_file_path(environ=env)
+    document = read_toml_document(path)
+    values: dict[str, str | None] = {}
+    for key in keys:
+        value = document.get(key)
+        text = None if value is None else str(value)
+        # Only a blank value counts as unset; a non-blank value is returned
+        # exactly as written, so a profile name with edge spaces still matches.
+        values[key] = text if text is not None and text.strip() else None
+    return values
 
 
 def load_spotty_bunny_hotkey(
