@@ -54,12 +54,15 @@ _FALSE = {"", "0", "f", "false", "n", "no", "off"}
 def effective_families(values: list[str]) -> tuple[list[str], bool]:
     """Families left by repeated ``RestrictAddressFamilies=`` lines.
 
-    Mirrors systemd's ``config_parse_address_families`` (v255): the lines
+    Mirrors systemd's ``config_parse_address_families`` in ``src/core/load-fragment.c``
+    (read at v255) and ``systemd.exec(5)`` for ``RestrictAddressFamilies=``. The
+    parser's warnings are not modelled, only its effect: the lines
     accumulate; an empty assignment resets the list; a line that is exactly
     ``none`` (case-sensitive, and only as the whole value) resets it to an empty
     allow-list, which denies every family; a leading ``~`` makes a deny-list; and
-    a word that is not an address family name is ignored with a warning, so
-    ``AF_UNIX none`` is just ``AF_UNIX``.
+    a word that is not an address family name is ignored (systemd logs a
+    warning), so ``AF_UNIX none`` is just ``AF_UNIX``, and a ``~`` anywhere but
+    the start of the value is part of an unknown word and is ignored too.
     Returns ``(families, is_deny_list)``.
     """
     families: list[str] = []
@@ -134,6 +137,8 @@ class SandboxingHelperTests(SimpleTestCase):
         self.assertEqual((["AF_UNIX"], False), effective_families(["AF_UNIX", "None"]))
         self.assertTrue(allows_server_network(["AF_UNIX AF_INET AF_INET6", "None"]))
         self.assertEqual(([], True), effective_families(["~none"]))
+        # "~" only means a deny-list as the first character of the whole value.
+        self.assertEqual((["AF_UNIX"], False), effective_families(["AF_UNIX ~AF_INET"]))
 
     def test_a_later_none_denies_every_family(self) -> None:
         self.assertEqual(([], False), effective_families(["AF_UNIX", "none"]))
