@@ -54,21 +54,26 @@ _FALSE = {"", "0", "f", "false", "n", "no", "off"}
 def effective_families(values: list[str]) -> tuple[list[str], bool]:
     """Families left by repeated ``RestrictAddressFamilies=`` lines.
 
-    systemd accumulates the lines. An empty assignment resets the list, and
-    ``none`` resets it to an empty allow-list, which denies every family.
+    Mirrors systemd's ``config_parse_address_families`` (v255): the lines
+    accumulate; an empty assignment resets the list; a line that is exactly
+    ``none`` (case-sensitive, and only as the whole value) resets it to an empty
+    allow-list, which denies every family; a leading ``~`` makes a deny-list; and
+    a word that is not an address family name is ignored with a warning, so
+    ``AF_UNIX none`` is just ``AF_UNIX``.
     Returns ``(families, is_deny_list)``.
     """
     families: list[str] = []
     deny = False
     for value in values:
-        if not value.strip() or value.strip().lower() == "none":
+        text = value.strip()
+        if not text or text == "none":
             families, deny = [], False
             continue
-        tokens = value.split()
+        tokens = text.split()
         if tokens[0].startswith("~"):
             deny = True
             tokens[0] = tokens[0][1:]
-        families.extend(token for token in tokens if token)
+        families.extend(token for token in tokens if token.startswith("AF_"))
     return families, deny
 
 
@@ -121,6 +126,15 @@ class ParserTests(SimpleTestCase):
 
 
 class SandboxingHelperTests(SimpleTestCase):
+    def test_none_only_counts_as_the_whole_case_sensitive_value(self) -> None:
+        # systemd compares the whole value with streq(), so these are not "none":
+        # the word is not an address family and is ignored with a warning.
+        self.assertEqual((["AF_UNIX"], False), effective_families(["AF_UNIX none"]))
+        self.assertEqual((["AF_UNIX"], False), effective_families(["none AF_UNIX"]))
+        self.assertEqual((["AF_UNIX"], False), effective_families(["AF_UNIX", "None"]))
+        self.assertTrue(allows_server_network(["AF_UNIX AF_INET AF_INET6", "None"]))
+        self.assertEqual(([], True), effective_families(["~none"]))
+
     def test_a_later_none_denies_every_family(self) -> None:
         self.assertEqual(([], False), effective_families(["AF_UNIX", "none"]))
         self.assertFalse(allows_server_network(["AF_UNIX AF_INET AF_INET6", "none"]))
