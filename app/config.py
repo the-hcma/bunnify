@@ -333,7 +333,9 @@ def current_host(*, environ: Mapping[str, str] | None = None) -> str:
 
     ``BUNNIFY_HOST`` overrides it (useful when two machines share a name, or
     to test a host section). Matching against the table names is
-    case-insensitive.
+    case-insensitive. The override is read from the calling process's
+    environment, so the macOS LaunchAgents (which start with only ``PATH``) never
+    see a shell-exported ``BUNNIFY_HOST`` and always use the system host name.
     """
     env = environ if environ is not None else os.environ
     override = (env.get(HOST_ENV_VAR) or "").strip()

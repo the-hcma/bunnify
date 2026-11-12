@@ -146,7 +146,7 @@ A `browser` block that names a profile always wins; the one exception is a block
 
 ### Using one config on several machines
 
-If the same `config.toml` is shared between machines (for example checked out from a git repository), put each machine's own choice in a `[hosts.<name>]` table and keep the top-level keys as the default for every machine that has no table of its own:
+If the same `config.toml` is shared between machines (for example checked out from a git repository), put each machine's own choice in a `[hosts.<name>]` table and keep the top-level keys as the default for every machine whose table does not set `default_browser` or `default_browser_profile` (a table with only, say, `default_browser_prompt` still falls back to them):
 
 ```toml
 # every machine without its own table
@@ -162,7 +162,7 @@ default_browser = "chrome"
 default_browser_profile = "Me"
 ```
 
-- **Which table is mine.** `bunnify browsers` prints `This host: <name>`; that is the table name to use. On macOS it is the Bonjour name (`scutil --get LocalHostName`), elsewhere the short hostname. Matching ignores case. Set `BUNNIFY_HOST` to override it, for example when two machines share a name.
+- **Which table is mine.** `bunnify browsers` prints `This host: <name>`; that is the table name to use. On macOS it is the Bonjour name (`scutil --get LocalHostName`), elsewhere the short hostname. Matching ignores case. Set `BUNNIFY_HOST` to override it, for example when two machines share a name. The override only applies to commands run in the shell that exports it: on macOS the Spotty Bunny and server LaunchAgents start with a fixed environment (just `PATH`), so they always use the system host name. Use `BUNNIFY_HOST` to try a table from the command line, and name the table after the real host for the agents to use it.
 - **A host's table replaces the pair.** If a machine's table sets `default_browser` and/or `default_browser_profile`, those replace the top-level pair as a whole, so a browser is never paired with another machine's profile. Keys a table does not set are not inherited for the browser/profile pair.
 - **`default_browser_prompt`** follows the same rule: this machine's table wins, otherwise the top-level value.
 - **Writing it for you.** `bunnify browsers default` and the `bunnify onboard` step write this machine's table and leave everything else (other machines, the top-level default, and comments outside this machine's table) untouched; comments inside this machine's own table are lost if clearing leaves it empty and it is removed. `bunnify browsers default global` writes the top-level keys. Choosing `c` on a machine removes only that machine's `default_browser` and `default_browser_profile` (its table goes away if nothing else is left in it, and other keys such as `default_browser_prompt` stay), so it falls back to the top-level default.
